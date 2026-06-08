@@ -1,0 +1,30 @@
+# فایل‌های پایتون و کش
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# فایل‌های لاگ و دیتابیس (اگر دیتابیس محلی دارید)
+*.log
+*.db
+*.sqlite3
+
+# فایل‌های موقت و سیستم‌عامل
+temp_files/
+.DS_Store
+Thumbs.db
+
+# فایل‌های حساس و شخصی
+.env
+rate_limits.json
+config.py
+
+# فایل‌های پروژه که نباید در گیت باشند
+pdf_bot.zip
+project_snapshot.txt
+cropped_charts/
+output_files/
+my_notes/
+
+# دایرکتوری tmp
+tmp/
