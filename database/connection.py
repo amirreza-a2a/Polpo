@@ -50,6 +50,10 @@ def init_db():
             provider          VARCHAR(50) NOT NULL
                               COMMENT 'google | openai | openrouter',
             supported_models  JSON,
+            selected_model    VARCHAR(100) DEFAULT NULL
+                              COMMENT 'مدل انتخاب‌شده توسط کاربر',
+            base_url          VARCHAR(500) DEFAULT NULL
+                              COMMENT 'Base URL سفارشی (اختیاری)',
             chain_priority    INT DEFAULT 1
                               COMMENT 'ترتیب استفاده در زنجیره (کمتر = اول)',
             is_active         TINYINT(1) DEFAULT 1,
@@ -57,6 +61,16 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         """)
+
+        # ─── migration: اضافه کردن ستون‌های جدید به جدول قدیمی ──
+        for col_sql in [
+            "ALTER TABLE private_apis ADD COLUMN selected_model VARCHAR(100) DEFAULT NULL",
+            "ALTER TABLE private_apis ADD COLUMN base_url VARCHAR(500) DEFAULT NULL",
+        ]:
+            try:
+                cur.execute(col_sql)
+            except Exception:
+                pass  # ستون از قبل وجود دارد
 
         # ─── public_apis ──────────────────────────────────
         cur.execute("""

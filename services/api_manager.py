@@ -10,44 +10,73 @@ from database.models import (
     increment_public_api_pages,
 )
 
+# Base URL پیش‌فرض هر provider
+_DEFAULT_BASE_URL = {
+    "google":     None,                          # SDK خودش مدیریت می‌کند
+    "openai":     "https://api.openai.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+}
+
+# مدل پیش‌فرض هر provider
+_DEFAULT_MODEL = {
+    "google":     "gemini-2.5-flash",
+    "openai":     "gpt-4o",
+    "openrouter": "openai/gpt-4o",
+}
+
+
+def get_default_base_url(provider: str) -> str | None:
+    return _DEFAULT_BASE_URL.get(provider)
+
+
+def get_default_model(provider: str) -> str:
+    return _DEFAULT_MODEL.get(provider, "gemini-2.5-flash")
+
 
 def build_api_chain(user_id: int, use_public: bool) -> list:
     """
     زنجیره API را برای یک جاب می‌سازد.
-    
-    خروجی: لیستی از دیکشنری مثل:
-    [
-      {"type": "private", "id": 3, "api_key": "...", "provider": "google",
-       "models": [...], "label": "کلید اصلی"},
-      {"type": "public",  "id": 1, "api_key": "...", "provider": "google",
-       "models": [...], "label": "عمومی"},
-    ]
+    خروجی: لیستی از دیکشنری با selected_model و base_url
     """
     chain = []
 
-    # ─── API های خصوصی (مرتب بر اساس priority) ────────────
+    # ─── API های خصوصی ────────────────────────────────────
     private_apis = get_user_private_apis(user_id)
     for api in private_apis:
+        # مدل: اول selected_model، اگر نبود اولین مدل از لیست، اگر نبود default
+        model = (
+            api.get("selected_model")
+            or (api["supported_models"] or [None])[0]
+            or get_default_model(api["provider"])
+        )
+        # base_url: اول مقدار ذخیره‌شده، اگر نبود پیش‌فرض
+        base_url = api.get("base_url") or get_default_base_url(api["provider"])
+
         chain.append({
-            "type":     "private",
-            "id":       api["id"],
-            "api_key":  api["api_key"],
-            "provider": api["provider"],
-            "models":   api["supported_models"],
-            "label":    api["label"],
+            "type":           "private",
+            "id":             api["id"],
+            "api_key":        api["api_key"],
+            "provider":       api["provider"],
+            "models":         api["supported_models"],
+            "selected_model": model,
+            "base_url":       base_url,
+            "label":          api["label"],
         })
 
-    # ─── API عمومی (اگر کاربر خواسته باشد) ────────────────
+    # ─── API عمومی ────────────────────────────────────────
     if use_public:
         public_api = get_next_available_public_api()
         if public_api:
+            model = (public_api["supported_models"] or [None])[0] or get_default_model(public_api["provider"])
             chain.append({
-                "type":      "public",
-                "id":        public_api["id"],
-                "api_key":   public_api["api_key"],
-                "provider":  public_api["provider"],
-                "models":    public_api["supported_models"],
-                "label":     "API عمومی",
+                "type":           "public",
+                "id":             public_api["id"],
+                "api_key":        public_api["api_key"],
+                "provider":       public_api["provider"],
+                "models":         public_api["supported_models"],
+                "selected_model": model,
+                "base_url":       get_default_base_url(public_api["provider"]),
+                "label":          "API عمومی",
             })
 
     return chain
@@ -67,7 +96,6 @@ def switch_to_next_api(job: dict, reason: str, at_page: int) -> dict | None:
     current_idx = job["current_api_index"]
     switch_log  = job.get("api_switch_log") or []
 
-    # لاگ سوئیچ
     if current_idx < len(chain):
         switch_log.append({
             "switched_at_page": at_page,
@@ -81,15 +109,16 @@ def switch_to_next_api(job: dict, reason: str, at_page: int) -> dict | None:
         candidate = chain[next_idx]
 
         if candidate["type"] == "public":
-            # یک API عمومی تازه با ظرفیت پیدا کن
             fresh = get_next_available_public_api()
             if fresh is None:
                 next_idx += 1
                 continue
-            # اطلاعات تازه را جایگزین کن
-            chain[next_idx]["api_key"] = fresh["api_key"]
-            chain[next_idx]["id"]      = fresh["id"]
-            chain[next_idx]["models"]  = fresh["supported_models"]
+            model = (fresh["supported_models"] or [None])[0] or get_default_model(fresh["provider"])
+            chain[next_idx]["api_key"]        = fresh["api_key"]
+            chain[next_idx]["id"]             = fresh["id"]
+            chain[next_idx]["models"]         = fresh["supported_models"]
+            chain[next_idx]["selected_model"] = model
+            chain[next_idx]["base_url"]       = get_default_base_url(fresh["provider"])
 
         switch_log[-1]["to"] = f"{candidate['type']}_{candidate['id']}"
         job["current_api_index"] = next_idx
@@ -97,16 +126,19 @@ def switch_to_next_api(job: dict, reason: str, at_page: int) -> dict | None:
         job["api_chain"]         = chain
         return candidate
 
-    # ─── هیچ API در chain نماند، آخرین تلاش: public جدید ───
+    # آخرین تلاش: public جدید
     fresh = get_next_available_public_api()
     if fresh:
+        model = (fresh["supported_models"] or [None])[0] or get_default_model(fresh["provider"])
         new_entry = {
-            "type":     "public",
-            "id":       fresh["id"],
-            "api_key":  fresh["api_key"],
-            "provider": fresh["provider"],
-            "models":   fresh["supported_models"],
-            "label":    "API عمومی",
+            "type":           "public",
+            "id":             fresh["id"],
+            "api_key":        fresh["api_key"],
+            "provider":       fresh["provider"],
+            "models":         fresh["supported_models"],
+            "selected_model": model,
+            "base_url":       get_default_base_url(fresh["provider"]),
+            "label":          "API عمومی",
         }
         chain.append(new_entry)
         switch_log[-1]["to"] = f"public_{fresh['id']}"
@@ -120,57 +152,68 @@ def switch_to_next_api(job: dict, reason: str, at_page: int) -> dict | None:
 
 
 def report_pages_used(api_entry: dict, count: int):
-    """مصرف صفحه را برای API عمومی ثبت می‌کند."""
     if api_entry and api_entry["type"] == "public":
         increment_public_api_pages(api_entry["id"], count)
 
 
+def detect_provider_and_models(api_key: str, base_url: str = None) -> tuple[str, list]:
+    """
+    Provider و مدل‌های موجود را تشخیص می‌دهد.
+    base_url اختیاری است - اگر داده شود برای OpenAI-compatible APIها استفاده می‌شود.
+    """
+    # ─── تست Google / Gemini ──────────────────────────────
+    if not base_url:
+        try:
+            from google import genai
+            client = genai.Client(api_key=api_key)
+            models_list = list(client.models.list())
+            model_names = []
+            for m in models_list:
+                name = m.name.replace("models/", "")
+                if "gemini" in name.lower():
+                    model_names.append(name)
+            if not model_names:
+                model_names = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
+            return "google", model_names
+        except Exception as e:
+            print(f"Google test failed: {e}")
 
-def detect_provider_and_models(api_key: str) -> tuple[str, list]:
-    # ─── تست Google / Gemini ───────────────────────────────
-    try:
-        from google import genai
-        client = genai.Client(api_key=api_key)
-        # یک درخواست ساده برای تست اعتبار کلید
-        models_list = list(client.models.list())
-        model_names = []
-        for m in models_list:
-            name = m.name.replace("models/", "")
-            # فقط مدل‌های gemini که قابل استفاده هستند
-            if "gemini" in name.lower():
-                model_names.append(name)
-        
-        if not model_names:
-            # اگر لیست خالی بود، مدل‌های پیش‌فرض
-            model_names = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
-        
-        return "google", model_names
-    except Exception as e:
-        print(f"Google test failed: {e}")
-
-    # ─── تست OpenAI ────────────────────────────────────────
+    # ─── تست OpenAI / OpenRouter / Custom ────────────────
     try:
         import openai
-        client = openai.OpenAI(api_key=api_key)
+        kwargs = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        client = openai.OpenAI(**kwargs)
         models = client.models.list()
-        model_names = [m.id for m in models.data if "gpt" in m.id.lower()]
+        model_names = [m.id for m in models.data]
+
         if model_names:
-            return "openai", model_names
+            # تشخیص provider از base_url یا نام مدل‌ها
+            if base_url and "openrouter" in base_url:
+                return "openrouter", model_names
+            if base_url:
+                return "openai", model_names
+            # بدون base_url ← OpenAI اصلی
+            gpt_models = [m for m in model_names if "gpt" in m.lower()]
+            if gpt_models:
+                return "openai", gpt_models
     except Exception as e:
         print(f"OpenAI test failed: {e}")
 
-    # ─── تست OpenRouter ────────────────────────────────────
-    try:
-        import openai
-        client = openai.OpenAI(
-            api_key=api_key,
-            base_url="https://openrouter.ai/api/v1",
-        )
-        models = client.models.list()
-        model_names = [m.id for m in models.data]
-        if model_names:
-            return "openrouter", model_names
-    except Exception as e:
-        print(f"OpenRouter test failed: {e}")
+    # ─── تست OpenRouter (بدون base_url صریح) ─────────────
+    if not base_url:
+        try:
+            import openai
+            client = openai.OpenAI(
+                api_key=api_key,
+                base_url="https://openrouter.ai/api/v1",
+            )
+            models = client.models.list()
+            model_names = [m.id for m in models.data]
+            if model_names:
+                return "openrouter", model_names
+        except Exception as e:
+            print(f"OpenRouter test failed: {e}")
 
     return None, []

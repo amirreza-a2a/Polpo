@@ -73,19 +73,24 @@ def set_user_fallback(telegram_id: int, use_fallback: bool):
 # ════════════════════════════════════════════════════════════
 
 def add_private_api(user_id: int, api_key: str, label: str,
-                    provider: str, models: list, priority: int = 1) -> int:
+                    provider: str, models: list, priority: int = 1,
+                    selected_model: str = None,
+                    base_url: str = None) -> int:
+    import json
+    from database.connection import get_connection
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute(
             """INSERT INTO private_apis
-               (user_id, api_key, label, provider, supported_models, chain_priority)
-               VALUES (%s, %s, %s, %s, %s, %s)""",
-            (user_id, api_key, label, provider, json.dumps(models), priority),
+               (user_id, api_key, label, provider, supported_models,
+                chain_priority, selected_model, base_url)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+            (user_id, api_key, label, provider, json.dumps(models),
+             priority, selected_model, base_url),
         )
         new_id = cur.lastrowid
     conn.close()
     return new_id
-
 
 def get_user_private_apis(user_id: int) -> list:
     conn = get_connection()

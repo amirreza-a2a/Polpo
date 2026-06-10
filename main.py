@@ -28,6 +28,10 @@ from handlers.user import (
     show_my_apis,
     start_add_api,
     receive_api_key,
+    receive_api_model_callback,      # جدید
+    receive_api_model_text,          # جدید
+    receive_api_base_url_callback,   # جدید
+    receive_api_base_url_text,       # جدید
     receive_api_label,
     delete_api_confirm,
     show_history,
@@ -37,6 +41,8 @@ from handlers.user import (
     cancel,
     WAITING_API_KEY,
     WAITING_API_LABEL,
+    WAITING_API_MODEL,               # جدید
+    WAITING_API_BASE_URL,            # جدید
     WAITING_DONATE_KEY,
 )
 from handlers.admin import (
@@ -65,7 +71,6 @@ from handlers.admin import (
 
 
 def main():
-    # ─── راه‌اندازی اولیه ──────────────────────────────────
     init_db()
     ensure_dirs()
 
@@ -75,8 +80,24 @@ def main():
     add_api_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_add_api, pattern="^add_api$")],
         states={
-            WAITING_API_KEY:   [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_api_key)],
-            WAITING_API_LABEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_api_label)],
+            # مرحله ۱: دریافت کلید
+            WAITING_API_KEY: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_api_key),
+            ],
+            # مرحله ۲: انتخاب مدل (دکمه یا تایپ)
+            WAITING_API_MODEL: [
+                CallbackQueryHandler(receive_api_model_callback, pattern="^sel_model:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_api_model_text),
+            ],
+            # مرحله ۳: تنظیم base_url (دکمه یا تایپ)
+            WAITING_API_BASE_URL: [
+                CallbackQueryHandler(receive_api_base_url_callback, pattern="^sel_base_url:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_api_base_url_text),
+            ],
+            # مرحله ۴: دریافت نام
+            WAITING_API_LABEL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_api_label),
+            ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
