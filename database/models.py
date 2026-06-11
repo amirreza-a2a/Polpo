@@ -465,3 +465,46 @@ def get_today_stats() -> dict:
         "total_pages":  stats["total_pages"] or 0,
         "in_queue":     queue["in_queue"]    or 0,
     }
+
+
+
+# ─── فقط توابعی که تغییر کرده‌اند ──────────────────────────
+# این تابع‌ها را در database/models.py جایگزین / اضافه کنید
+
+
+def add_public_api(api_key: str, label: str, provider: str,
+                   models: list, daily_limit: int = 500,
+                   priority: int = 1, donated_by: int = None,
+                   selected_model: str = None,
+                   base_url: str = None) -> int:
+    import json
+    from database.connection import get_connection
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO public_apis
+               (api_key, label, provider, supported_models, daily_page_limit,
+                priority, donated_by, selected_model, base_url)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+            (api_key, label, provider, json.dumps(models),
+             daily_limit, priority, donated_by, selected_model, base_url),
+        )
+        new_id = cur.lastrowid
+    conn.close()
+    return new_id
+
+
+def update_public_api_model_url(api_id: int,
+                                 selected_model: str,
+                                 base_url: str | None) -> None:
+    """مدل و base_url یک API عمومی را آپدیت می‌کند."""
+    from database.connection import get_connection
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """UPDATE public_apis
+               SET selected_model = %s, base_url = %s
+               WHERE id = %s""",
+            (selected_model, base_url, api_id),
+        )
+    conn.close()
