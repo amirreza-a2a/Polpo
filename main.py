@@ -146,7 +146,10 @@ def main():
         states={
             ADD_PROMPT_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_prompt_title)],
             ADD_PROMPT_DESC:  [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_prompt_desc)],
-            ADD_PROMPT_TEXT:  [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_prompt_text)],
+            ADD_PROMPT_TEXT: [
+    MessageHandler(filters.TEXT & ~filters.COMMAND,        receive_prompt_text),
+    MessageHandler(filters.Document.FileExtension("txt"),  receive_prompt_text),
+    ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
