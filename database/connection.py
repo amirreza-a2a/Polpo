@@ -21,7 +21,6 @@ def init_db():
     conn = get_connection()
     with conn.cursor() as cur:
 
-        # ─── users ────────────────────────────────────────
         cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id                  INT AUTO_INCREMENT PRIMARY KEY,
@@ -34,7 +33,6 @@ def init_db():
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         """)
 
-        # ─── private_apis ─────────────────────────────────
         cur.execute("""
         CREATE TABLE IF NOT EXISTS private_apis (
             id             INT AUTO_INCREMENT PRIMARY KEY,
@@ -52,7 +50,6 @@ def init_db():
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         """)
 
-        # ─── public_apis ──────────────────────────────────
         cur.execute("""
         CREATE TABLE IF NOT EXISTS public_apis (
             id               INT AUTO_INCREMENT PRIMARY KEY,
@@ -72,7 +69,6 @@ def init_db():
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         """)
 
-        # ─── prompts ──────────────────────────────────────
         cur.execute("""
         CREATE TABLE IF NOT EXISTS prompts (
             id            INT AUTO_INCREMENT PRIMARY KEY,
@@ -86,43 +82,48 @@ def init_db():
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         """)
 
-        # ─── jobs ─────────────────────────────────────────
         cur.execute("""
         CREATE TABLE IF NOT EXISTS jobs (
-            id                INT AUTO_INCREMENT PRIMARY KEY,
-            user_id           INT NOT NULL,
-            prompt_id         INT NOT NULL,
-            file_path         VARCHAR(500),
-            file_name         VARCHAR(255),
-            total_pages       INT DEFAULT 0,
-            processed_pages   INT DEFAULT 0,
-            api_chain         JSON,
-            current_api_index INT DEFAULT 0,
-            api_switch_log    JSON,
-            model             VARCHAR(100),
-            status            ENUM('pending','processing','done','failed','paused') DEFAULT 'pending',
-            output_path       VARCHAR(500),
-            backup_message_id BIGINT DEFAULT NULL,
-            error_message     TEXT,
-            created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
-            finished_at       DATETIME DEFAULT NULL,
+            id                   INT AUTO_INCREMENT PRIMARY KEY,
+            user_id              INT NOT NULL,
+            prompt_id            INT NOT NULL,
+            file_path            VARCHAR(500),
+            file_name            VARCHAR(255),
+            total_pages          INT DEFAULT 0,
+            processed_pages      INT DEFAULT 0,
+            api_chain            JSON,
+            current_api_index    INT DEFAULT 0,
+            api_switch_log       JSON,
+            model                VARCHAR(100),
+            status               ENUM('pending','processing','done','failed','paused') DEFAULT 'pending',
+            output_path          VARCHAR(500),
+            source_file_id       VARCHAR(500) DEFAULT NULL,
+            source_archive_msg_id BIGINT DEFAULT NULL,
+            backup_message_id    BIGINT DEFAULT NULL,
+            backup_zip_msg_id    BIGINT DEFAULT NULL,
+            error_message        TEXT,
+            created_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
+            finished_at          DATETIME DEFAULT NULL,
             FOREIGN KEY (user_id)   REFERENCES users(id)   ON DELETE CASCADE,
             FOREIGN KEY (prompt_id) REFERENCES prompts(id) ON DELETE RESTRICT
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         """)
 
-        # ─── migration: اضافه کردن ستون‌های جدید ─────────
+        # ─── migration ────────────────────────────────────
         migrations = [
             "ALTER TABLE private_apis ADD COLUMN selected_model VARCHAR(100) DEFAULT NULL",
             "ALTER TABLE private_apis ADD COLUMN base_url VARCHAR(500) DEFAULT NULL",
             "ALTER TABLE public_apis  ADD COLUMN selected_model VARCHAR(100) DEFAULT NULL",
             "ALTER TABLE public_apis  ADD COLUMN base_url VARCHAR(500) DEFAULT NULL",
+            "ALTER TABLE jobs ADD COLUMN source_file_id VARCHAR(500) DEFAULT NULL",
+            "ALTER TABLE jobs ADD COLUMN source_archive_msg_id BIGINT DEFAULT NULL",
+            "ALTER TABLE jobs ADD COLUMN backup_zip_msg_id BIGINT DEFAULT NULL",
         ]
         for sql in migrations:
             try:
                 cur.execute(sql)
             except Exception:
-                pass  # ستون از قبل وجود دارد
+                pass
 
     conn.close()
     print("✅ دیتابیس با موفقیت راه‌اندازی شد.")

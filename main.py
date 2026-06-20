@@ -17,17 +17,24 @@ from handlers.pdf import (
     handle_pdf, on_prompt_selected, on_api_source_selected, on_fallback_selected,
 )
 from handlers.user import (
-    show_panel, show_my_apis, start_add_api,
+    show_panel, show_my_apis,
+    # تاریخچه و آرشیو (جدید)
+    show_history, redeliver_job,
+    show_resume_options, resume_same_api,
+    resume_new_api, resume_api_source, resume_fallback,
+    # افزودن API خصوصی
+    start_add_api,
     receive_api_key,
     receive_api_model_callback, receive_api_model_text,
     receive_api_base_url_callback, receive_api_base_url_text,
     receive_api_label,
-    delete_api_confirm, show_history, toggle_fallback,
+    # اهدا
     start_donate,
     receive_donate_key,
     receive_donate_model_callback, receive_donate_model_text,
     receive_donate_base_url_callback, receive_donate_base_url_text,
-    cancel,
+    # سایر
+    delete_api_confirm, toggle_fallback, cancel,
     WAITING_API_KEY, WAITING_API_LABEL, WAITING_API_MODEL, WAITING_API_BASE_URL,
     WAITING_DONATE_KEY, WAITING_DONATE_MODEL, WAITING_DONATE_BASE_URL,
 )
@@ -58,6 +65,10 @@ def main():
 
     app = Application.builder().token(BOT_TOKEN).build()
 
+    # ════════════════════════════════════════════════════════
+    #  ConversationHandlers
+    # ════════════════════════════════════════════════════════
+
     # ─── API خصوصی (۴ مرحله) ──────────────────────────────
     add_api_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_add_api, pattern="^add_api$")],
@@ -66,12 +77,12 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_api_key),
             ],
             WAITING_API_MODEL: [
-                CallbackQueryHandler(receive_api_model_callback,  pattern="^sel_model_new_api:"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND,   receive_api_model_text),
+                CallbackQueryHandler(receive_api_model_callback, pattern="^sel_model_new_api:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_api_model_text),
             ],
             WAITING_API_BASE_URL: [
                 CallbackQueryHandler(receive_api_base_url_callback, pattern="^sel_base_url:__default__$"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND,     receive_api_base_url_text),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_api_base_url_text),
             ],
             WAITING_API_LABEL: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_api_label),
@@ -89,17 +100,17 @@ def main():
             ],
             WAITING_DONATE_MODEL: [
                 CallbackQueryHandler(receive_donate_model_callback, pattern="^sel_model_donate:"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND,     receive_donate_model_text),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_donate_model_text),
             ],
             WAITING_DONATE_BASE_URL: [
                 CallbackQueryHandler(receive_donate_base_url_callback, pattern="^sel_base_url:__default__$"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND,        receive_donate_base_url_text),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_donate_base_url_text),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    # ─── افزودن API عمومی توسط ادمین (۵ مرحله) ────────────
+    # ─── افزودن API عمومی ادمین (۵ مرحله) ─────────────────
     add_pub_api_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_add_public_api, pattern="^adm_add_pub_api$")],
         states={
@@ -108,11 +119,11 @@ def main():
             ],
             ADD_PUB_MODEL: [
                 CallbackQueryHandler(receive_pub_api_model_callback, pattern="^adm_sel_model:"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND,      receive_pub_api_model_text),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_pub_api_model_text),
             ],
             ADD_PUB_BASE_URL: [
                 CallbackQueryHandler(receive_pub_api_base_url_callback, pattern="^adm_pub_base_url:"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND,         receive_pub_api_base_url_text),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_pub_api_base_url_text),
             ],
             ADD_PUB_LABEL: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_pub_api_label),
@@ -124,17 +135,17 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    # ─── ویرایش مدل/URL API عمومی (۲ مرحله) ───────────────
+    # ─── ویرایش API عمومی (۲ مرحله) ───────────────────────
     edit_pub_api_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_edit_pub_api, pattern="^adm_edit_pub:")],
         states={
             EDIT_PUB_MODEL: [
                 CallbackQueryHandler(receive_edit_pub_model_callback, pattern="^adm_sel_model:"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND,       receive_edit_pub_model_text),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_edit_pub_model_text),
             ],
             EDIT_PUB_BASE_URL: [
                 CallbackQueryHandler(receive_edit_pub_base_url_callback, pattern="^edit_pub_base_url:"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND,          receive_edit_pub_base_url_text),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_edit_pub_base_url_text),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
@@ -146,20 +157,20 @@ def main():
         states={
             ADD_PROMPT_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_prompt_title)],
             ADD_PROMPT_DESC:  [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_prompt_desc)],
-            ADD_PROMPT_TEXT: [
-    MessageHandler(filters.TEXT & ~filters.COMMAND,        receive_prompt_text),
-    MessageHandler(filters.Document.FileExtension("txt"),  receive_prompt_text),
-    ],
+            ADD_PROMPT_TEXT:  [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_prompt_text)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    # ─── ثبت هندلرها ───────────────────────────────────────
+    # ════════════════════════════════════════════════════════
+    #  ثبت هندلرها
+    # ════════════════════════════════════════════════════════
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler("panel", lambda u, c: show_panel(u, c)))
 
-    # ConversationHandler ها (باید قبل از عمومی ثبت شوند)
+    # ConversationHandlers (باید قبل از CallbackQueryHandlers عمومی باشند)
     app.add_handler(add_api_conv)
     app.add_handler(donate_conv)
     app.add_handler(add_pub_api_conv)
@@ -172,12 +183,22 @@ def main():
     # ─── Callbacks کاربر ───────────────────────────────────
     app.add_handler(CallbackQueryHandler(show_panel,        pattern="^panel_main$"))
     app.add_handler(CallbackQueryHandler(show_my_apis,      pattern="^panel_apis$"))
-    app.add_handler(CallbackQueryHandler(show_history,      pattern="^panel_history$"))
     app.add_handler(CallbackQueryHandler(toggle_fallback,   pattern="^toggle_fallback$"))
     app.add_handler(CallbackQueryHandler(delete_api_confirm,pattern="^del_api:"))
-    app.add_handler(CallbackQueryHandler(on_prompt_selected,     pattern="^select_prompt:"))
-    app.add_handler(CallbackQueryHandler(on_api_source_selected, pattern="^api_source:"))
-    app.add_handler(CallbackQueryHandler(on_fallback_selected,   pattern="^fallback:"))
+
+    # PDF flow
+    app.add_handler(CallbackQueryHandler(on_prompt_selected,       pattern="^select_prompt:"))
+    app.add_handler(CallbackQueryHandler(on_api_source_selected,   pattern="^api_source:"))
+    app.add_handler(CallbackQueryHandler(on_fallback_selected,     pattern="^fallback:"))
+
+    # ─── تاریخچه و آرشیو (جدید) ─────────────────────────
+    app.add_handler(CallbackQueryHandler(show_history,         pattern=r"^history_page:\d+$"))
+    app.add_handler(CallbackQueryHandler(redeliver_job,        pattern=r"^redeliver:\d+$"))
+    app.add_handler(CallbackQueryHandler(show_resume_options,  pattern=r"^resume_show:\d+$"))
+    app.add_handler(CallbackQueryHandler(resume_same_api,      pattern=r"^resume_same:\d+$"))
+    app.add_handler(CallbackQueryHandler(resume_new_api,       pattern=r"^resume_new_api:\d+$"))
+    app.add_handler(CallbackQueryHandler(resume_api_source,    pattern=r"^resume_api_src:"))
+    app.add_handler(CallbackQueryHandler(resume_fallback,      pattern=r"^resume_fallback:"))
 
     # ─── Callbacks ادمین ────────────────────────────────────
     app.add_handler(CallbackQueryHandler(show_public_apis,      pattern="^adm_public_apis$"))

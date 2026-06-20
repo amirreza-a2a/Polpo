@@ -1,5 +1,5 @@
 # ============================================================
-#  services/worker.py  –  موتور صف (اجرا شده توسط Cron Job)
+#  services/worker.py
 # ============================================================
 
 import sys
@@ -10,36 +10,22 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import WORKER_LOCK_FILE
 from database.models import (
-    get_next_pending_job,
-    get_job,
-    update_job_status,
-    get_prompt_by_id,
-    increment_user_pages,
+    get_next_pending_job, get_job, update_job_status,
+    get_prompt_by_id, increment_user_pages,
 )
 from services.pdf_processor import process_job
 from services.backup import run_backup
-from utils.file_manager import (
-    get_output_path,
-    has_attachments,
-    create_attachments_zip,
-)
+from utils.file_manager import get_output_path, has_attachments, create_attachments_zip
 
 
-def is_locked() -> bool:
-    return os.path.exists(WORKER_LOCK_FILE)
-
-
+def is_locked()    -> bool: return os.path.exists(WORKER_LOCK_FILE)
 def acquire_lock():
-    with open(WORKER_LOCK_FILE, "w") as f:
-        f.write(str(os.getpid()))
-
-
+    with open(WORKER_LOCK_FILE, "w") as f: f.write(str(os.getpid()))
 def release_lock():
-    if os.path.exists(WORKER_LOCK_FILE):
-        os.remove(WORKER_LOCK_FILE)
+    if os.path.exists(WORKER_LOCK_FILE): os.remove(WORKER_LOCK_FILE)
 
 
-async def _notify_user(telegram_id: int, text: str):
+async def _notify(telegram_id: int, text: str):
     from telegram import Bot
     from config import BOT_TOKEN
     bot = Bot(token=BOT_TOKEN)
@@ -50,15 +36,99 @@ async def _notify_user(telegram_id: int, text: str):
 
 
 def notify_user(telegram_id: int, text: str):
-    asyncio.run(_notify_user(telegram_id, text))
+    asyncio.run(_notify(telegram_id, text))
 
 
-def on_api_switch(user_telegram_id: int, old_label: str, new_label: str):
-    notify_user(
-        user_telegram_id,
-        f"🔄 API تغییر کرد\nاز: {old_label}\nبه: {new_label}",
-    )
+def on_api_switch(telegram_id: int, old: str, new: str):
+    notify_user(telegram_id, f"🔄 API تغییر کرد\nاز: {old}\nبه: {new}")
 
+
+# ─── بازیابی فایل PDF از آرشیو ───────────────────────────
+
+async def _download_source_file(source_file_id: str, dest_path: str) -> bool:
+    """فایل PDF را از تلگرام دانلود می‌کند."""
+    from telegram import Bot
+    from config import BOT_TOKEN
+    bot = Bot(token=BOT_TOKEN)
+    try:
+        tg_file = await bot.get_file(source_file_id)
+        await tg_file.download_to_drive(dest_path)
+        print(f"✅ فایل سورس دانلود شد: {dest_path}")
+        return True
+    except Exception as e:
+        print(f"⚠️ خطا در دانلود فایل سورس: {e}")
+        return False
+
+
+def recover_source_file(job: dict) -> str | None:
+    """
+    اگر فایل PDF روی دیسک نباشد، از آرشیو تلگرام دانلود می‌کند.
+    مسیر فایل جدید را برمی‌گرداند یا None در صورت خطا.
+    """
+    file_path = job.get("file_path")
+
+    # فایل روی دیسک هست
+    if file_path and os.path.exists(file_path):
+        return file_path
+
+    # نیاز به دانلود مجدد
+    source_file_id = job.get("source_file_id")
+    if not source_file_id:
+        print(f"⚠️ جاب {job['id']}: هیچ source_file_id ذخیره نشده.")
+        return None
+
+    print(f"📥 جاب {job['id']}: فایل روی دیسک نیست، در حال دانلود از آرشیو...")
+
+    # مسیر جدید
+    from utils.file_manager import get_temp_path
+    new_path = file_path or get_temp_path(f"resumed_job_{job['id']}.pdf")
+
+    import nest_asyncio
+    nest_asyncio.apply()
+    success = asyncio.run(_download_source_file(source_file_id, new_path))
+
+    return new_path if success else None
+
+
+# ─── ارسال نتایج به کاربر ────────────────────────────────
+
+def _send_result_to_user(telegram_id: int, job: dict):
+    async def _send():
+        from telegram import Bot
+        from config import BOT_TOKEN
+        bot = Bot(token=BOT_TOKEN)
+        try:
+            with open(job["output_path"], "rb") as f:
+                await bot.send_document(
+                    chat_id  = telegram_id,
+                    document = f,
+                    filename = f"{job['file_name']}.md",
+                    caption  = f"📄 {job['file_name']} — پردازش کامل شد.",
+                )
+        except Exception as e:
+            print(f"⚠️ خطا در ارسال MD به {telegram_id}: {e}")
+    asyncio.run(_send())
+
+
+def _send_zip_to_user(telegram_id: int, job: dict, zip_path: str):
+    async def _send():
+        from telegram import Bot
+        from config import BOT_TOKEN
+        bot = Bot(token=BOT_TOKEN)
+        try:
+            with open(zip_path, "rb") as f:
+                await bot.send_document(
+                    chat_id  = telegram_id,
+                    document = f,
+                    filename = "attachments.zip",
+                    caption  = f"🖼 تصاویر {job['file_name']}",
+                )
+        except Exception as e:
+            print(f"⚠️ خطا در ارسال ZIP به {telegram_id}: {e}")
+    asyncio.run(_send())
+
+
+# ─── حلقه اصلی ───────────────────────────────────────────
 
 def run():
     if is_locked():
@@ -74,6 +144,16 @@ def run():
     print(f"🚀 شروع پردازش جاب {job['id']}...")
 
     try:
+        # ─── بررسی / بازیابی فایل PDF ─────────────────────
+        actual_path = recover_source_file(job)
+        if not actual_path:
+            update_job_status(
+                job["id"], "failed",
+                "فایل PDF قابل بازیابی نیست. لطفاً جاب را از نو ارسال کنید."
+            )
+            return
+
+        job["file_path"] = actual_path
         update_job_status(job["id"], "processing")
 
         if not job.get("output_path"):
@@ -87,9 +167,9 @@ def run():
         user = get_user_by_id(job["user_id"])
 
         success = process_job(
-            job=job,
-            prompt_text=prompt["prompt_text"],
-            notify_switch_callback=lambda uid, old, new: on_api_switch(
+            job            = job,
+            prompt_text    = prompt["prompt_text"],
+            notify_switch_callback = lambda uid, old, new: on_api_switch(
                 user["telegram_id"], old, new
             ),
         )
@@ -100,9 +180,8 @@ def run():
 
             notify_user(
                 user["telegram_id"],
-                f"✅ پردازش {job['file_name']} تمام شد!\n"
-                f"📊 {job['total_pages']} صفحه پردازش شد.\n"
-                "در حال ارسال فایل‌ها..."
+                f"✅ پردازش *{job['file_name']}* تمام شد!\n"
+                f"📊 {job['total_pages']} صفحه | در حال ارسال فایل‌ها..."
             )
 
             _send_result_to_user(user["telegram_id"], job)
@@ -117,19 +196,21 @@ def run():
             run_backup(job, user)
 
         else:
-            fresh_job = get_job(job["id"])
-            if fresh_job["status"] == "paused":
+            fresh = get_job(job["id"])
+            status_msg = fresh.get("error_message", "ظرفیت API تمام شد")
+            if fresh["status"] == "paused":
                 notify_user(
                     user["telegram_id"],
-                    f"⏸ پردازش {job['file_name']} متوقف شد.\n"
-                    f"دلیل: {fresh_job.get('error_message', 'ظرفیت API تمام شد')}\n"
-                    "لطفاً یک API اضافه کنید یا فردا دوباره امتحان کنید."
+                    f"⏸ پردازش *{job['file_name']}* متوقف شد.\n"
+                    f"دلیل: {status_msg}\n\n"
+                    "از پنل شخصی می‌توانید ادامه پردازش را شروع کنید."
                 )
             else:
                 notify_user(
                     user["telegram_id"],
-                    f"❌ پردازش {job['file_name']} با خطا مواجه شد.\n"
-                    f"دلیل: {fresh_job.get('error_message', 'خطای ناشناخته')}"
+                    f"❌ پردازش *{job['file_name']}* با خطا مواجه شد.\n"
+                    f"دلیل: {status_msg}\n\n"
+                    "از پنل شخصی می‌توانید تلاش مجدد کنید."
                 )
 
     except Exception as e:
@@ -137,42 +218,6 @@ def run():
         update_job_status(job["id"], "failed", str(e))
     finally:
         release_lock()
-
-
-def _send_result_to_user(telegram_id: int, job: dict):
-    async def _send():
-        from telegram import Bot
-        from config import BOT_TOKEN
-        bot = Bot(token=BOT_TOKEN)
-        try:
-            with open(job["output_path"], "rb") as f:
-                await bot.send_document(
-                    chat_id  = telegram_id,
-                    document = f,
-                    filename = f"{job['file_name']}.md",
-                    caption  = f"📄 {job['file_name']} - پردازش کامل شد.",
-                )
-        except Exception as e:
-            print(f"⚠️ خطا در ارسال MD به کاربر {telegram_id}: {e}")
-    asyncio.run(_send())
-
-
-def _send_zip_to_user(telegram_id: int, job: dict, zip_path: str):
-    async def _send():
-        from telegram import Bot
-        from config import BOT_TOKEN
-        bot = Bot(token=BOT_TOKEN)
-        try:
-            with open(zip_path, "rb") as f:
-                await bot.send_document(
-                    chat_id  = telegram_id,
-                    document = f,
-                    filename = "attachments.zip",
-                    caption  = f"🖼 تصاویر و نمودارهای {job['file_name']}",
-                )
-        except Exception as e:
-            print(f"⚠️ خطا در ارسال ZIP به کاربر {telegram_id}: {e}")
-    asyncio.run(_send())
 
 
 def get_user_by_id(user_id: int) -> dict:

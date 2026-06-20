@@ -400,12 +400,18 @@ def update_job_progress(job_id: int, processed_pages: int,
     conn.close()
 
 
-def update_job_backup(job_id: int, backup_message_id: int):
+
+def update_job_backup(job_id: int,
+                      backup_message_id: int,
+                      backup_zip_msg_id: int = None) -> None:
+    """شناسه پیام‌های بکاپ MD و ZIP را ذخیره می‌کند."""
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute(
-            "UPDATE jobs SET backup_message_id = %s WHERE id = %s",
-            (backup_message_id, job_id),
+            """UPDATE jobs
+               SET backup_message_id = %s, backup_zip_msg_id = %s
+               WHERE id = %s""",
+            (backup_message_id, backup_zip_msg_id, job_id),
         )
     conn.close()
 
@@ -468,10 +474,6 @@ def get_today_stats() -> dict:
 
 
 
-# ─── فقط توابعی که تغییر کرده‌اند ──────────────────────────
-# این تابع‌ها را در database/models.py جایگزین / اضافه کنید
-
-
 def add_public_api(api_key: str, label: str, provider: str,
                    models: list, daily_limit: int = 500,
                    priority: int = 1, donated_by: int = None,
@@ -494,6 +496,26 @@ def add_public_api(api_key: str, label: str, provider: str,
     return new_id
 
 
+
+# ─── آپدیت اطلاعات سورس جاب ─────────────────────────────
+ 
+def update_job_source(job_id: int,
+                      source_file_id: str,
+                      source_archive_msg_id: int) -> None:
+    """file_id و message_id سورس PDF را در آرشیو ذخیره می‌کند."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """UPDATE jobs
+               SET source_file_id = %s, source_archive_msg_id = %s
+               WHERE id = %s""",
+            (source_file_id, source_archive_msg_id, job_id),
+        )
+    conn.close()
+ 
+
+
+
 def update_public_api_model_url(api_id: int,
                                  selected_model: str,
                                  base_url: str | None) -> None:
@@ -508,3 +530,100 @@ def update_public_api_model_url(api_id: int,
             (selected_model, base_url, api_id),
         )
     conn.close()
+    
+    
+    
+    
+    
+    
+
+# ─── تاریخچه صفحه‌بندی‌شده ──────────────────────────────
+ 
+def get_user_jobs_paginated(user_id: int,
+                             page: int = 1,
+                             per_page: int = 5) -> tuple[list, int]:
+    """
+    جاب‌های کاربر را صفحه‌بندی‌شده برمی‌گرداند.
+    خروجی: (لیست جاب‌ها، تعداد کل)
+    """
+    offset = (page - 1) * per_page
+    conn   = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) AS total FROM jobs WHERE user_id = %s",
+            (user_id,),
+        )
+        total = cur.fetchone()["total"]
+ 
+        cur.execute(
+            """SELECT id, file_name, total_pages, processed_pages,
+                      status, created_at, backup_message_id,
+                      backup_zip_msg_id, source_file_id, error_message,
+                      output_path
+               FROM jobs
+               WHERE user_id = %s
+               ORDER BY created_at DESC
+               LIMIT %s OFFSET %s""",
+            (user_id, per_page, offset),
+        )
+        jobs = cur.fetchall()
+    conn.close()
+    return jobs, total
+ 
+ 
+# ─── دریافت یک جاب خاص برای کاربر (بررسی امنیتی) ───────
+ 
+def get_job_for_user(job_id: int, user_id: int) -> dict | None:
+    """جاب را فقط اگر متعلق به این کاربر باشد برمی‌گرداند."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM jobs WHERE id = %s AND user_id = %s",
+            (job_id, user_id),
+        )
+        job = cur.fetchone()
+    conn.close()
+    return job
+ 
+ 
+# ─── آپدیت api_chain جاب ────────────────────────────────
+ 
+def update_job_api_chain(job_id: int, api_chain: list) -> None:
+    """زنجیره API جاب را آپدیت می‌کند (برای resume با API جدید)."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """UPDATE jobs
+               SET api_chain = %s, current_api_index = 0
+               WHERE id = %s""",
+            (json.dumps(api_chain), job_id),
+        )
+    conn.close()
+ 
+ 
+# ─── requeue کردن جاب ───────────────────────────────────
+ 
+def requeue_job(job_id: int, file_path: str = None) -> None:
+    """
+    جاب paused/failed را به صف برمی‌گرداند.
+    processed_pages حفظ می‌شود تا از همانجا ادامه دهد.
+    """
+    conn = get_connection()
+    with conn.cursor() as cur:
+        if file_path:
+            cur.execute(
+                """UPDATE jobs
+                   SET status = 'pending', error_message = NULL,
+                       file_path = %s
+                   WHERE id = %s""",
+                (file_path, job_id),
+            )
+        else:
+            cur.execute(
+                """UPDATE jobs
+                   SET status = 'pending', error_message = NULL
+                   WHERE id = %s""",
+                (job_id,),
+            )
+    conn.close()
+ 
