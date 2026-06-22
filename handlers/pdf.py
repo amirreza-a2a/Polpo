@@ -113,8 +113,7 @@ async def on_prompt_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
             parse_mode="Markdown",
         )
     else:
-        await _finalize_job(query, context, use_public=True)
-
+        await _finalize_job(query, context, include_private=False, include_public=True)
 
 async def on_api_source_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query  = update.callback_query
@@ -132,22 +131,27 @@ async def on_api_source_selected(update: Update, context: ContextTypes.DEFAULT_T
             reply_markup=InlineKeyboardMarkup(buttons),
         )
     else:
-        await _finalize_job(query, context, use_public=True)
-
-
+        await _finalize_job(query, context, include_private=False, include_public=True)
+            
+        
 async def on_fallback_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query    = update.callback_query
     fallback = query.data.split(":")[1]
     await query.answer()
-    await _finalize_job(query, context, use_public=(fallback == "yes"))
+    if fallback == "yes":
+        await _finalize_job(query, context, include_private=True, include_public=True)
+    else:
+        await _finalize_job(query, context, include_private=True, include_public=False)
+        
 
-
-async def _finalize_job(query, context: ContextTypes.DEFAULT_TYPE, use_public: bool):
+async def _finalize_job(query, context: ContextTypes.DEFAULT_TYPE,
+                         include_private: bool, include_public: bool):
     pdf_data  = context.user_data["pending_pdf"]
     db_user   = pdf_data["db_user"]
     prompt_id = context.user_data["selected_prompt_id"]
-
-    chain = build_api_chain(db_user["id"], use_public)
+    
+    
+    chain = build_api_chain(db_user["id"], include_private, include_public)
     if not chain:
         await query.edit_message_text(
             "❌ هیچ API‌ای در دسترس نیست.\n"
@@ -155,7 +159,7 @@ async def _finalize_job(query, context: ContextTypes.DEFAULT_TYPE, use_public: b
         )
         return
 
-    first_model = chain[0].get("selected_model") or (chain[0]["models"] or ["gemini-2.5-flash"])[0]
+    first_model = chain[0].get("selected_model") or (chain[0]["models"] or ["gemini-3.5-flash"])[0]
 
     job_id = create_job(
         user_id     = db_user["id"],

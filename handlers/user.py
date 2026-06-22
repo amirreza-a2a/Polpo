@@ -299,9 +299,8 @@ async def resume_new_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
         )
     else:
-        # API خصوصی ندارد → مستقیم با عمومی
-        await _do_resume_with_chain(query, context, job_id, db_user["id"], use_public=True)
-
+        await _do_resume_with_chain(query, context, job_id, db_user["id"],
+                                    include_private=False, include_public=True)
 
 async def resume_api_source(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """پس از انتخاب نوع API برای resume."""
@@ -326,8 +325,8 @@ async def resume_api_source(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=buttons,
         )
     else:
-        await _do_resume_with_chain(query, context, job_id, db_user["id"], use_public=True)
-
+        await _do_resume_with_chain(query, context, job_id, db_user["id"],
+                                    include_private=False, include_public=True)
 
 async def resume_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query   = update.callback_query
@@ -338,16 +337,19 @@ async def resume_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     db_user = get_or_create_user(user_tg.id)
-    await _do_resume_with_chain(
-        query, context, job_id, db_user["id"],
-        use_public=(fb == "yes"),
-    )
+    if fb == "yes":
+        await _do_resume_with_chain(query, context, job_id, db_user["id"],
+                                    include_private=True, include_public=True)
+    else:
+        await _do_resume_with_chain(query, context, job_id, db_user["id"],
+                                    include_private=True, include_public=False)
 
 
-async def _do_resume_with_chain(query, context, job_id: int,
-                                 user_db_id: int, use_public: bool):
+async def _do_resume_with_chain(query, context, job_id: int, user_db_id: int,
+                                 include_private: bool, include_public: bool):
     """chain جدید می‌سازد، جاب را آپدیت می‌کند، و requeue می‌کند."""
-    chain = build_api_chain(user_db_id, use_public)
+    
+    chain = build_api_chain(user_db_id, include_private, include_public)
     if not chain:
         await query.edit_message_text(
             "❌ هیچ API‌ای در دسترس نیست. ابتدا یک API اضافه کنید."

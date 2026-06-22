@@ -175,6 +175,56 @@ def get_next_available_public_api() -> dict | None:
     return api
 
 
+
+
+def get_all_available_public_apis() -> list:
+    """
+    تمام API های عمومی فعال و دارای ظرفیت باقی‌مانده را
+    به ترتیب priority برمی‌گرداند (برای ساخت چین کامل fallback).
+    """
+    conn = get_connection()
+    with conn.cursor() as cur:
+        # ریست روزانه API هایی که نیاز دارند
+        cur.execute(
+            "UPDATE public_apis SET pages_used_today = 0, daily_reset_date = CURDATE() "
+            "WHERE daily_reset_date < CURDATE()"
+        )
+        cur.execute(
+            """SELECT * FROM public_apis
+               WHERE is_active = 1
+                 AND pages_used_today < daily_page_limit
+               ORDER BY priority ASC"""
+        )
+        rows = cur.fetchall()
+    conn.close()
+    for r in rows:
+        if isinstance(r.get("supported_models"), str):
+            r["supported_models"] = json.loads(r["supported_models"])
+    return rows
+
+
+def get_public_api_by_id(api_id: int) -> dict | None:
+    """
+    وضعیت فعلی یک API عمومی مشخص را برمی‌گرداند (برای اعتبارسنجی
+    حین سوئیچ — آیا هنوز فعاله و ظرفیت داره).
+    """
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE public_apis SET pages_used_today = 0, daily_reset_date = CURDATE() "
+            "WHERE id = %s AND daily_reset_date < CURDATE()",
+            (api_id,),
+        )
+        cur.execute("SELECT * FROM public_apis WHERE id = %s", (api_id,))
+        api = cur.fetchone()
+    conn.close()
+    if api and isinstance(api.get("supported_models"), str):
+        api["supported_models"] = json.loads(api["supported_models"])
+    return api
+
+
+
+
 def get_all_public_apis() -> list:
     conn = get_connection()
     with conn.cursor() as cur:
@@ -673,3 +723,9 @@ def requeue_job_for_auto_retry(job_id: int) -> None:
             (job_id,),
         )
     conn.close()
+    
+    
+    
+
+
+
