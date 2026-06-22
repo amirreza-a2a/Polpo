@@ -13,6 +13,7 @@ from database.models import (
     reset_daily_pages_if_needed,
     get_user_jobs_paginated, get_job_for_user,
     update_job_api_chain, requeue_job,
+    set_auto_retry,
 )
 from services.api_manager import (
     detect_provider_and_models, get_default_base_url, build_api_chain,
@@ -44,7 +45,7 @@ STATUS_EMOJI = {
 #  پنل اصلی
 # ════════════════════════════════════════════════════════════
 
-async def show_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_panel(update, context):
     query   = update.callback_query
     user_tg = update.effective_user
     db_user = get_or_create_user(user_tg.id, user_tg.username)
@@ -56,7 +57,9 @@ async def show_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         f"🗂 *پنل شخصی شما*\n\n"
         f"📊 مصرف امروز: {pages_used}/{DAILY_PAGE_LIMIT} صفحه\n{bar}\n\n"
-        f"🔄 Fallback: {'✅ فعال' if db_user['use_public_fallback'] else '🔒 غیرفعال'}"
+        f"🔄 Fallback: {'✅ فعال' if db_user['use_public_fallback'] else '🔒 غیرفعال'}\n"
+        f"🔁 Auto-Retry: {'✅ فعال' if db_user.get('auto_retry') else '🔒 غیرفعال'}"
+        + ("\n   _جاب‌های متوقف‌شده تا ۵ بار خودکار retry می‌شوند_" if db_user.get('auto_retry') else "")
     )
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔑 API های من",      callback_data="panel_apis")],
@@ -66,6 +69,10 @@ async def show_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🔒 غیرفعال‌کردن Fallback" if db_user["use_public_fallback"] else "✅ فعال‌کردن Fallback",
             callback_data="toggle_fallback",
         )],
+        [InlineKeyboardButton(
+            "🔴 خاموش‌کردن Auto-Retry" if db_user.get("auto_retry") else "🔁 روشن‌کردن Auto-Retry",
+            callback_data="toggle_auto_retry",
+        )],
     ])
 
     if query:
@@ -73,7 +80,6 @@ async def show_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
     else:
         await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
-
 
 # ════════════════════════════════════════════════════════════
 #  تاریخچه صفحه‌بندی‌شده
@@ -608,6 +614,19 @@ async def toggle_fallback(update, context):
     await query.answer(f"Fallback: {'✅ فعال' if new_fallback else '🔒 غیرفعال'}", show_alert=True)
     await show_panel(update, context)
 
+
+async def toggle_auto_retry(update, context):
+    query   = update.callback_query
+    user_tg = update.effective_user
+    await query.answer()
+    db_user   = get_user(user_tg.id)
+    new_value = not bool(db_user.get("auto_retry"))
+    set_auto_retry(user_tg.id, new_value)
+    await query.answer(
+        f"Auto-Retry: {'✅ فعال شد' if new_value else '🔴 غیرفعال شد'}",
+        show_alert=True,
+    )
+    await show_panel(update, context)
 
 async def cancel(update, context):
     await update.message.reply_text("❌ عملیات لغو شد.")

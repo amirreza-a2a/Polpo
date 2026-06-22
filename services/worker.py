@@ -12,10 +12,13 @@ from config import WORKER_LOCK_FILE
 from database.models import (
     get_next_pending_job, get_job, update_job_status,
     get_prompt_by_id, increment_user_pages,
+    increment_job_retry_count, requeue_job_for_auto_retry,
 )
 from services.pdf_processor import process_job
 from services.backup import run_backup
 from utils.file_manager import get_output_path, has_attachments, create_attachments_zip
+
+MAX_AUTO_RETRY = 5
 
 
 def is_locked()    -> bool: return os.path.exists(WORKER_LOCK_FILE)
@@ -46,7 +49,6 @@ def on_api_switch(telegram_id: int, old: str, new: str):
 # ─── بازیابی فایل PDF از آرشیو ───────────────────────────
 
 async def _download_source_file(source_file_id: str, dest_path: str) -> bool:
-    """فایل PDF را از تلگرام دانلود می‌کند."""
     from telegram import Bot
     from config import BOT_TOKEN
     bot = Bot(token=BOT_TOKEN)
@@ -61,32 +63,22 @@ async def _download_source_file(source_file_id: str, dest_path: str) -> bool:
 
 
 def recover_source_file(job: dict) -> str | None:
-    """
-    اگر فایل PDF روی دیسک نباشد، از آرشیو تلگرام دانلود می‌کند.
-    مسیر فایل جدید را برمی‌گرداند یا None در صورت خطا.
-    """
     file_path = job.get("file_path")
-
-    # فایل روی دیسک هست
     if file_path and os.path.exists(file_path):
         return file_path
 
-    # نیاز به دانلود مجدد
     source_file_id = job.get("source_file_id")
     if not source_file_id:
         print(f"⚠️ جاب {job['id']}: هیچ source_file_id ذخیره نشده.")
         return None
 
     print(f"📥 جاب {job['id']}: فایل روی دیسک نیست، در حال دانلود از آرشیو...")
-
-    # مسیر جدید
     from utils.file_manager import get_temp_path
     new_path = file_path or get_temp_path(f"resumed_job_{job['id']}.pdf")
 
     import nest_asyncio
     nest_asyncio.apply()
     success = asyncio.run(_download_source_file(source_file_id, new_path))
-
     return new_path if success else None
 
 
@@ -128,6 +120,59 @@ def _send_zip_to_user(telegram_id: int, job: dict, zip_path: str):
     asyncio.run(_send())
 
 
+# ─── مدیریت توقف جاب (paused / failed) ───────────────────
+
+def _handle_job_stopped(job: dict, user: dict):
+    """
+    وقتی جاب paused یا failed می‌شود تصمیم می‌گیرد:
+    اگر auto_retry کاربر روشن است و retry_count < MAX → requeue خودکار
+    در غیر این صورت → اطلاع برای resume دستی
+    """
+    fresh      = get_job(job["id"])
+    status_msg = fresh.get("error_message") or "ظرفیت API تمام شد"
+
+    if user.get("auto_retry"):
+        current_retry = fresh.get("retry_count", 0)
+
+        if current_retry < MAX_AUTO_RETRY:
+            new_count = increment_job_retry_count(job["id"])
+            requeue_job_for_auto_retry(job["id"])
+            notify_user(
+                user["telegram_id"],
+                f"🔁 پردازش *{job['file_name']}* متوقف شد ولی به صورت "
+                f"خودکار دوباره در صف قرار گرفت.\n"
+                f"تلاش {new_count}/{MAX_AUTO_RETRY}\n"
+                f"📊 پیشرفت: {job['processed_pages']}/{job['total_pages']} صفحه"
+            )
+            return
+
+        # سقف تلاش‌ها پر شده
+        notify_user(
+            user["telegram_id"],
+            f"❌ پردازش *{job['file_name']}* پس از {MAX_AUTO_RETRY} تلاش "
+            f"خودکار هم ناموفق بود.\n"
+            f"دلیل آخرین خطا: {status_msg}\n\n"
+            "از پنل شخصی می‌توانید به‌صورت دستی با تنظیمات جدید ادامه دهید."
+        )
+        return
+
+    # ─── auto_retry خاموش است — رفتار قبلی ────────────────
+    if fresh["status"] == "paused":
+        notify_user(
+            user["telegram_id"],
+            f"⏸ پردازش *{job['file_name']}* متوقف شد.\n"
+            f"دلیل: {status_msg}\n\n"
+            "از پنل شخصی می‌توانید ادامه پردازش را شروع کنید."
+        )
+    else:
+        notify_user(
+            user["telegram_id"],
+            f"❌ پردازش *{job['file_name']}* با خطا مواجه شد.\n"
+            f"دلیل: {status_msg}\n\n"
+            "از پنل شخصی می‌توانید تلاش مجدد کنید."
+        )
+
+
 # ─── حلقه اصلی ───────────────────────────────────────────
 
 def run():
@@ -144,7 +189,6 @@ def run():
     print(f"🚀 شروع پردازش جاب {job['id']}...")
 
     try:
-        # ─── بررسی / بازیابی فایل PDF ─────────────────────
         actual_path = recover_source_file(job)
         if not actual_path:
             update_job_status(
@@ -196,22 +240,7 @@ def run():
             run_backup(job, user)
 
         else:
-            fresh = get_job(job["id"])
-            status_msg = fresh.get("error_message", "ظرفیت API تمام شد")
-            if fresh["status"] == "paused":
-                notify_user(
-                    user["telegram_id"],
-                    f"⏸ پردازش *{job['file_name']}* متوقف شد.\n"
-                    f"دلیل: {status_msg}\n\n"
-                    "از پنل شخصی می‌توانید ادامه پردازش را شروع کنید."
-                )
-            else:
-                notify_user(
-                    user["telegram_id"],
-                    f"❌ پردازش *{job['file_name']}* با خطا مواجه شد.\n"
-                    f"دلیل: {status_msg}\n\n"
-                    "از پنل شخصی می‌توانید تلاش مجدد کنید."
-                )
+            _handle_job_stopped(job, user)
 
     except Exception as e:
         print(f"❌ خطای بحرانی در جاب {job['id']}: {e}")

@@ -626,4 +626,50 @@ def requeue_job(job_id: int, file_path: str = None) -> None:
                 (job_id,),
             )
     conn.close()
- 
+
+
+
+
+
+def set_auto_retry(telegram_id: int, enabled: bool) -> None:
+    """روشن/خاموش کردن Auto-Retry برای یک کاربر."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE users SET auto_retry = %s WHERE telegram_id = %s",
+            (1 if enabled else 0, telegram_id),
+        )
+    conn.close()
+
+
+def increment_job_retry_count(job_id: int) -> int:
+    """retry_count جاب را یکی افزایش می‌دهد و مقدار جدید را برمی‌گرداند."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE jobs SET retry_count = retry_count + 1 WHERE id = %s",
+            (job_id,),
+        )
+        cur.execute("SELECT retry_count FROM jobs WHERE id = %s", (job_id,))
+        new_count = cur.fetchone()["retry_count"]
+    conn.close()
+    return new_count
+
+
+def requeue_job_for_auto_retry(job_id: int) -> None:
+    """
+    جاب را برای auto-retry به انتهای صف می‌فرستد.
+    created_at = NOW() می‌شود تا در آخر صف قرار بگیرد.
+    api_chain و processed_pages دست‌نخورده باقی می‌مانند (تنظیمات قبلی).
+    """
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """UPDATE jobs
+               SET status = 'pending',
+                   error_message = NULL,
+                   created_at = NOW()
+               WHERE id = %s""",
+            (job_id,),
+        )
+    conn.close()

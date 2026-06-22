@@ -21,7 +21,9 @@ from handlers.user import (
     # تاریخچه و آرشیو (جدید)
     show_history, redeliver_job,
     show_resume_options, resume_same_api,
-    resume_new_api, resume_api_source, resume_fallback,
+    resume_new_api, resume_api_source, resume_fallback, 
+    toggle_auto_retry,
+
     # افزودن API خصوصی
     start_add_api,
     receive_api_key,
@@ -184,6 +186,7 @@ def main():
     app.add_handler(CallbackQueryHandler(show_panel,        pattern="^panel_main$"))
     app.add_handler(CallbackQueryHandler(show_my_apis,      pattern="^panel_apis$"))
     app.add_handler(CallbackQueryHandler(toggle_fallback,   pattern="^toggle_fallback$"))
+    app.add_handler(CallbackQueryHandler(toggle_auto_retry, pattern="^toggle_auto_retry$"))
     app.add_handler(CallbackQueryHandler(delete_api_confirm,pattern="^del_api:"))
 
     # PDF flow

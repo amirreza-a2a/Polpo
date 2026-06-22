@@ -29,6 +29,8 @@ def init_db():
             daily_pages_used    INT DEFAULT 0,
             daily_reset_date    DATE DEFAULT (CURDATE()),
             use_public_fallback TINYINT(1) DEFAULT 1,
+            auto_retry          TINYINT(1) DEFAULT 0
+                        COMMENT '1 = جاب‌های متوقف‌شده خودکار retry شوند',
             created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         """)
@@ -84,26 +86,28 @@ def init_db():
 
         cur.execute("""
         CREATE TABLE IF NOT EXISTS jobs (
-            id                   INT AUTO_INCREMENT PRIMARY KEY,
-            user_id              INT NOT NULL,
-            prompt_id            INT NOT NULL,
-            file_path            VARCHAR(500),
-            file_name            VARCHAR(255),
-            total_pages          INT DEFAULT 0,
-            processed_pages      INT DEFAULT 0,
-            api_chain            JSON,
-            current_api_index    INT DEFAULT 0,
-            api_switch_log       JSON,
-            model                VARCHAR(100),
-            status               ENUM('pending','processing','done','failed','paused') DEFAULT 'pending',
-            output_path          VARCHAR(500),
-            source_file_id       VARCHAR(500) DEFAULT NULL,
+            id                    INT AUTO_INCREMENT PRIMARY KEY,
+            user_id               INT NOT NULL,
+            prompt_id             INT NOT NULL,
+            file_path             VARCHAR(500),
+            file_name             VARCHAR(255),
+            total_pages           INT DEFAULT 0,
+            processed_pages       INT DEFAULT 0,
+            api_chain             JSON,
+            current_api_index     INT DEFAULT 0,
+            api_switch_log        JSON,
+            model                 VARCHAR(100),
+            status                ENUM('pending','processing','done','failed','paused') DEFAULT 'pending',
+            output_path           VARCHAR(500),
+            source_file_id        VARCHAR(500) DEFAULT NULL,
             source_archive_msg_id BIGINT DEFAULT NULL,
-            backup_message_id    BIGINT DEFAULT NULL,
-            backup_zip_msg_id    BIGINT DEFAULT NULL,
-            error_message        TEXT,
-            created_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
-            finished_at          DATETIME DEFAULT NULL,
+            backup_message_id     BIGINT DEFAULT NULL,
+            backup_zip_msg_id     BIGINT DEFAULT NULL,
+            retry_count           INT DEFAULT 0
+                        COMMENT 'تعداد دفعاتی که auto-retry روی این جاب اجرا شده',
+            error_message         TEXT,
+            created_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
+            finished_at           DATETIME DEFAULT NULL,
             FOREIGN KEY (user_id)   REFERENCES users(id)   ON DELETE CASCADE,
             FOREIGN KEY (prompt_id) REFERENCES prompts(id) ON DELETE RESTRICT
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -118,6 +122,8 @@ def init_db():
             "ALTER TABLE jobs ADD COLUMN source_file_id VARCHAR(500) DEFAULT NULL",
             "ALTER TABLE jobs ADD COLUMN source_archive_msg_id BIGINT DEFAULT NULL",
             "ALTER TABLE jobs ADD COLUMN backup_zip_msg_id BIGINT DEFAULT NULL",
+            "ALTER TABLE users ADD COLUMN auto_retry TINYINT(1) DEFAULT 0",
+            "ALTER TABLE jobs  ADD COLUMN retry_count INT DEFAULT 0",
         ]
         for sql in migrations:
             try:
