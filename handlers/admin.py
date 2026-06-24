@@ -427,28 +427,22 @@ async def receive_prompt_desc(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     return ADD_PROMPT_TEXT
 
+
 async def receive_prompt_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ─── دریافت از فایل .txt ──────────────────────────────
+    # دریافت متن — هم از پیام متنی هم از فایل .txt
     if update.message.document:
-        doc = update.message.document
-        if not doc.file_name.lower().endswith(".txt"):
-            await update.message.reply_text(
-                "❌ فقط فایل `.txt` قبول می‌شود.\n"
-                "متن را مستقیم بفرستید یا یک فایل .txt آپلود کنید:",
-                parse_mode="Markdown",
-            )
+        try:
+            file = await update.message.document.get_file()
+            content = await file.download_as_bytearray()
+            prompt_text = content.decode("utf-8").strip()
+        except Exception as e:
+            await update.message.reply_text(f"❌ خطا در خواندن فایل: {e}")
             return ADD_PROMPT_TEXT
-
-        file_obj     = await doc.get_file()
-        raw_bytes    = await file_obj.download_as_bytearray()
-        prompt_text  = raw_bytes.decode("utf-8").strip()
-
-    # ─── دریافت از متن پیام ───────────────────────────────
     else:
         prompt_text = update.message.text.strip()
 
     if not prompt_text:
-        await update.message.reply_text("❌ محتوای پرامپت خالی است. دوباره ارسال کنید:")
+        await update.message.reply_text("❌ متن پرامپت نمی‌تواند خالی باشد:")
         return ADD_PROMPT_TEXT
 
     prompts  = get_all_prompts()
@@ -460,18 +454,14 @@ async def receive_prompt_text(update: Update, context: ContextTypes.DEFAULT_TYPE
         is_default  = is_first,
         order       = len(prompts) + 1,
     )
-
-    char_count = len(prompt_text)
     await update.message.reply_text(
-        f"✅ پرامپت *{context.user_data['adm_prompt_title']}* اضافه شد!\n"
-        f"📊 طول: {char_count:,} کاراکتر"
-        + (" | ⭐ پیش‌فرض" if is_first else ""),
+        f"✅ پرامپت *{context.user_data['adm_prompt_title']}* اضافه شد!"
+        + (" (پیش‌فرض)" if is_first else ""),
         parse_mode="Markdown",
     )
     for k in ("adm_prompt_title", "adm_prompt_desc"):
         context.user_data.pop(k, None)
     return ConversationHandler.END
-
 
 async def toggle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query     = update.callback_query
