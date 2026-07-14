@@ -21,6 +21,8 @@ from services.api_manager import (
     detect_provider_and_models, get_default_base_url, build_api_chain,
 )
 
+
+
 # ─── states ──────────────────────────────────────────────
 WAITING_API_KEY      = 1
 WAITING_API_LABEL    = 2
@@ -42,6 +44,15 @@ STATUS_EMOJI = {
     "paused":     "⏸",
 }
 
+
+
+def escape_md(text: str) -> str:
+    """کاراکترهای خاص Markdown (نسخه legacy) را escape می‌کند."""
+    if not text:
+        return text
+    for ch in ['_', '*', '`', '[', ']']:
+        text = text.replace(ch, f'\\{ch}')
+    return text
 
 # ════════════════════════════════════════════════════════════
 #  پنل اصلی
@@ -117,7 +128,7 @@ async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for job in jobs:
         emoji = STATUS_EMOJI.get(job["status"], "❓")
         lines.append(
-            f"{emoji} *#{job['id']}* {job['file_name']}\n"
+            f"{emoji} *#{job['id']}* {escape_md(job['file_name'])}\n"
             f"   {job['processed_pages']}/{job['total_pages']} صفحه — `{job['status']}`"
         )
 
