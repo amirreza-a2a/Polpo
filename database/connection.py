@@ -29,8 +29,11 @@ def init_db():
             daily_pages_used    INT DEFAULT 0,
             daily_reset_date    DATE DEFAULT (CURDATE()),
             use_public_fallback TINYINT(1) DEFAULT 1,
-            auto_retry          TINYINT(1) DEFAULT 0
-                        COMMENT '1 = جاب‌های متوقف‌شده خودکار retry شوند',
+            auto_retry          TINYINT(1) DEFAULT 0,
+            auto_pipeline2            TINYINT(1) DEFAULT 0
+                        COMMENT '1 = بعد از اتمام pipeline1 خودکار pipeline2 اجرا شود',
+            auto_pipeline2_prompt_id  INT DEFAULT NULL
+                        COMMENT 'پرامپت pipeline2 برای اجرای خودکار',
             created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         """)
@@ -103,13 +106,54 @@ def init_db():
             source_archive_msg_id BIGINT DEFAULT NULL,
             backup_message_id     BIGINT DEFAULT NULL,
             backup_zip_msg_id     BIGINT DEFAULT NULL,
-            retry_count           INT DEFAULT 0
-                        COMMENT 'تعداد دفعاتی که auto-retry روی این جاب اجرا شده',
+            retry_count           INT DEFAULT 0,
             error_message         TEXT,
             created_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
             finished_at           DATETIME DEFAULT NULL,
             FOREIGN KEY (user_id)   REFERENCES users(id)   ON DELETE CASCADE,
             FOREIGN KEY (prompt_id) REFERENCES prompts(id) ON DELETE RESTRICT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        """)
+
+        # ─── pipeline2_prompts ─────────────────────────────
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS pipeline2_prompts (
+            id            INT AUTO_INCREMENT PRIMARY KEY,
+            title         VARCHAR(255) NOT NULL,
+            description   TEXT,
+            prompt_text   LONGTEXT NOT NULL,
+            is_active     TINYINT(1) DEFAULT 1,
+            is_default    TINYINT(1) DEFAULT 0,
+            display_order INT DEFAULT 1,
+            created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        """)
+
+        # ─── pipeline2_jobs ─────────────────────────────────
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS pipeline2_jobs (
+            id                 INT AUTO_INCREMENT PRIMARY KEY,
+            source_job_id      INT NOT NULL
+                        COMMENT 'FK به jobs - کدام Markdown پردازش شود',
+            user_id            INT NOT NULL,
+            prompt_id          INT NOT NULL,
+            api_chain          JSON,
+            current_api_index  INT DEFAULT 0,
+            api_switch_log     JSON,
+            model              VARCHAR(100),
+            status             ENUM('pending','processing','done','failed','paused') DEFAULT 'pending',
+            input_path         VARCHAR(500)
+                        COMMENT 'مسیر Markdown یکپارچه‌شده (پس از حذف ## صفحه X)',
+            output_path        VARCHAR(500)
+                        COMMENT 'مسیر Markdown نهایی پس از پردازش AI',
+            backup_message_id  BIGINT DEFAULT NULL,
+            retry_count        INT DEFAULT 0,
+            error_message      TEXT,
+            created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+            finished_at        DATETIME DEFAULT NULL,
+            FOREIGN KEY (source_job_id) REFERENCES jobs(id)            ON DELETE CASCADE,
+            FOREIGN KEY (user_id)       REFERENCES users(id)           ON DELETE CASCADE,
+            FOREIGN KEY (prompt_id)     REFERENCES pipeline2_prompts(id) ON DELETE RESTRICT
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         """)
 
@@ -121,9 +165,11 @@ def init_db():
             "ALTER TABLE public_apis  ADD COLUMN base_url VARCHAR(500) DEFAULT NULL",
             "ALTER TABLE jobs ADD COLUMN source_file_id VARCHAR(500) DEFAULT NULL",
             "ALTER TABLE jobs ADD COLUMN source_archive_msg_id BIGINT DEFAULT NULL",
-            "ALTER TABLE jobs ADD COLUMN backup_zip_msg_id BIGINT DEFAULT NULL",
+            "ALTER TABLE jobs ADD COLUMN backup_zip_msg_id VARCHAR(500) DEFAULT NULL",
             "ALTER TABLE users ADD COLUMN auto_retry TINYINT(1) DEFAULT 0",
             "ALTER TABLE jobs  ADD COLUMN retry_count INT DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN auto_pipeline2 TINYINT(1) DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN auto_pipeline2_prompt_id INT DEFAULT NULL",
         ]
         for sql in migrations:
             try:

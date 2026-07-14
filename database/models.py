@@ -6,7 +6,6 @@ import json
 from datetime import date
 from database.connection import get_connection
 
-
 # ════════════════════════════════════════════════════════════
 #  USERS
 # ════════════════════════════════════════════════════════════
@@ -728,4 +727,308 @@ def requeue_job_for_auto_retry(job_id: int) -> None:
     
 
 
+# ════════════════════════════════════════════════════════════
+#  PIPELINE2_PROMPTS  (مدیریت توسط ادمین — مشابه prompts)
+# ════════════════════════════════════════════════════════════
 
+def get_active_pipeline2_prompts() -> list:
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM pipeline2_prompts WHERE is_active = 1 ORDER BY display_order ASC"
+        )
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def get_default_pipeline2_prompt() -> dict | None:
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM pipeline2_prompts WHERE is_default = 1 AND is_active = 1 LIMIT 1"
+        )
+        p = cur.fetchone()
+    conn.close()
+    return p
+
+
+def get_pipeline2_prompt_by_id(prompt_id: int) -> dict | None:
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM pipeline2_prompts WHERE id = %s", (prompt_id,))
+        p = cur.fetchone()
+    conn.close()
+    return p
+
+
+def get_all_pipeline2_prompts() -> list:
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM pipeline2_prompts ORDER BY display_order ASC")
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def add_pipeline2_prompt(title: str, description: str, prompt_text: str,
+                         is_default: bool = False, order: int = 1) -> int:
+    conn = get_connection()
+    with conn.cursor() as cur:
+        if is_default:
+            cur.execute("UPDATE pipeline2_prompts SET is_default = 0")
+        cur.execute(
+            """INSERT INTO pipeline2_prompts
+               (title, description, prompt_text, is_default, display_order)
+               VALUES (%s, %s, %s, %s, %s)""",
+            (title, description, prompt_text, 1 if is_default else 0, order),
+        )
+        new_id = cur.lastrowid
+    conn.close()
+    return new_id
+
+
+def update_pipeline2_prompt(prompt_id: int, title: str = None, description: str = None,
+                            prompt_text: str = None, is_active: bool = None,
+                            is_default: bool = None, order: int = None):
+    conn = get_connection()
+    with conn.cursor() as cur:
+        if is_default:
+            cur.execute("UPDATE pipeline2_prompts SET is_default = 0")
+        fields, vals = [], []
+        if title       is not None: fields.append("title = %s");          vals.append(title)
+        if description is not None: fields.append("description = %s");    vals.append(description)
+        if prompt_text is not None: fields.append("prompt_text = %s");    vals.append(prompt_text)
+        if is_active   is not None: fields.append("is_active = %s");      vals.append(1 if is_active else 0)
+        if is_default  is not None: fields.append("is_default = %s");     vals.append(1 if is_default else 0)
+        if order       is not None: fields.append("display_order = %s");  vals.append(order)
+        if fields:
+            vals.append(prompt_id)
+            cur.execute(f"UPDATE pipeline2_prompts SET {', '.join(fields)} WHERE id = %s", vals)
+    conn.close()
+
+
+def delete_pipeline2_prompt(prompt_id: int):
+    """حذف پرامپت pipeline2؛ جاب‌های pending را به پیش‌فرض منتقل می‌کند."""
+    default = get_default_pipeline2_prompt()
+    conn = get_connection()
+    with conn.cursor() as cur:
+        if default and default["id"] != prompt_id:
+            cur.execute(
+                "UPDATE pipeline2_jobs SET prompt_id = %s WHERE prompt_id = %s AND status = 'pending'",
+                (default["id"], prompt_id),
+            )
+        # کاربرانی که این prompt را auto انتخاب کرده‌اند پاک می‌شوند
+        cur.execute(
+            "UPDATE users SET auto_pipeline2 = 0, auto_pipeline2_prompt_id = NULL "
+            "WHERE auto_pipeline2_prompt_id = %s",
+            (prompt_id,),
+        )
+        cur.execute("DELETE FROM pipeline2_prompts WHERE id = %s", (prompt_id,))
+    conn.close()
+
+
+# ════════════════════════════════════════════════════════════
+#  PIPELINE2_JOBS
+# ════════════════════════════════════════════════════════════
+
+def create_pipeline2_job(source_job_id: int, user_id: int, prompt_id: int,
+                         api_chain: list, model: str) -> int:
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO pipeline2_jobs
+               (source_job_id, user_id, prompt_id, api_chain,
+                current_api_index, api_switch_log, model)
+               VALUES (%s, %s, %s, %s, 0, '[]', %s)""",
+            (source_job_id, user_id, prompt_id, json.dumps(api_chain), model),
+        )
+        new_id = cur.lastrowid
+    conn.close()
+    return new_id
+
+
+def get_next_pending_pipeline2_job() -> dict | None:
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM pipeline2_jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
+        )
+        job = cur.fetchone()
+    conn.close()
+    if job:
+        for f in ("api_chain", "api_switch_log"):
+            if isinstance(job.get(f), str):
+                job[f] = json.loads(job[f])
+    return job
+
+
+def get_pipeline2_job(job_id: int) -> dict | None:
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM pipeline2_jobs WHERE id = %s", (job_id,))
+        job = cur.fetchone()
+    conn.close()
+    if job:
+        for f in ("api_chain", "api_switch_log"):
+            if isinstance(job.get(f), str):
+                job[f] = json.loads(job[f])
+    return job
+
+
+def get_pipeline2_job_for_user(job_id: int, user_id: int) -> dict | None:
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM pipeline2_jobs WHERE id = %s AND user_id = %s",
+            (job_id, user_id),
+        )
+        job = cur.fetchone()
+    conn.close()
+    if job:
+        for f in ("api_chain", "api_switch_log"):
+            if isinstance(job.get(f), str):
+                job[f] = json.loads(job[f])
+    return job
+
+
+def update_pipeline2_job_status(job_id: int, status: str, error_message: str = None):
+    conn = get_connection()
+    with conn.cursor() as cur:
+        if status in ("done", "failed"):
+            cur.execute(
+                "UPDATE pipeline2_jobs SET status = %s, error_message = %s, finished_at = NOW() WHERE id = %s",
+                (status, error_message, job_id),
+            )
+        else:
+            cur.execute(
+                "UPDATE pipeline2_jobs SET status = %s, error_message = %s WHERE id = %s",
+                (status, error_message, job_id),
+            )
+    conn.close()
+
+
+def update_pipeline2_job_paths(job_id: int, input_path: str = None, output_path: str = None):
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """UPDATE pipeline2_jobs
+               SET input_path  = COALESCE(%s, input_path),
+                   output_path = COALESCE(%s, output_path)
+               WHERE id = %s""",
+            (input_path, output_path, job_id),
+        )
+    conn.close()
+
+
+def update_pipeline2_job_progress(job_id: int, current_api_index: int, switch_log: list):
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """UPDATE pipeline2_jobs
+               SET current_api_index = %s, api_switch_log = %s
+               WHERE id = %s""",
+            (current_api_index, json.dumps(switch_log), job_id),
+        )
+    conn.close()
+
+
+def update_pipeline2_job_backup(job_id: int, backup_message_id: int):
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE pipeline2_jobs SET backup_message_id = %s WHERE id = %s",
+            (backup_message_id, job_id),
+        )
+    conn.close()
+
+
+def increment_pipeline2_retry_count(job_id: int) -> int:
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE pipeline2_jobs SET retry_count = retry_count + 1 WHERE id = %s",
+            (job_id,),
+        )
+        cur.execute("SELECT retry_count FROM pipeline2_jobs WHERE id = %s", (job_id,))
+        new_count = cur.fetchone()["retry_count"]
+    conn.close()
+    return new_count
+
+
+def requeue_pipeline2_job(job_id: int, reset_progress: bool = False) -> None:
+    conn = get_connection()
+    with conn.cursor() as cur:
+        if reset_progress:
+            cur.execute(
+                """UPDATE pipeline2_jobs
+                   SET status = 'pending', error_message = NULL,
+                       current_api_index = 0, created_at = NOW()
+                   WHERE id = %s""",
+                (job_id,),
+            )
+        else:
+            cur.execute(
+                """UPDATE pipeline2_jobs
+                   SET status = 'pending', error_message = NULL, created_at = NOW()
+                   WHERE id = %s""",
+                (job_id,),
+            )
+    conn.close()
+
+
+def update_pipeline2_job_api_chain(job_id: int, api_chain: list) -> None:
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """UPDATE pipeline2_jobs
+               SET api_chain = %s, current_api_index = 0
+               WHERE id = %s""",
+            (json.dumps(api_chain), job_id),
+        )
+    conn.close()
+
+
+def get_user_pipeline2_jobs_paginated(user_id: int, page: int = 1,
+                                       per_page: int = 5) -> tuple[list, int]:
+    offset = (page - 1) * per_page
+    conn   = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) AS total FROM pipeline2_jobs WHERE user_id = %s",
+            (user_id,),
+        )
+        total = cur.fetchone()["total"]
+        cur.execute(
+            """SELECT p2.*, j.file_name AS source_file_name
+               FROM pipeline2_jobs p2
+               JOIN jobs j ON j.id = p2.source_job_id
+               WHERE p2.user_id = %s
+               ORDER BY p2.created_at DESC
+               LIMIT %s OFFSET %s""",
+            (user_id, per_page, offset),
+        )
+        jobs = cur.fetchall()
+    conn.close()
+    return jobs, total
+
+
+# ════════════════════════════════════════════════════════════
+#  USERS — تنظیمات Auto Pipeline2
+# ════════════════════════════════════════════════════════════
+
+def set_auto_pipeline2(telegram_id: int, enabled: bool, prompt_id: int = None) -> None:
+    conn = get_connection()
+    with conn.cursor() as cur:
+        if enabled:
+            cur.execute(
+                "UPDATE users SET auto_pipeline2 = 1, auto_pipeline2_prompt_id = %s "
+                "WHERE telegram_id = %s",
+                (prompt_id, telegram_id),
+            )
+        else:
+            cur.execute(
+                "UPDATE users SET auto_pipeline2 = 0 WHERE telegram_id = %s",
+                (telegram_id,),
+            )
+    conn.close()

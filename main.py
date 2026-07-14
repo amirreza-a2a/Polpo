@@ -16,13 +16,15 @@ from handlers.common import start, unknown_command
 from handlers.pdf import (
     handle_pdf, on_prompt_selected, on_api_source_selected, on_fallback_selected,
 )
+
 from handlers.user import (
     show_panel, show_my_apis,
     # تاریخچه و آرشیو (جدید)
     show_history, redeliver_job,
     show_resume_options, resume_same_api,
-    resume_new_api, resume_api_source, resume_fallback, 
+    resume_new_api, resume_api_source, resume_fallback,
     toggle_auto_retry,
+    toggle_auto_p2_start, set_auto_p2_prompt,
 
     # افزودن API خصوصی
     start_add_api,
@@ -40,6 +42,15 @@ from handlers.user import (
     WAITING_API_KEY, WAITING_API_LABEL, WAITING_API_MODEL, WAITING_API_BASE_URL,
     WAITING_DONATE_KEY, WAITING_DONATE_MODEL, WAITING_DONATE_BASE_URL,
 )
+
+from handlers.pipeline2 import (
+    start_pipeline2,
+    on_p2_prompt_selected,
+    on_p2_api_source_selected,
+    on_p2_fallback_selected,
+)
+
+
 from handlers.admin import (
     admin_panel, show_public_apis,
     start_add_public_api,
@@ -58,6 +69,10 @@ from handlers.admin import (
     ADD_PUB_KEY, ADD_PUB_MODEL, ADD_PUB_BASE_URL, ADD_PUB_LABEL, ADD_PUB_LIMIT,
     EDIT_PUB_MODEL, EDIT_PUB_BASE_URL,
     ADD_PROMPT_TITLE, ADD_PROMPT_DESC, ADD_PROMPT_TEXT,
+    show_p2_prompts, start_add_p2_prompt,
+    receive_p2_prompt_title, receive_p2_prompt_desc, receive_p2_prompt_text,
+    toggle_p2_prompt, set_default_p2_prompt, delete_p2_prompt_handler,
+    ADD_P2_PROMPT_TITLE, ADD_P2_PROMPT_DESC, ADD_P2_PROMPT_TEXT,
 )
 
 
@@ -167,6 +182,20 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
+
+    add_p2_prompt_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(start_add_p2_prompt, pattern="^adm_add_p2_prompt$")],
+        states={
+            ADD_P2_PROMPT_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_p2_prompt_title)],
+            ADD_P2_PROMPT_DESC:  [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_p2_prompt_desc)],
+            ADD_P2_PROMPT_TEXT:  [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_p2_prompt_text),
+                MessageHandler(filters.Document.ALL, receive_p2_prompt_text),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
     # ════════════════════════════════════════════════════════
     #  ثبت هندلرها
     # ════════════════════════════════════════════════════════
@@ -181,6 +210,7 @@ def main():
     app.add_handler(add_pub_api_conv)
     app.add_handler(edit_pub_api_conv)
     app.add_handler(add_prompt_conv)
+    app.add_handler(add_p2_prompt_conv)
 
     # PDF
     app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
@@ -205,6 +235,15 @@ def main():
     app.add_handler(CallbackQueryHandler(resume_new_api,       pattern=r"^resume_new_api:\d+$"))
     app.add_handler(CallbackQueryHandler(resume_api_source,    pattern=r"^resume_api_src:"))
     app.add_handler(CallbackQueryHandler(resume_fallback,      pattern=r"^resume_fallback:"))
+    
+    
+    # ─── Pipeline 2 (کاربر) ────────────────────────────────
+    app.add_handler(CallbackQueryHandler(toggle_auto_p2_start,        pattern="^toggle_auto_p2$"))
+    app.add_handler(CallbackQueryHandler(set_auto_p2_prompt,          pattern=r"^set_auto_p2_prompt:\d+$"))
+    app.add_handler(CallbackQueryHandler(start_pipeline2,             pattern=r"^start_p2:\d+$"))
+    app.add_handler(CallbackQueryHandler(on_p2_prompt_selected,       pattern=r"^p2_select_prompt:\d+$"))
+    app.add_handler(CallbackQueryHandler(on_p2_api_source_selected,   pattern="^p2_api_source:"))
+    app.add_handler(CallbackQueryHandler(on_p2_fallback_selected,     pattern="^p2_fallback:"))
 
     # ─── Callbacks ادمین ────────────────────────────────────
     app.add_handler(CallbackQueryHandler(show_public_apis,      pattern="^adm_public_apis$"))
@@ -217,6 +256,13 @@ def main():
     app.add_handler(CallbackQueryHandler(approve_donation,      pattern="^admin_approve_donation:"))
     app.add_handler(CallbackQueryHandler(reject_donation,       pattern="^admin_reject_donation:"))
     app.add_handler(CallbackQueryHandler(adm_back,              pattern="^adm_back$"))
+
+    # ─── Pipeline 2 (ادمین) ────────────────────────────────
+    app.add_handler(CallbackQueryHandler(show_p2_prompts,          pattern="^adm_p2_prompts$"))
+    app.add_handler(CallbackQueryHandler(toggle_p2_prompt,         pattern="^adm_toggle_p2_prompt:"))
+    app.add_handler(CallbackQueryHandler(set_default_p2_prompt,    pattern="^adm_default_p2_prompt:"))
+    app.add_handler(CallbackQueryHandler(delete_p2_prompt_handler, pattern="^adm_del_p2_prompt:"))
+
 
     app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 

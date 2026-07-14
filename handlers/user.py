@@ -14,6 +14,8 @@ from database.models import (
     get_user_jobs_paginated, get_job_for_user,
     update_job_api_chain, requeue_job,
     set_auto_retry,
+    set_auto_pipeline2,
+    get_active_pipeline2_prompts,
 )
 from services.api_manager import (
     detect_provider_and_models, get_default_base_url, build_api_chain,
@@ -58,7 +60,8 @@ async def show_panel(update, context):
         f"🗂 *پنل شخصی شما*\n\n"
         f"📊 مصرف امروز: {pages_used}/{DAILY_PAGE_LIMIT} صفحه\n{bar}\n\n"
         f"🔄 Fallback: {'✅ فعال' if db_user['use_public_fallback'] else '🔒 غیرفعال'}\n"
-        f"🔁 Auto-Retry: {'✅ فعال' if db_user.get('auto_retry') else '🔒 غیرفعال'}"
+        f"🔁 Auto-Retry: {'✅ فعال' if db_user.get('auto_retry') else '🔒 غیرفعال'}\n"
+        f"✨ پردازش خودکار: {'✅ فعال' if db_user.get('auto_pipeline2') else '🔒 غیرفعال'}"
         + ("\n   _جاب‌های متوقف‌شده تا ۵ بار خودکار retry می‌شوند_" if db_user.get('auto_retry') else "")
     )
     keyboard = InlineKeyboardMarkup([
@@ -73,6 +76,10 @@ async def show_panel(update, context):
             "🔴 خاموش‌کردن Auto-Retry" if db_user.get("auto_retry") else "🔁 روشن‌کردن Auto-Retry",
             callback_data="toggle_auto_retry",
         )],
+        [InlineKeyboardButton(
+            "🔴 خاموش‌کردن پردازش خودکار" if db_user.get("auto_pipeline2") else "✨ روشن‌کردن پردازش خودکار",
+            callback_data="toggle_auto_p2",
+        )],
     ])
 
     if query:
@@ -80,6 +87,7 @@ async def show_panel(update, context):
         await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
     else:
         await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+
 
 # ════════════════════════════════════════════════════════════
 #  تاریخچه صفحه‌بندی‌شده
@@ -120,6 +128,9 @@ async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if job["status"] == "done" and job.get("backup_message_id"):
             row.append(InlineKeyboardButton(
                 f"📥 #{job['id']}", callback_data=f"redeliver:{job['id']}"
+            ))
+            row.append(InlineKeyboardButton(
+                f"✨ #{job['id']}", callback_data=f"start_p2:{job['id']}"
             ))
         elif job["status"] in ("paused", "failed"):
             label = "▶️" if job["status"] == "paused" else "🔄"
@@ -629,6 +640,51 @@ async def toggle_auto_retry(update, context):
         show_alert=True,
     )
     await show_panel(update, context)
+
+
+async def toggle_auto_p2_start(update, context):
+    """شروع فلوی روشن/خاموش‌کردن پردازش خودکار."""
+    query   = update.callback_query
+    user_tg = update.effective_user
+    await query.answer()
+
+    db_user = get_user(user_tg.id)
+
+    if db_user.get("auto_pipeline2"):
+        set_auto_pipeline2(user_tg.id, False)
+        await query.answer("✨ پردازش خودکار غیرفعال شد.", show_alert=True)
+        await show_panel(update, context)
+        return
+
+    prompts = get_active_pipeline2_prompts()
+    if not prompts:
+        await query.answer("❌ هیچ پرامپتی برای پردازش هوشمند تنظیم نشده.", show_alert=True)
+        return
+
+    buttons = [
+        [InlineKeyboardButton(f"✨ {p['title']}", callback_data=f"set_auto_p2_prompt:{p['id']}")]
+        for p in prompts
+    ]
+    buttons.append([InlineKeyboardButton("🔙 بازگشت", callback_data="panel_main")])
+
+    await query.edit_message_text(
+        "✨ *پردازش خودکار*\n\n"
+        "کدام نوع پردازش به‌طور پیش‌فرض روی همه جاب‌های آینده اجرا شود؟",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode="Markdown",
+    )
+
+
+async def set_auto_p2_prompt(update, context):
+    query     = update.callback_query
+    prompt_id = int(query.data.split(":")[1])
+    user_tg   = update.effective_user
+    await query.answer()
+
+    set_auto_pipeline2(user_tg.id, True, prompt_id)
+    await query.answer("✅ پردازش خودکار فعال شد.", show_alert=True)
+    await show_panel(update, context)
+
 
 async def cancel(update, context):
     await update.message.reply_text("❌ عملیات لغو شد.")

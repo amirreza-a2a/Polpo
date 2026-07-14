@@ -26,6 +26,16 @@ def get_job_dir(job_id: int) -> str:
     return path
 
 
+
+
+def get_pipeline2_dir(p2_job_id: int) -> str:
+    """مسیر پوشه‌ی اختصاصی pipeline2_job را برمی‌گرداند و می‌سازد."""
+    d = os.path.join("output_files", "pipeline2", f"job_{p2_job_id}")
+    os.makedirs(d, exist_ok=True)
+    return d
+ 
+
+
 def get_output_path(job_id: int) -> str:
     """مسیر فایل MD خروجی را برمی‌گرداند."""
     return os.path.join(get_job_dir(job_id), "output.md")

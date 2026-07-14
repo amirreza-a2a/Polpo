@@ -11,6 +11,8 @@ from database.models import (
     delete_public_api, update_public_api_model_url,
     get_all_prompts, add_prompt, update_prompt, delete_prompt,
     get_today_stats, get_user,
+    get_all_pipeline2_prompts, add_pipeline2_prompt,
+    update_pipeline2_prompt, delete_pipeline2_prompt,
 )
 from services.api_manager import detect_provider_and_models, get_default_base_url
 
@@ -28,6 +30,9 @@ ADD_PROMPT_DESC  = 31
 ADD_PROMPT_TEXT  = 32
 EDIT_PROMPT_TEXT = 33
 
+ADD_P2_PROMPT_TITLE = 40
+ADD_P2_PROMPT_DESC  = 41
+ADD_P2_PROMPT_TEXT  = 42
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -52,9 +57,11 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"  • صفحات پردازش‌شده: {stats['total_pages']}\n"
         f"  • در صف: {stats['in_queue']}"
     )
+    
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🌐 مدیریت API عمومی", callback_data="adm_public_apis")],
-        [InlineKeyboardButton("📝 مدیریت پرامپت‌ها",  callback_data="adm_prompts")],
+        [InlineKeyboardButton("📝 پرامپت‌های Pipeline1",  callback_data="adm_prompts")],
+        [InlineKeyboardButton("✨ پرامپت‌های Pipeline2",  callback_data="adm_p2_prompts")],
         [InlineKeyboardButton("📊 آمار کلی",           callback_data="adm_stats")],
     ])
     msg = update.message or (update.callback_query and update.callback_query.message)
@@ -486,6 +493,8 @@ async def delete_prompt_handler(update: Update, context: ContextTypes.DEFAULT_TY
     await show_prompts(update, context)
 
 
+
+
 async def toggle_pub_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query  = update.callback_query
     parts  = query.data.split(":")
@@ -557,3 +566,115 @@ async def _adm_send_base_url_prompt(msg_or_query, context, edit, provider, model
     else:
         target = msg_or_query if hasattr(msg_or_query, 'reply_text') else msg_or_query.message
         await target.reply_text(text, reply_markup=buttons, parse_mode="Markdown")
+        
+        
+
+
+
+async def show_p2_prompts(update, context):
+    query = update.callback_query
+    await query.answer()
+    prompts = get_all_pipeline2_prompts()
+    if not prompts:
+        text = "✨ *پرامپت‌های Pipeline2*\n\nهیچ پرامپتی وجود ندارد."
+    else:
+        lines = ["✨ *پرامپت‌های Pipeline2:*\n"]
+        for p in prompts:
+            status  = "✅" if p["is_active"] else "🔴"
+            default = " ⭐" if p["is_default"] else ""
+            lines.append(f"{status} *{p['title']}*{default}\n   {p['description'] or ''}")
+        text = "\n".join(lines)
+
+    buttons = [[InlineKeyboardButton("➕ افزودن پرامپت", callback_data="adm_add_p2_prompt")]]
+    for p in prompts:
+        row = [InlineKeyboardButton(
+            f"{'🔴' if p['is_active'] else '✅'} {p['title'][:15]}",
+            callback_data=f"adm_toggle_p2_prompt:{p['id']}:{0 if p['is_active'] else 1}"
+        )]
+        if not p["is_default"]:
+            row.append(InlineKeyboardButton("⭐", callback_data=f"adm_default_p2_prompt:{p['id']}"))
+        row.append(InlineKeyboardButton("🗑", callback_data=f"adm_del_p2_prompt:{p['id']}"))
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton("🔙 بازگشت", callback_data="adm_back")])
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons),
+                                  parse_mode="Markdown")
+
+
+async def start_add_p2_prompt(update, context):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("✨ عنوان پرامپت Pipeline2 را وارد کنید:")
+    return ADD_P2_PROMPT_TITLE
+
+
+async def receive_p2_prompt_title(update, context):
+    context.user_data["adm_p2_prompt_title"] = update.message.text.strip()
+    await update.message.reply_text("توضیح کوتاه برای کاربران وارد کنید:")
+    return ADD_P2_PROMPT_DESC
+
+
+async def receive_p2_prompt_desc(update, context):
+    context.user_data["adm_p2_prompt_desc"] = update.message.text.strip()
+    await update.message.reply_text(
+        "متن کامل پرامپت را ارسال کنید:\n"
+        "(برای پرامپت‌های طولانی می‌توانید یک فایل .txt آپلود کنید)"
+    )
+    return ADD_P2_PROMPT_TEXT
+
+
+async def receive_p2_prompt_text(update, context):
+    if update.message.document:
+        try:
+            file = await update.message.document.get_file()
+            content = await file.download_as_bytearray()
+            prompt_text = content.decode("utf-8").strip()
+        except Exception as e:
+            await update.message.reply_text(f"❌ خطا در خواندن فایل: {e}")
+            return ADD_P2_PROMPT_TEXT
+    else:
+        prompt_text = update.message.text.strip()
+
+    if not prompt_text:
+        await update.message.reply_text("❌ متن پرامپت نمی‌تواند خالی باشد:")
+        return ADD_P2_PROMPT_TEXT
+
+    prompts  = get_all_pipeline2_prompts()
+    is_first = len(prompts) == 0
+    add_pipeline2_prompt(
+        title       = context.user_data["adm_p2_prompt_title"],
+        description = context.user_data["adm_p2_prompt_desc"],
+        prompt_text = prompt_text,
+        is_default  = is_first,
+        order       = len(prompts) + 1,
+    )
+    await update.message.reply_text(
+        f"✅ پرامپت Pipeline2 *{context.user_data['adm_p2_prompt_title']}* اضافه شد!"
+        + (" (پیش‌فرض)" if is_first else ""),
+        parse_mode="Markdown",
+    )
+    for k in ("adm_p2_prompt_title", "adm_p2_prompt_desc"):
+        context.user_data.pop(k, None)
+    return ConversationHandler.END
+
+
+async def toggle_p2_prompt(update, context):
+    query = update.callback_query
+    parts = query.data.split(":")
+    await query.answer()
+    update_pipeline2_prompt(int(parts[1]), is_active=bool(int(parts[2])))
+    await show_p2_prompts(update, context)
+
+
+async def set_default_p2_prompt(update, context):
+    query = update.callback_query
+    await query.answer()
+    update_pipeline2_prompt(int(query.data.split(":")[1]), is_default=True)
+    await show_p2_prompts(update, context)
+
+
+async def delete_p2_prompt_handler(update, context):
+    query = update.callback_query
+    await query.answer()
+    delete_pipeline2_prompt(int(query.data.split(":")[1]))
+    await query.answer("✅ پرامپت حذف شد.", show_alert=True)
+    await show_p2_prompts(update, context)
