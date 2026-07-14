@@ -1032,3 +1032,43 @@ def set_auto_pipeline2(telegram_id: int, enabled: bool, prompt_id: int = None) -
                 (telegram_id,),
             )
     conn.close()
+    
+    
+
+
+# ============================================================
+# Quit convert 
+# ============================================================
+
+
+def get_setting(key: str, default: str = None) -> str | None:
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute("SELECT setting_value FROM bot_settings WHERE setting_key = %s", (key,))
+        row = cur.fetchone()
+    conn.close()
+    return row["setting_value"] if row else default
+
+
+def set_setting(key: str, value: str) -> None:
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO bot_settings (setting_key, setting_value)
+               VALUES (%s, %s)
+               ON DUPLICATE KEY UPDATE setting_value = %s""",
+            (key, value, value),
+        )
+    conn.close()
+
+
+# ─── نام کلید ثابت برای پرامپت تبدیل سریع ─────────────────
+QUICK_CONVERT_PROMPT_KEY = "quick_convert_prompt"
+
+
+def get_quick_convert_prompt() -> str | None:
+    return get_setting(QUICK_CONVERT_PROMPT_KEY)
+
+
+def set_quick_convert_prompt(prompt_text: str) -> None:
+    set_setting(QUICK_CONVERT_PROMPT_KEY, prompt_text)

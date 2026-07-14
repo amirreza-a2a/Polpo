@@ -30,10 +30,8 @@ def init_db():
             daily_reset_date    DATE DEFAULT (CURDATE()),
             use_public_fallback TINYINT(1) DEFAULT 1,
             auto_retry          TINYINT(1) DEFAULT 0,
-            auto_pipeline2            TINYINT(1) DEFAULT 0
-                        COMMENT '1 = بعد از اتمام pipeline1 خودکار pipeline2 اجرا شود',
-            auto_pipeline2_prompt_id  INT DEFAULT NULL
-                        COMMENT 'پرامپت pipeline2 برای اجرای خودکار',
+            auto_pipeline2            TINYINT(1) DEFAULT 0,
+            auto_pipeline2_prompt_id  INT DEFAULT NULL,
             created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         """)
@@ -115,7 +113,6 @@ def init_db():
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         """)
 
-        # ─── pipeline2_prompts ─────────────────────────────
         cur.execute("""
         CREATE TABLE IF NOT EXISTS pipeline2_prompts (
             id            INT AUTO_INCREMENT PRIMARY KEY,
@@ -129,12 +126,10 @@ def init_db():
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         """)
 
-        # ─── pipeline2_jobs ─────────────────────────────────
         cur.execute("""
         CREATE TABLE IF NOT EXISTS pipeline2_jobs (
             id                 INT AUTO_INCREMENT PRIMARY KEY,
-            source_job_id      INT NOT NULL
-                        COMMENT 'FK به jobs - کدام Markdown پردازش شود',
+            source_job_id      INT NOT NULL,
             user_id            INT NOT NULL,
             prompt_id          INT NOT NULL,
             api_chain          JSON,
@@ -142,10 +137,8 @@ def init_db():
             api_switch_log     JSON,
             model              VARCHAR(100),
             status             ENUM('pending','processing','done','failed','paused') DEFAULT 'pending',
-            input_path         VARCHAR(500)
-                        COMMENT 'مسیر Markdown یکپارچه‌شده (پس از حذف ## صفحه X)',
-            output_path        VARCHAR(500)
-                        COMMENT 'مسیر Markdown نهایی پس از پردازش AI',
+            input_path         VARCHAR(500),
+            output_path        VARCHAR(500),
             backup_message_id  BIGINT DEFAULT NULL,
             retry_count        INT DEFAULT 0,
             error_message      TEXT,
@@ -154,6 +147,15 @@ def init_db():
             FOREIGN KEY (source_job_id) REFERENCES jobs(id)            ON DELETE CASCADE,
             FOREIGN KEY (user_id)       REFERENCES users(id)           ON DELETE CASCADE,
             FOREIGN KEY (prompt_id)     REFERENCES pipeline2_prompts(id) ON DELETE RESTRICT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        """)
+
+        # ─── bot_settings — key/value ساده برای تنظیمات سراسری ──
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS bot_settings (
+            setting_key    VARCHAR(100) PRIMARY KEY,
+            setting_value  LONGTEXT,
+            updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         """)
 

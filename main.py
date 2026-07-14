@@ -17,6 +17,10 @@ from handlers.pdf import (
     handle_pdf, on_prompt_selected, on_api_source_selected, on_fallback_selected,
 )
 
+
+from handlers.quick_convert import handle_quick_photo
+
+
 from handlers.user import (
     show_panel, show_my_apis,
     # تاریخچه و آرشیو (جدید)
@@ -73,6 +77,10 @@ from handlers.admin import (
     receive_p2_prompt_title, receive_p2_prompt_desc, receive_p2_prompt_text,
     toggle_p2_prompt, set_default_p2_prompt, delete_p2_prompt_handler,
     ADD_P2_PROMPT_TITLE, ADD_P2_PROMPT_DESC, ADD_P2_PROMPT_TEXT,
+    # پرامپت تبدیل سریع (جدید)
+    show_quick_convert_prompt, start_edit_quick_convert_prompt,
+    receive_quick_convert_prompt,
+    EDIT_QUICK_CONVERT_PROMPT,
 )
 
 
@@ -168,7 +176,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    # ─── افزودن پرامپت (۳ مرحله) ───────────────────────────
+    # ─── افزودن پرامپت Pipeline1 (۳ مرحله) ─────────────────
     add_prompt_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_add_prompt, pattern="^adm_add_prompt$")],
         states={
@@ -182,7 +190,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-
+    # ─── افزودن پرامپت Pipeline2 (۳ مرحله) ─────────────────
     add_p2_prompt_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_add_p2_prompt, pattern="^adm_add_p2_prompt$")],
         states={
@@ -191,6 +199,19 @@ def main():
             ADD_P2_PROMPT_TEXT:  [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_p2_prompt_text),
                 MessageHandler(filters.Document.ALL, receive_p2_prompt_text),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    # ─── ویرایش پرامپت تبدیل سریع (۱ مرحله) ────────────────
+    edit_quick_prompt_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(start_edit_quick_convert_prompt,
+                                           pattern="^adm_edit_quick_prompt$")],
+        states={
+            EDIT_QUICK_CONVERT_PROMPT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_quick_convert_prompt),
+                MessageHandler(filters.Document.ALL, receive_quick_convert_prompt),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
@@ -211,9 +232,13 @@ def main():
     app.add_handler(edit_pub_api_conv)
     app.add_handler(add_prompt_conv)
     app.add_handler(add_p2_prompt_conv)
+    app.add_handler(edit_quick_prompt_conv)
 
     # PDF
     app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
+
+    # تبدیل سریع تصویر (بدون دکمه، بدون صف)
+    app.add_handler(MessageHandler(filters.PHOTO, handle_quick_photo))
 
     # ─── Callbacks کاربر ───────────────────────────────────
     app.add_handler(CallbackQueryHandler(show_panel,        pattern="^panel_main$"))
@@ -227,7 +252,7 @@ def main():
     app.add_handler(CallbackQueryHandler(on_api_source_selected,   pattern="^api_source:"))
     app.add_handler(CallbackQueryHandler(on_fallback_selected,     pattern="^fallback:"))
 
-    # ─── تاریخچه و آرشیو (جدید) ─────────────────────────
+    # ─── تاریخچه و آرشیو ────────────────────────────────────
     app.add_handler(CallbackQueryHandler(show_history,         pattern=r"^history_page:\d+$"))
     app.add_handler(CallbackQueryHandler(redeliver_job,        pattern=r"^redeliver:\d+$"))
     app.add_handler(CallbackQueryHandler(show_resume_options,  pattern=r"^resume_show:\d+$"))
@@ -235,8 +260,7 @@ def main():
     app.add_handler(CallbackQueryHandler(resume_new_api,       pattern=r"^resume_new_api:\d+$"))
     app.add_handler(CallbackQueryHandler(resume_api_source,    pattern=r"^resume_api_src:"))
     app.add_handler(CallbackQueryHandler(resume_fallback,      pattern=r"^resume_fallback:"))
-    
-    
+
     # ─── Pipeline 2 (کاربر) ────────────────────────────────
     app.add_handler(CallbackQueryHandler(toggle_auto_p2_start,        pattern="^toggle_auto_p2$"))
     app.add_handler(CallbackQueryHandler(set_auto_p2_prompt,          pattern=r"^set_auto_p2_prompt:\d+$"))
@@ -263,6 +287,8 @@ def main():
     app.add_handler(CallbackQueryHandler(set_default_p2_prompt,    pattern="^adm_default_p2_prompt:"))
     app.add_handler(CallbackQueryHandler(delete_p2_prompt_handler, pattern="^adm_del_p2_prompt:"))
 
+    # ─── پرامپت تبدیل سریع (ادمین) ──────────────────────────
+    app.add_handler(CallbackQueryHandler(show_quick_convert_prompt, pattern="^adm_quick_prompt$"))
 
     app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 

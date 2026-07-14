@@ -13,6 +13,8 @@ from database.models import (
     get_today_stats, get_user,
     get_all_pipeline2_prompts, add_pipeline2_prompt,
     update_pipeline2_prompt, delete_pipeline2_prompt,
+    get_quick_convert_prompt, set_quick_convert_prompt,
+
 )
 from services.api_manager import detect_provider_and_models, get_default_base_url
 
@@ -33,6 +35,8 @@ EDIT_PROMPT_TEXT = 33
 ADD_P2_PROMPT_TITLE = 40
 ADD_P2_PROMPT_DESC  = 41
 ADD_P2_PROMPT_TEXT  = 42
+
+EDIT_QUICK_CONVERT_PROMPT = 50
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -62,6 +66,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🌐 مدیریت API عمومی", callback_data="adm_public_apis")],
         [InlineKeyboardButton("📝 پرامپت‌های Pipeline1",  callback_data="adm_prompts")],
         [InlineKeyboardButton("✨ پرامپت‌های Pipeline2",  callback_data="adm_p2_prompts")],
+        [InlineKeyboardButton("⚡ پرامپت تبدیل سریع",   callback_data="adm_quick_prompt")],
         [InlineKeyboardButton("📊 آمار کلی",           callback_data="adm_stats")],
     ])
     msg = update.message or (update.callback_query and update.callback_query.message)
@@ -678,3 +683,60 @@ async def delete_p2_prompt_handler(update, context):
     delete_pipeline2_prompt(int(query.data.split(":")[1]))
     await query.answer("✅ پرامپت حذف شد.", show_alert=True)
     await show_p2_prompts(update, context)
+    
+    
+    
+    
+
+async def show_quick_convert_prompt(update, context):
+    query = update.callback_query
+    await query.answer()
+
+    current = get_quick_convert_prompt()
+
+    if current:
+        preview = current[:300] + ("..." if len(current) > 300 else "")
+        text = f"⚡ *پرامپت تبدیل سریع (فعلی):*\n\n{preview}"
+    else:
+        text = "⚡ *پرامپت تبدیل سریع*\n\nهنوز پرامپتی تنظیم نشده است."
+
+    buttons = InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "✏️ ویرایش پرامپت" if current else "➕ تنظیم پرامپت",
+            callback_data="adm_edit_quick_prompt",
+        )],
+        [InlineKeyboardButton("🔙 بازگشت", callback_data="adm_back")],
+    ])
+    await query.edit_message_text(text, reply_markup=buttons, parse_mode="Markdown")
+
+
+async def start_edit_quick_convert_prompt(update, context):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "⚡ متن کامل پرامپت تبدیل سریع را ارسال کنید:\n"
+        "(برای متن طولانی می‌توانید یک فایل .txt آپلود کنید)"
+    )
+    return EDIT_QUICK_CONVERT_PROMPT
+
+
+async def receive_quick_convert_prompt(update, context):
+    if update.message.document:
+        try:
+            file = await update.message.document.get_file()
+            content = await file.download_as_bytearray()
+            prompt_text = content.decode("utf-8").strip()
+        except Exception as e:
+            await update.message.reply_text(f"❌ خطا در خواندن فایل: {e}")
+            return EDIT_QUICK_CONVERT_PROMPT
+    else:
+        prompt_text = update.message.text.strip()
+
+    if not prompt_text:
+        await update.message.reply_text("❌ متن پرامپت نمی‌تواند خالی باشد:")
+        return EDIT_QUICK_CONVERT_PROMPT
+
+    set_quick_convert_prompt(prompt_text)
+    await update.message.reply_text("✅ پرامپت تبدیل سریع ذخیره شد.")
+    return ConversationHandler.END
+
