@@ -34,3 +34,8 @@ class IDocumentProcessor(ABC):
         خروجی: (متن مارک‌داون اصلاح‌شده با تگ ![[filename]], لیست تصاویر برش‌خورده (نام‌فایل, بایت‌ها))
         """
         pass
+
+    @abstractmethod
+    def unify_markdown(self, raw_text: str) -> str:
+        """یکپارچه‌سازی و حذف سرتیترهای صفحات و جداکننده‌ها از مارک‌داون."""
+        pass

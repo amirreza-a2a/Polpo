@@ -11,7 +11,8 @@ from unittest.mock import patch, MagicMock
 import tests.characterization.conftest_base
 from infrastructure.persistence.connection import DatabaseManager, PooledConnectionWrapper
 from infrastructure.persistence.migration_runner import MigrationRunner, MigrationError
-import database.models as db_models
+from infrastructure.persistence.repositories import MySQLApiRepository, MySQLUserRepository
+
 
 
 class TestDatabaseManager(unittest.TestCase):
@@ -300,23 +301,25 @@ class TestMigrationRunner(unittest.TestCase):
 
 class TestDatabaseDeduplication(unittest.TestCase):
     """
-    Tests for deduplicated database definitions in models.py and worker.py.
+    Tests for deduplicated repository definitions in MySQL repositories.
     """
 
     def test_add_public_api_accepts_all_parameters(self):
-        """Verify add_public_api signature supports all optional arguments."""
-        sig = inspect.signature(db_models.add_public_api)
+        """Verify save_public signature on MySQLApiRepository supports all required arguments."""
+        sig = inspect.signature(MySQLApiRepository.save_public)
         params = list(sig.parameters.keys())
         expected_params = [
-            "api_key", "label", "provider", "models", "daily_limit",
-            "priority", "donated_by", "selected_model", "base_url"
+            "self", "provider", "api_key", "label", "models", "daily_limit",
+            "selected_model", "base_url", "donated_by"
         ]
         self.assertEqual(params, expected_params)
 
-    def test_get_user_by_id_exists_in_models(self):
-        """Verify get_user_by_id is defined in database/models.py."""
-        self.assertTrue(hasattr(db_models, "get_user_by_id"))
-        self.assertTrue(callable(db_models.get_user_by_id))
+
+    def test_get_user_by_id_exists_in_user_repository(self):
+        """Verify get_by_id is defined in MySQLUserRepository."""
+        self.assertTrue(hasattr(MySQLUserRepository, "get_by_id"))
+        self.assertTrue(callable(MySQLUserRepository.get_by_id))
+
 
 
 if __name__ == "__main__":

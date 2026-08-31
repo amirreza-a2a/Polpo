@@ -9,10 +9,11 @@ from telegram.ext import (
     ContextTypes,
 )
 
-from config import BOT_TOKEN
+from config import BOT_TOKEN, TEMP_DIR, OUTPUT_DIR
+from pathlib import Path
 from database.connection import init_db
-from utils.file_manager import ensure_dirs
 from infrastructure.logging import setup_logging, get_logger
+
 
 from handlers.common import start, unknown_command
 from handlers.pdf import (
@@ -109,7 +110,9 @@ async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYP
 def main():
     setup_logging()
     init_db()
-    ensure_dirs()
+    Path(TEMP_DIR).mkdir(parents=True, exist_ok=True)
+    Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
+
 
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_error_handler(global_error_handler)

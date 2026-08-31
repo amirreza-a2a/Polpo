@@ -2,10 +2,14 @@
 #  tests/characterization/test_quick_convert.py
 # ============================================================
 
+from datetime import date
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 import tests.characterization.conftest_base
-from handlers.quick_convert import TELEGRAM_MSG_LIMIT, _call_vision_api
+from handlers.quick_convert import TELEGRAM_MSG_LIMIT
+from application.dto.quick_convert_dto import QuickConvertCommand, QuickConvertResultDTO
+from application.services.quick_convert import QuickConvertService
+from core.ai.types import ApiSlot
 
 
 class TestQuickConvertCharacterization(unittest.TestCase):
@@ -32,29 +36,38 @@ class TestQuickConvertCharacterization(unittest.TestCase):
         # Long output exceeds limit and triggers file upload
         self.assertTrue(len(long_result) > TELEGRAM_MSG_LIMIT)
 
-    @patch("google.genai.Client")
-    def test_google_vision_api_invocation(self, mock_client_cls):
+    def test_quick_convert_service_invocation(self):
         """
-        Characterization: _call_vision_api for google provider calls client.models.generate_content.
+        Characterization: QuickConvertService delegates vision OCR to AI executor and consumes quota.
         """
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.text = "Generated OCR Markdown"
-        mock_client.models.generate_content.return_value = mock_response
-        mock_client_cls.return_value = mock_client
+        mock_uow_factory = MagicMock()
+        mock_uow = MagicMock()
+        mock_uow_factory.create.return_value.__enter__.return_value = mock_uow
 
-        mock_img = MagicMock()
-        api_entry = {
-            "type": "public",
-            "id": 1,
-            "provider": "google",
-            "api_key": "test_google_key",
-            "selected_model": "gemini-3.5-flash",
-            "base_url": None,
-        }
+        mock_user = MagicMock()
+        mock_user.quota.daily_pages_used = 0
+        mock_user.quota.daily_limit = 50
+        mock_user.quota.last_active_date = date.today()
+        mock_user.preferences.use_public_fallback = True
+        mock_uow.users.get_by_id.return_value = mock_user
 
-        result = _call_vision_api(mock_img, "Transcribe this", api_entry)
-        self.assertEqual(result, "Generated OCR Markdown")
+        mock_slot = ApiSlot(id=1, provider="google", api_key="k1", label="Key 1", slot_type="public", selected_model="gemini-3.5-flash")
+        mock_uow.apis.list_public.return_value = [mock_slot]
+        mock_uow.prompts.get_quick_convert_prompt.return_value = "Convert quickly"
+
+        mock_executor = MagicMock()
+        mock_executor.execute_vision_with_fallback.return_value = ("Generated OCR Markdown", mock_slot)
+
+        service = QuickConvertService(
+            uow_factory=mock_uow_factory,
+            ai_executor=mock_executor,
+        )
+
+        cmd = QuickConvertCommand(user_id=1, image_bytes=b"dummy_jpeg", mime_type="image/jpeg")
+        result = service.convert_image(cmd)
+
+        self.assertEqual(result.markdown_content, "Generated OCR Markdown")
+        mock_uow.users.increment_daily_pages.assert_called_once_with(1, 1)
 
     def test_quick_convert_quota_increment_amount(self):
         """

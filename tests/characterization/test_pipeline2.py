@@ -5,16 +5,18 @@
 import unittest
 import tempfile
 import os
-from services.pipeline2_processor import (
-    unify_markdown, prepare_unified_input,
-    get_pipeline2_input_path, get_pipeline2_output_path,
-)
+from infrastructure.document.pymupdf_processor import PyMuPDFDocumentProcessor
+from infrastructure.storage.local_storage import LocalStorageAdapter
+from core.entities.artifact import ArtifactType
 
 
 class TestPipeline2Characterization(unittest.TestCase):
     """
-    Characterizes Pipeline 2 text unification, regex stripping, and path resolution.
+    Characterizes Pipeline 2 text unification, regex stripping, and artifact handling.
     """
+
+    def setUp(self):
+        self.doc_processor = PyMuPDFDocumentProcessor()
 
     def test_unify_markdown_strips_page_headers(self):
         """
@@ -26,7 +28,7 @@ class TestPipeline2Characterization(unittest.TestCase):
             "## صفحه 2\n"
             "This is paragraph two."
         )
-        unified = unify_markdown(raw_text)
+        unified = self.doc_processor.unify_markdown(raw_text)
 
         self.assertNotIn("## صفحه 1", unified)
         self.assertNotIn("## صفحه 2", unified)
@@ -42,7 +44,7 @@ class TestPipeline2Characterization(unittest.TestCase):
             "---\n"
             "Page 2 Content"
         )
-        unified = unify_markdown(raw_text)
+        unified = self.doc_processor.unify_markdown(raw_text)
 
         self.assertNotIn("---", unified)
         self.assertIn("Page 1 Content", unified)
@@ -53,54 +55,31 @@ class TestPipeline2Characterization(unittest.TestCase):
         Characterization: unify_markdown collapses 3 or more newlines into double newlines.
         """
         raw_text = "Paragraph 1\n\n\n\n\n\nParagraph 2"
-        unified = unify_markdown(raw_text)
+        unified = self.doc_processor.unify_markdown(raw_text)
 
         self.assertEqual(unified, "Paragraph 1\n\nParagraph 2")
 
-    def test_pipeline2_path_resolution(self):
+    def test_pipeline2_artifact_storage_and_unification(self):
         """
-        Characterization: Pipeline 2 derives standardized input and output paths.
+        Characterization: Pipeline 2 unifies raw markdown and stores it via IArtifactStorage.
         """
-        p2_job_id = 99
-        source_name = "test_document.pdf"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = LocalStorageAdapter(base_dir=tmpdir)
+            raw_content = "## صفحه 1\nRaw content\n---\n## صفحه 2\nMore raw content"
+            unified = self.doc_processor.unify_markdown(raw_content)
 
-        input_path = get_pipeline2_input_path(p2_job_id)
-        output_path = get_pipeline2_output_path(p2_job_id, source_name)
+            handle = storage.store(
+                job_id=777,
+                artifact_type=ArtifactType.PIPELINE2_MARKDOWN,
+                filename="p2_unified.md",
+                data=unified.encode("utf-8"),
+                mime_type="text/markdown",
+            )
 
-        self.assertTrue(input_path.endswith("unified_input.md"))
-        self.assertTrue(output_path.endswith("unified_test_document.md"))
-        self.assertIn("pipeline2", input_path)
-        self.assertIn("pipeline2", output_path)
-
-    def test_prepare_unified_input_file_creation(self):
-        """
-        Characterization: prepare_unified_input reads source markdown, cleans it, and writes unified file.
-        """
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
-            f.write("## صفحه 1\nRaw content\n---\n## صفحه 2\nMore raw content")
-            src_path = f.name
-
-        try:
-            p2_job_id = 777
-            out_in_path = prepare_unified_input(p2_job_id, src_path)
-
-            self.assertTrue(os.path.exists(out_in_path))
-            with open(out_in_path, "r", encoding="utf-8") as f_out:
-                content = f_out.read()
-
-            self.assertNotIn("## صفحه", content)
-            self.assertNotIn("---", content)
-            self.assertIn("Raw content\n\nMore raw content", content)
-
-            # Cleanup created p2 directory
-            if os.path.exists(out_in_path):
-                os.remove(out_in_path)
-                parent = os.path.dirname(out_in_path)
-                if os.path.exists(parent):
-                    os.rmdir(parent)
-        finally:
-            if os.path.exists(src_path):
-                os.remove(src_path)
+            retrieved = storage.retrieve(handle).decode("utf-8")
+            self.assertNotIn("## صفحه", retrieved)
+            self.assertNotIn("---", retrieved)
+            self.assertIn("Raw content\n\nMore raw content", retrieved)
 
 
 if __name__ == "__main__":

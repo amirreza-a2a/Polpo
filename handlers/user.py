@@ -10,10 +10,10 @@ from config import DAILY_PAGE_LIMIT, BACKUP_CHANNEL_ID
 from infrastructure.composition import get_app_container
 from application.dto.api_dto import RegisterApiCommand, DonateApiCommand
 from application.dto.user_dto import UpdatePreferencesCommand
-from core.entities.prompt import PromptType
-from services.api_manager import (
+from infrastructure.ai.provider_detector import (
     detect_provider_and_models, get_default_base_url,
 )
+
 
 # ─── states ──────────────────────────────────────────────
 WAITING_API_KEY      = 1

@@ -61,22 +61,3 @@ async def handle_quick_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await update.message.reply_text(error_msg)
         else:
             await update.message.reply_text(error_msg)
-
-
-def _call_vision_api(pil_img, prompt: str, api_entry: dict) -> str:
-    """تابع کمکی جهت حفظ سازگاری با تست‌های کاراکتریزاسیون فازهای پیشین."""
-    buf = io.BytesIO()
-    img = pil_img.convert("RGB") if hasattr(pil_img, 'mode') and pil_img.mode in ("RGBA", "P") else pil_img
-    img.save(buf, format="JPEG", quality=90)
-    image_bytes = buf.getvalue()
-
-    from services.ai_executor import execute_single_vision_request
-    from core.ai.types import VisionPromptRequest
-    req = VisionPromptRequest(
-        prompt=prompt,
-        image_bytes=image_bytes,
-        mime_type="image/jpeg",
-        model=api_entry.get("selected_model"),
-    )
-    response = execute_single_vision_request(req, api_entry)
-    return response.content

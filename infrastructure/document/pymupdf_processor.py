@@ -79,3 +79,18 @@ class PyMuPDFDocumentProcessor(IDocumentProcessor):
                 continue
 
         return modified_text, cropped_list
+
+    def unify_markdown(self, raw_text: str) -> str:
+        """
+        یکپارچه‌سازی سطح Python (بدون AI):
+        - حذف سرتیترهای "## صفحه X"
+        - حذف خطوط جداکننده "---"
+        - حذف خطوط خالی اضافی
+        """
+        page_header_pattern = re.compile(r"^##\s*صفحه\s*\d+\s*$", re.MULTILINE)
+        separator_pattern = re.compile(r"^\s*---\s*$", re.MULTILINE)
+
+        text = page_header_pattern.sub("", raw_text)
+        text = separator_pattern.sub("", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()

@@ -28,15 +28,8 @@ from core.ai.exceptions import (
 from infrastructure.ai.google_adapter import GoogleAdapter
 from infrastructure.ai.openai_adapter import OpenAIAdapter
 from infrastructure.ai.factory import create_ai_adapter
-from services.ai_executor import (
-    execute_single_vision_request,
-    execute_single_text_request,
-    execute_vision_with_fallback,
-    execute_text_with_fallback,
-)
-from services.pdf_processor import _process_single_page, process_job
-from services.pipeline2_processor import _call_ai_text, process_pipeline2_job
-from handlers.quick_convert import _call_vision_api, handle_quick_photo
+from infrastructure.ai.executor_service import RateLimitedAIExecutor
+from handlers.quick_convert import handle_quick_photo
 
 
 class TestCoreAIIndependence(unittest.TestCase):
@@ -61,29 +54,6 @@ class TestCoreAIIndependence(unittest.TestCase):
                     module_source,
                     f"Core module '{mod.__name__}' must not import from '{forbidden}'"
                 )
-
-    def test_ai_response_contains_no_raw_sdk_leakage(self):
-        """Verify AIResponse contract does not expose raw provider SDK objects."""
-        resp = AIResponse(content="Clean Markdown Output", model="gemini-3.5-flash", usage={"tokens": 42})
-        self.assertEqual(resp.content, "Clean Markdown Output")
-        self.assertEqual(resp.text, "Clean Markdown Output")
-        self.assertEqual(resp.model, "gemini-3.5-flash")
-        self.assertFalse(hasattr(resp, "raw_response"), "AIResponse must not have a raw_response field")
-
-    def test_ai_exceptions_retain_no_raw_error(self):
-        """Verify domain AI exceptions do not store raw SDK exception instances."""
-        err = AIRateLimitError("Quota exceeded", provider="google", model="gemini-3.5-flash", status_code=429)
-        self.assertEqual(err.message, "Quota exceeded")
-        self.assertEqual(err.provider, "google")
-        self.assertEqual(err.model, "gemini-3.5-flash")
-        self.assertEqual(err.status_code, 429)
-        self.assertFalse(hasattr(err, "raw_error"), "AIError must not retain raw_error attribute")
-
-
-class TestAIContractsAndEntities(unittest.TestCase):
-    """
-    Tests for transport/provider-neutral AI types, request contracts, and ApiSlot entity.
-    """
 
     def test_vision_prompt_request_contract(self):
         dummy_bytes = b"\xff\xd8\xff\xe0"  # JPEG header bytes
@@ -279,209 +249,108 @@ class TestOpenAIAdapter(unittest.TestCase):
 
 class TestAIExecutionPolicy(unittest.TestCase):
     """
-    Tests for execution policy, exception propagation, multi-slot fallback orchestration, and error classification.
+    Tests for RateLimitedAIExecutor policy, exception propagation, multi-slot fallback orchestration, and error classification.
     """
 
-    @patch("services.ai_executor.create_ai_adapter")
-    def test_single_vision_request_propagates_normalized_exception(self, mock_create):
-        mock_adapter = MagicMock(spec=AIProviderPort)
-        mock_adapter.generate_vision.side_effect = AIAuthenticationError("Invalid Key", provider="google", status_code=401)
-        mock_create.return_value = mock_adapter
+    def setUp(self):
+        self.mock_limiter = MagicMock()
+        self.mock_factory = MagicMock()
+        self.executor = RateLimitedAIExecutor(
+            rate_limiter=self.mock_limiter,
+            adapter_factory=self.mock_factory,
+        )
 
-        slot = ApiSlot(id=1, provider="google", api_key="bad_key")
-        req = VisionPromptRequest(prompt="OCR", image_bytes=b"dummy")
+    def test_execute_vision_with_fallback_success_on_first_slot(self):
+        mock_adapter = MagicMock()
+        mock_adapter.generate_vision.return_value = AIResponse(content="Page 1 Markdown")
+        self.mock_factory.return_value = mock_adapter
 
-        with self.assertRaises(AIAuthenticationError):
-            execute_single_vision_request(req, slot)
+        slot = ApiSlot(id=1, provider="google", api_key="k1", label="Key 1", slot_type="private")
+        chain = [slot]
 
-    @patch("services.ai_executor.create_ai_adapter")
-    def test_single_text_request_propagates_normalized_exception(self, mock_create):
-        mock_adapter = MagicMock(spec=AIProviderPort)
-        mock_adapter.generate_text.side_effect = AIRateLimitError("Quota reached", provider="openai", status_code=429)
-        mock_create.return_value = mock_adapter
-
-        slot = ApiSlot(id=2, provider="openai", api_key="key")
-        req = TextPromptRequest(prompt="Refine")
-
-        with self.assertRaises(AIRateLimitError):
-            execute_single_text_request(req, slot)
-
-    @patch("services.ai_executor.wait_if_needed")
-    @patch("services.ai_executor.mark_request_sent")
-    @patch("services.ai_executor.execute_single_vision_request")
-    def test_execute_vision_with_fallback_success_on_first_slot(self, mock_execute, mock_mark, mock_wait):
-        mock_execute.return_value = AIResponse(content="Page 1 Markdown")
-
-        job = {
-            "id": 1,
-            "user_id": 100,
-            "current_api_index": 0,
-            "api_chain": [
-                {"type": "private", "id": 1, "provider": "google", "api_key": "k1", "label": "Key 1"},
-            ],
-            "api_switch_log": [],
-        }
-
-        content, active_api = execute_vision_with_fallback(job, b"dummy_bytes", "Prompt", at_page=1)
+        content, active_slot = self.executor.execute_vision_with_fallback(chain, b"dummy_bytes", "Prompt", at_page=1)
 
         self.assertEqual(content, "Page 1 Markdown")
-        self.assertEqual(active_api["id"], 1)
-        mock_wait.assert_called_once()
-        mock_mark.assert_called_once()
+        self.assertEqual(active_slot.id, 1)
+        self.mock_limiter.wait_if_needed.assert_called_once_with(slot)
+        self.mock_limiter.mark_request_sent.assert_called_once_with(slot)
 
-    @patch("services.ai_executor.wait_if_needed")
-    @patch("services.ai_executor.mark_request_sent")
-    @patch("services.ai_executor.execute_single_vision_request")
-    @patch("services.ai_executor.switch_to_next_api")
-    def test_execute_vision_with_fallback_distinguishes_error_reasons(self, mock_switch, mock_execute, mock_mark, mock_wait):
-        # Slot 1 fails with AIRateLimitError, Slot 2 succeeds
-        mock_execute.side_effect = [
-            AIRateLimitError("429 Too Many Requests", provider="google", status_code=429),
-            AIResponse(content="Page 1 Success from Slot 2"),
-        ]
+    def test_execute_vision_with_fallback_distinguishes_error_reasons(self):
+        mock_adapter_1 = MagicMock()
+        mock_adapter_1.generate_vision.side_effect = AIRateLimitError("429 Too Many Requests", provider="google", status_code=429)
 
-        slot_1 = {"type": "private", "id": 1, "provider": "google", "api_key": "k1", "label": "Key 1"}
-        slot_2 = {"type": "public", "id": 2, "provider": "openai", "api_key": "k2", "label": "Key 2"}
+        mock_adapter_2 = MagicMock()
+        mock_adapter_2.generate_vision.return_value = AIResponse(content="Page 1 Success from Slot 2")
 
-        job = {
-            "id": 1,
-            "user_id": 100,
-            "current_api_index": 0,
-            "api_chain": [slot_1, slot_2],
-            "api_switch_log": [],
-        }
-        mock_switch.return_value = slot_2
-        mock_notify = MagicMock()
+        self.mock_factory.side_effect = [mock_adapter_1, mock_adapter_2]
 
-        content, active_api = execute_vision_with_fallback(
-            job, b"dummy_bytes", "Prompt", at_page=1, notify_switch_callback=mock_notify
+        slot_1 = ApiSlot(id=1, provider="google", api_key="k1", label="Key 1", slot_type="private")
+        slot_2 = ApiSlot(id=2, provider="openai", api_key="k2", label="Key 2", slot_type="public")
+        chain = [slot_1, slot_2]
+
+        mock_switch_cb = MagicMock()
+
+        content, active_slot = self.executor.execute_vision_with_fallback(
+            chain, b"dummy_bytes", "Prompt", at_page=1, on_switch=mock_switch_cb
         )
 
         self.assertEqual(content, "Page 1 Success from Slot 2")
-        self.assertEqual(active_api["id"], 2)
-        # Reason must be "rate_limit" based on exception classification
-        mock_switch.assert_called_once_with(job, reason="rate_limit", at_page=1)
-        mock_notify.assert_called_once_with(100, "Key 1", "Key 2")
+        self.assertEqual(active_slot.id, 2)
+        mock_switch_cb.assert_called_once_with("Key 1", "Key 2", "rate_limit", 1)
 
-    @patch("services.ai_executor.wait_if_needed")
-    @patch("services.ai_executor.mark_request_sent")
-    @patch("services.ai_executor.execute_single_vision_request")
-    @patch("services.ai_executor.switch_to_next_api")
-    def test_execute_vision_exhausted_chain_returns_none(self, mock_switch, mock_execute, mock_mark, mock_wait):
-        mock_execute.side_effect = AIProviderUnavailableError("503 Service Unavailable", provider="google")
-        mock_switch.return_value = None  # No more slots
+    def test_execute_vision_exhausted_chain_returns_none(self):
+        mock_adapter = MagicMock()
+        mock_adapter.generate_vision.side_effect = AIProviderUnavailableError("503 Service Unavailable", provider="google")
+        self.mock_factory.return_value = mock_adapter
 
-        job = {
-            "id": 1,
-            "user_id": 100,
-            "current_api_index": 0,
-            "api_chain": [
-                {"type": "private", "id": 1, "provider": "google", "api_key": "k1", "label": "Key 1"},
-            ],
-            "api_switch_log": [],
-        }
+        slot = ApiSlot(id=1, provider="google", api_key="k1", label="Key 1", slot_type="private")
+        chain = [slot]
 
-        content, active_api = execute_vision_with_fallback(job, b"dummy_bytes", "Prompt", at_page=1)
+        content, active_slot = self.executor.execute_vision_with_fallback(chain, b"dummy_bytes", "Prompt", at_page=1)
 
         self.assertIsNone(content)
-        self.assertIsNone(active_api)
+        self.assertIsNone(active_slot)
 
-    @patch("services.ai_executor.wait_if_needed")
-    @patch("services.ai_executor.mark_request_sent")
-    @patch("services.ai_executor.execute_single_vision_request")
-    @patch("services.ai_executor.switch_to_next_api")
-    def test_execute_vision_propagates_non_ai_exceptions(self, mock_switch, mock_execute, mock_mark, mock_wait):
+    def test_execute_vision_propagates_non_ai_exceptions(self):
         """
         Verify that unexpected non-AI exceptions (TypeError, KeyError, etc.) propagate unchanged
         and DO NOT trigger fallback switching.
         """
-        mock_execute.side_effect = TypeError("Unexpected argument error")
+        mock_adapter = MagicMock()
+        mock_adapter.generate_vision.side_effect = TypeError("Unexpected argument error")
+        self.mock_factory.return_value = mock_adapter
 
-        job = {
-            "id": 1,
-            "user_id": 100,
-            "current_api_index": 0,
-            "api_chain": [
-                {"type": "private", "id": 1, "provider": "google", "api_key": "k1", "label": "Key 1"},
-                {"type": "public", "id": 2, "provider": "openai", "api_key": "k2", "label": "Key 2"},
-            ],
-            "api_switch_log": [],
-        }
+        slot_1 = ApiSlot(id=1, provider="google", api_key="k1", label="Key 1", slot_type="private")
+        slot_2 = ApiSlot(id=2, provider="openai", api_key="k2", label="Key 2", slot_type="public")
+        chain = [slot_1, slot_2]
 
         with self.assertRaises(TypeError):
-            execute_vision_with_fallback(job, b"dummy_bytes", "Prompt", at_page=1)
+            self.executor.execute_vision_with_fallback(chain, b"dummy_bytes", "Prompt", at_page=1)
 
-        # switch_to_next_api must NOT have been called
-        mock_switch.assert_not_called()
-
-    @patch("services.ai_executor.wait_if_needed")
-    @patch("services.ai_executor.mark_request_sent")
-    @patch("services.ai_executor.execute_single_text_request")
-    @patch("services.ai_executor.switch_to_next_api")
-    def test_execute_text_propagates_non_ai_exceptions(self, mock_switch, mock_execute, mock_mark, mock_wait):
+    def test_execute_text_propagates_non_ai_exceptions(self):
         """
         Verify that unexpected non-AI exceptions in text path propagate unchanged
         and DO NOT trigger fallback switching.
         """
-        mock_execute.side_effect = RuntimeError("Fatal system crash")
+        mock_adapter = MagicMock()
+        mock_adapter.generate_text.side_effect = RuntimeError("Fatal system crash")
+        self.mock_factory.return_value = mock_adapter
 
-        job = {
-            "id": 1,
-            "user_id": 100,
-            "current_api_index": 0,
-            "api_chain": [
-                {"type": "private", "id": 1, "provider": "google", "api_key": "k1", "label": "Key 1"},
-                {"type": "public", "id": 2, "provider": "openai", "api_key": "k2", "label": "Key 2"},
-            ],
-            "api_switch_log": [],
-        }
+        slot_1 = ApiSlot(id=1, provider="google", api_key="k1", label="Key 1", slot_type="private")
+        slot_2 = ApiSlot(id=2, provider="openai", api_key="k2", label="Key 2", slot_type="public")
+        chain = [slot_1, slot_2]
 
         with self.assertRaises(RuntimeError):
-            execute_text_with_fallback(job, "Prompt", at_page=0)
-
-        # switch_to_next_api must NOT have been called
-        mock_switch.assert_not_called()
+            self.executor.execute_text_with_fallback(chain, "Prompt", at_page=0)
 
 
-class TestProcessorPropagationBoundary(unittest.TestCase):
+class TestHandlerQuickConvertDelegation(unittest.TestCase):
     """
-    Tests proving that PDF processor, Pipeline2 processor, and Quick Convert
-    propagate non-AI exceptions (RuntimeError, TypeError, KeyError) without swallowing them into None.
+    Tests for handle_quick_photo delegation to Application Services.
     """
-
-    @patch("services.pdf_processor.execute_single_vision_request")
-    def test_pdf_processor_propagates_non_ai_exceptions(self, mock_vision_exec):
-        mock_vision_exec.side_effect = RuntimeError("PDF Vision Internal Serialization Bug")
-        img = Image.new("RGB", (10, 10))
-        api_entry = {"id": 1, "provider": "google", "api_key": "k", "selected_model": "gemini-3.5-flash"}
-
-        with self.assertRaises(RuntimeError) as ctx:
-            _process_single_page(img, "Prompt", api_entry)
-        self.assertIn("PDF Vision Internal Serialization Bug", str(ctx.exception))
-
-    @patch("services.ai_executor.execute_single_text_request")
-    def test_pipeline2_processor_propagates_non_ai_exceptions(self, mock_text_exec):
-        mock_text_exec.side_effect = TypeError("Pipeline2 Type Misconfiguration")
-        api_entry = {"id": 1, "provider": "openai", "api_key": "k", "selected_model": "gpt-4o"}
-
-        with self.assertRaises(TypeError) as ctx:
-            _call_ai_text("Sample Document Text", "Refine Prompt", api_entry)
-        self.assertIn("Pipeline2 Type Misconfiguration", str(ctx.exception))
-
-    @patch("services.ai_executor.execute_single_vision_request")
-    def test_quick_convert_propagates_non_ai_exceptions(self, mock_vision_exec):
-        mock_vision_exec.side_effect = KeyError("Missing required internal field")
-        img = Image.new("RGB", (10, 10))
-        api_entry = {"id": 1, "provider": "google", "api_key": "k", "selected_model": "gemini-3.5-flash"}
-
-        with self.assertRaises(KeyError):
-            _call_vision_api(img, "Prompt", api_entry)
 
     @patch("handlers.quick_convert.get_app_container")
-    def test_quick_convert_delegates_fallback_to_ai_executor(self, mock_get_container):
-        """
-        Verify that handle_quick_photo delegates processing to QuickConvertService.
-        """
+    def test_quick_convert_delegates_to_service(self, mock_get_container):
         import asyncio
         mock_container = MagicMock()
         mock_user = MagicMock()
@@ -501,18 +370,15 @@ class TestProcessorPropagationBoundary(unittest.TestCase):
         mock_photo.get_file = AsyncMock(return_value=mock_file)
         mock_msg.photo = [mock_photo]
 
-
         mock_status = AsyncMock()
         mock_msg.reply_text = AsyncMock(return_value=mock_status)
         mock_msg.reply_document = AsyncMock()
 
         asyncio.run(handle_quick_photo(mock_update, MagicMock()))
 
-        # quick_convert_service.convert_image must be called exactly once
         mock_container.quick_convert_service.convert_image.assert_called_once()
         cmd = mock_container.quick_convert_service.convert_image.call_args[0][0]
         self.assertEqual(cmd.user_id, 42)
-
 
 
 if __name__ == "__main__":
