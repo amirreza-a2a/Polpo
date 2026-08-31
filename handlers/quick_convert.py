@@ -14,6 +14,8 @@ from database.models import (
     increment_user_pages, get_quick_convert_prompt,
 )
 from services.api_manager import build_api_chain, get_default_model
+from services.ai_executor import execute_vision_with_fallback, execute_single_vision_request
+from core.ai.types import VisionPromptRequest
 
 TELEGRAM_MSG_LIMIT = 4096
 
@@ -55,14 +57,28 @@ async def handle_quick_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
     photo_bytes = await file_obj.download_as_bytearray()
     pil_img = Image.open(io.BytesIO(bytes(photo_bytes)))
 
-    # ─── تلاش با اولین API، سپس سوئیچ در صورت خطا ──────────
-    result = None
-    used_api = None
-    for api_entry in chain:
-        result = _call_vision_api(pil_img, prompt_text, api_entry)
-        if result is not None:
-            used_api = api_entry
-            break
+    # ─── پردازش تصویر با اعمال متمرکز Fallback در ai_executor ──
+
+    buf = io.BytesIO()
+    img = pil_img.convert("RGB") if pil_img.mode in ("RGBA", "P") else pil_img
+    img.save(buf, format="JPEG", quality=90)
+    image_bytes = buf.getvalue()
+
+    job_data = {
+        "id": None,
+        "user_id": db_user["id"],
+        "api_chain": chain,
+        "current_api_index": 0,
+        "api_switch_log": [],
+    }
+
+    result, used_api = execute_vision_with_fallback(
+        job=job_data,
+        image_bytes=image_bytes,
+        prompt=prompt_text,
+        at_page=1,
+        mime_type="image/jpeg",
+    )
 
     if result is None:
         await status_msg.edit_text(
@@ -93,54 +109,17 @@ async def handle_quick_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
 
 
-def _call_vision_api(pil_img: Image.Image, prompt: str, api_entry: dict) -> str | None:
-    api_key  = api_entry["api_key"]
-    provider = api_entry["provider"]
-    model    = api_entry.get("selected_model") or get_default_model(provider)
-    base_url = api_entry.get("base_url")
+def _call_vision_api(pil_img: Image.Image, prompt: str, api_entry: dict) -> str:
+    buf = io.BytesIO()
+    img = pil_img.convert("RGB") if pil_img.mode in ("RGBA", "P") else pil_img
+    img.save(buf, format="JPEG", quality=90)
+    image_bytes = buf.getvalue()
 
-    if provider == "google":
-        try:
-            from google import genai
-            client   = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model    = model,
-                contents = [pil_img, prompt],
-            )
-            return response.text
-        except Exception as e:
-            print(f"    ⚠️ Google vision error (model={model}): {e}")
-            return None
-
-    if provider in ("openai", "openrouter") or base_url:
-        try:
-            import openai as openai_lib
-            import base64
-
-            buf = io.BytesIO()
-            img = pil_img.convert("RGB") if pil_img.mode in ("RGBA", "P") else pil_img
-            img.save(buf, format="JPEG", quality=90)
-            img_b64 = base64.b64encode(buf.getvalue()).decode()
-
-            client_kwargs = {"api_key": api_key}
-            if base_url:
-                client_kwargs["base_url"] = base_url
-            client = openai_lib.OpenAI(**client_kwargs)
-
-            response = client.chat.completions.create(
-                model    = model,
-                messages = [{
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
-                        {"type": "text", "text": prompt},
-                    ],
-                }],
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            print(f"    ⚠️ {provider} vision error (model={model}): {e}")
-            return None
-
-    print(f"    ⚠️ provider ناشناخته: {provider}")
-    return None
+    req = VisionPromptRequest(
+        prompt=prompt,
+        image_bytes=image_bytes,
+        mime_type="image/jpeg",
+        model=api_entry.get("selected_model"),
+    )
+    response = execute_single_vision_request(req, api_entry)
+    return response.content

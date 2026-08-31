@@ -11,13 +11,13 @@ from pathlib import Path
 import fitz                        # PyMuPDF
 from PIL import Image
 
-from google import genai
-
 from config import DPI
 from utils.rate_limiter import wait_if_needed, mark_request_sent
 from services.api_manager import switch_to_next_api, report_pages_used, get_default_model
 from database.models import update_job_progress, update_job_status
-from utils.file_manager import get_attachments_dir, get_output_path
+from core.ai.exceptions import AIError
+from core.ai.types import VisionPromptRequest
+from services.ai_executor import execute_single_vision_request
 
 
 # ─── الگوی مختصات در متن markdown ───────────────────────
@@ -32,27 +32,23 @@ def extract_and_crop_images(markdown_text: str, pil_img: Image.Image,
     if not matches:
         return markdown_text
 
+    Path(attachments_dir).mkdir(parents=True, exist_ok=True)
+
+    # معکوس پردازش می‌کنیم تا offset رشته به هم نخورد
     for match in reversed(matches):
+        ymin, xmin, ymax, xmax = map(int, match.groups())
+
+        left   = int((xmin / 1000) * width)
+        top    = int((ymin / 1000) * height)
+        right  = int((xmax / 1000) * width)
+        bottom = int((ymax / 1000) * height)
+
+        if right <= left or bottom <= top:
+            continue
+
         try:
-            ymin, xmin, ymax, xmax = map(int, match.groups())
-
-            left   = (xmin * width)  / 1000
-            top    = (ymin * height) / 1000
-            right  = (xmax * width)  / 1000
-            bottom = (ymax * height) / 1000
-
-            padding  = 10
-            crop_box = (
-                max(0, left   - padding),
-                max(0, top    - padding),
-                min(width,  right  + padding),
-                min(height, bottom + padding),
-            )
-
-            cropped = pil_img.crop(crop_box)
-
-            file_id  = int(time.time() * 1000)
-            filename = f"image_{file_id}.jpg"
+            cropped = pil_img.crop((left, top, right, bottom))
+            filename = f"crop_{int(time.time()*1000)}_{xmin}_{ymin}.jpg"
             save_path = os.path.join(attachments_dir, filename)
 
             if cropped.mode in ("RGBA", "P"):
@@ -74,69 +70,25 @@ def extract_and_crop_images(markdown_text: str, pil_img: Image.Image,
 
 
 def _process_single_page(pil_img: Image.Image, prompt: str,
-                          api_entry: dict) -> str | None:
+                          api_entry: dict) -> str:
     """
     یک صفحه را به API می‌فرستد و متن markdown خام را برمی‌گرداند.
-    از selected_model و base_url موجود در api_entry استفاده می‌کند.
+    تبدیل تصویر به بایت در مرز Application صورت می‌گیرد.
+    خطاهای AIError بالا پرتاب می‌شوند تا در حلقه پردازش مدیریت شوند.
     """
-    api_key  = api_entry["api_key"]
-    provider = api_entry["provider"]
-    model    = api_entry.get("selected_model") or get_default_model(provider)
-    base_url = api_entry.get("base_url")
+    buf = io.BytesIO()
+    img = pil_img.convert("RGB") if pil_img.mode in ("RGBA", "P") else pil_img
+    img.save(buf, format="JPEG", quality=95)
+    image_bytes = buf.getvalue()
 
-    # ─── Google / Gemini ──────────────────────────────────
-    if provider == "google":
-        try:
-            client   = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model    = model,
-                contents = [pil_img, prompt],
-            )
-            return response.text
-        except Exception as e:
-            print(f"    ⚠️ Google API error (model={model}): {e}")
-            return None
-
-    # ─── OpenAI / OpenRouter / Custom ────────────────────
-    if provider in ("openai", "openrouter") or base_url:
-        try:
-            import openai as openai_lib
-            import base64
-
-            # تبدیل تصویر PIL به base64
-            buf = io.BytesIO()
-            if pil_img.mode in ("RGBA", "P"):
-                pil_img = pil_img.convert("RGB")
-            pil_img.save(buf, format="JPEG", quality=90)
-            img_b64 = base64.b64encode(buf.getvalue()).decode()
-
-            client_kwargs = {"api_key": api_key}
-            if base_url:
-                client_kwargs["base_url"] = base_url
-
-            client = openai_lib.OpenAI(**client_kwargs)
-
-            response = client.chat.completions.create(
-                model    = model,
-                messages = [{
-                    "role": "user",
-                    "content": [
-                        {
-                            "type":      "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"},
-                        },
-                        {"type": "text", "text": prompt},
-                    ],
-                }],
-            )
-            return response.choices[0].message.content
-
-        except Exception as e:
-            print(f"    ⚠️ {provider} API error (model={model}): {e}")
-            return None
-
-    print(f"    ⚠️ provider ناشناخته: {provider}")
-    return None
+    req = VisionPromptRequest(
+        prompt=prompt,
+        image_bytes=image_bytes,
+        mime_type="image/jpeg",
+        model=api_entry.get("selected_model"),
+    )
+    response = execute_single_vision_request(req, api_entry)
+    return response.content
 
 
 def process_job(job: dict, prompt_text: str,
@@ -174,7 +126,12 @@ def process_job(job: dict, prompt_text: str,
 
         wait_if_needed(current_api)
 
-        result = _process_single_page(pil_img, prompt_text, current_api)
+        result = None
+        try:
+            result = _process_single_page(pil_img, prompt_text, current_api)
+        except AIError as ai_err:
+            print(f"  🔄 خطای هوش مصنوعی در صفحه {page_num + 1}: {ai_err}")
+            result = None
         mark_request_sent(current_api)
 
         if result is None:
@@ -195,7 +152,11 @@ def process_job(job: dict, prompt_text: str,
                 notify_switch_callback(job["user_id"], old_label, current_api["label"])
 
             wait_if_needed(current_api)
-            result = _process_single_page(pil_img, prompt_text, current_api)
+            try:
+                result = _process_single_page(pil_img, prompt_text, current_api)
+            except AIError as ai_err:
+                print(f"  🔄 خطای هوش مصنوعی با API جدید در صفحه {page_num + 1}: {ai_err}")
+                result = None
             mark_request_sent(current_api)
 
             if result is None:

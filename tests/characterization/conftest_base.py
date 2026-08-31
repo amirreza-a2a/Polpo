@@ -48,6 +48,7 @@ if "PIL" not in sys.modules:
         pass
     mock_pil_img.Image = ImageClass
     mock_pil_img.open = MagicMock()
+    mock_pil_img.new = MagicMock()
     mock_pil.Image = mock_pil_img
     sys.modules["PIL"] = mock_pil
     sys.modules["PIL.Image"] = mock_pil_img

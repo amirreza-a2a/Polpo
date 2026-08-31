@@ -60,49 +60,17 @@ def prepare_unified_input(p2_job_id: int, source_md_path: str) -> str:
     return input_path
 
 
-def _call_ai_text(text: str, prompt_text: str, api_entry: dict) -> str | None:
+def _call_ai_text(text: str, prompt_text: str, api_entry: dict) -> str:
     """
     متن یکپارچه را همراه با prompt به AI می‌فرستد (فقط متن — بدون تصویر).
+    خطاهای AIError بالا پرتاب می‌شوند تا در حلقه پردازش مدیریت شوند.
     """
-    api_key  = api_entry["api_key"]
-    provider = api_entry["provider"]
-    model    = api_entry.get("selected_model") or get_default_model(provider)
-    base_url = api_entry.get("base_url")
-
+    from core.ai.types import TextPromptRequest
+    from services.ai_executor import execute_single_text_request
     full_prompt = f"{prompt_text}\n\n---\n\nمتن سند:\n\n{text}"
-
-    if provider == "google":
-        try:
-            from google import genai
-            client   = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model    = model,
-                contents = [full_prompt],
-            )
-            return response.text
-        except Exception as e:
-            print(f"    ⚠️ Google API error (model={model}): {e}")
-            return None
-
-    if provider in ("openai", "openrouter") or base_url:
-        try:
-            import openai as openai_lib
-            client_kwargs = {"api_key": api_key}
-            if base_url:
-                client_kwargs["base_url"] = base_url
-            client = openai_lib.OpenAI(**client_kwargs)
-
-            response = client.chat.completions.create(
-                model    = model,
-                messages = [{"role": "user", "content": full_prompt}],
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            print(f"    ⚠️ {provider} API error (model={model}): {e}")
-            return None
-
-    print(f"    ⚠️ provider ناشناخته: {provider}")
-    return None
+    req = TextPromptRequest(prompt=full_prompt, model=api_entry.get("selected_model"))
+    response = execute_single_text_request(req, api_entry)
+    return response.content
 
 
 def process_pipeline2_job(p2_job: dict, source_job: dict,
@@ -114,6 +82,7 @@ def process_pipeline2_job(p2_job: dict, source_job: dict,
     ② ارسال به AI با prompt انتخابی
     ③ ذخیره خروجی
     """
+    from core.ai.exceptions import AIError
     from services.api_manager import switch_to_next_api, report_pages_used
     from database.models import update_pipeline2_job_status
 
@@ -135,7 +104,12 @@ def process_pipeline2_job(p2_job: dict, source_job: dict,
 
     # ─── ② ارسال به AI ──────────────────────────────────────
     current_api = p2_job["api_chain"][p2_job["current_api_index"]]
-    result = _call_ai_text(unified_text, prompt_text, current_api)
+    result = None
+    try:
+        result = _call_ai_text(unified_text, prompt_text, current_api)
+    except AIError as ai_err:
+        print(f"  🔄 خطای هوش مصنوعی در pipeline2: {ai_err}")
+        result = None
 
     if result is None:
         old_label = current_api["label"]
@@ -152,7 +126,12 @@ def process_pipeline2_job(p2_job: dict, source_job: dict,
         if notify_switch_callback:
             notify_switch_callback(p2_job["user_id"], old_label, current_api["label"])
 
-        result = _call_ai_text(unified_text, prompt_text, current_api)
+        try:
+            result = _call_ai_text(unified_text, prompt_text, current_api)
+        except AIError as ai_err:
+            print(f"  🔄 خطای هوش مصنوعی با API جدید در pipeline2: {ai_err}")
+            result = None
+
         if result is None:
             update_pipeline2_job_status(
                 p2_id, "failed",
