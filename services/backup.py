@@ -6,7 +6,7 @@ import asyncio
 from telegram import Bot
 from config import BOT_TOKEN, BACKUP_CHANNEL_ID
 from database.models import update_job_backup
-from utils.file_manager import cleanup_job_files, create_attachments_zip, has_attachments
+from utils.file_manager import cleanup_temp_input, create_attachments_zip, has_attachments
 
 
 async def upload_and_cleanup(job: dict, user_info: dict):
@@ -58,8 +58,12 @@ async def upload_and_cleanup(job: dict, user_info: dict):
     if md_msg_id:
         update_job_backup(job["id"], md_msg_id, zip_msg_id)
 
-    cleanup_job_files(job)
-    print(f"🗑️ فایل‌های موقت جاب {job['id']} حذف شدند.")
+    # پاکسازی امن: فقط در صورت تایید بکاپ یا وجود آرشیو معتبر سورس، فایل ورودی پاک می‌شود
+    if md_msg_id or job.get("source_file_id"):
+        cleanup_temp_input(job)
+        print(f"🗑️ فایل موقت ورودی جاب {job['id']} حذف شد.")
+    else:
+        print(f"🛡️ آپلود بکاپ جاب {job['id']} ناموفق بود؛ فایل ورودی برای حفظ امکان بازیابی پاک نشد.")
 
 
 def run_backup(job: dict, user_info: dict):

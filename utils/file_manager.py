@@ -94,6 +94,11 @@ def delete_file(path: str):
         pass
 
 
+def cleanup_temp_input(job: dict):
+    """فایل موقت ورودی PDF را حذف می‌کند اما پوشه خروجی را نگه می‌دارد."""
+    delete_file(job.get("file_path"))
+
+
 def cleanup_job_files(job: dict):
     """تمام فایل‌های موقت و خروجی مربوط به یک جاب را حذف می‌کند."""
     # فایل PDF اصلی

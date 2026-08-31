@@ -6,6 +6,9 @@ import sys
 import os
 import asyncio
 
+import errno
+import fcntl
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import WORKER_LOCK_FILE
@@ -27,12 +30,56 @@ from utils.file_manager import get_output_path, has_attachments, create_attachme
 
 MAX_AUTO_RETRY = 5
 
+_lock_file_fd = None
 
-def is_locked()    -> bool: return os.path.exists(WORKER_LOCK_FILE)
-def acquire_lock():
-    with open(WORKER_LOCK_FILE, "w") as f: f.write(str(os.getpid()))
+
+def acquire_lock() -> bool:
+    """
+    قفل غیرمسدودکننده (non-blocking) با fcntl.flock روی فایل WORKER_LOCK_FILE دریافت می‌کند.
+    اگر قفل موفق باشد True برمی‌گرداند.
+    اگر Worker دیگری در حال حاضر قفل را داشته باشد False برمی‌گرداند.
+    خطاهای واقعی فایل‌سیستم یا دسترسی (مانند PermissionError) بالا انداخته می‌شوند.
+    سیستم‌عامل با پایان یا کرش پروسس، قفل را خودکار آزاد می‌کند.
+    """
+    global _lock_file_fd
+    file_fd = None
+    try:
+        file_fd = open(WORKER_LOCK_FILE, "a+")
+        fcntl.flock(file_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        file_fd.seek(0)
+        file_fd.truncate()
+        file_fd.write(f"{os.getpid()}\n")
+        file_fd.flush()
+        _lock_file_fd = file_fd
+        return True
+    except BlockingIOError:
+        if file_fd is not None:
+            try:
+                file_fd.close()
+            except Exception:
+                pass
+        return False
+    except OSError as e:
+        if file_fd is not None:
+            try:
+                file_fd.close()
+            except Exception:
+                pass
+        if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+            return False
+        raise
+
+
 def release_lock():
-    if os.path.exists(WORKER_LOCK_FILE): os.remove(WORKER_LOCK_FILE)
+    """قفل فایل را آزاد می‌کند و فایل را می‌بندد."""
+    global _lock_file_fd
+    if _lock_file_fd is not None:
+        try:
+            fcntl.flock(_lock_file_fd.fileno(), fcntl.LOCK_UN)
+            _lock_file_fd.close()
+        except Exception:
+            pass
+        _lock_file_fd = None
 
 
 async def _notify(telegram_id: int, text: str):
@@ -380,11 +427,16 @@ def _run_pipeline2(p2_job: dict) -> bool:
 # ─── حلقه اصلی ───────────────────────────────────────────
 
 def run():
-    if is_locked():
+    try:
+        acquired = acquire_lock()
+    except Exception as e:
+        print(f"❌ خطای دسترسی یا فایل‌سیستم در فایل قفل Worker: {e}")
+        sys.exit(1)
+
+    if not acquired:
         print("⏭️ Worker دیگری در حال اجراست.")
         return
 
-    acquire_lock()
     try:
         # ─── اول صف Pipeline1 ──────────────────────────────
         job = get_next_pending_job()

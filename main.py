@@ -6,11 +6,13 @@ from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     CallbackQueryHandler, ConversationHandler, filters,
+    ContextTypes,
 )
 
 from config import BOT_TOKEN
 from database.connection import init_db
 from utils.file_manager import ensure_dirs
+from infrastructure.logging import setup_logging, get_logger
 
 from handlers.common import start, unknown_command
 from handlers.pdf import (
@@ -84,11 +86,33 @@ from handlers.admin import (
 )
 
 
+logger = get_logger("main")
+
+
+async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    هندلر سراسری خطاهای تلگرام جهت لاگ‌کردن ساختاریافته استثناها و ارسال پیام مناسب به کاربر.
+    """
+    logger.error("Exception while handling an update:", exc_info=context.error)
+
+    if isinstance(update, Update):
+        try:
+            error_msg = "⚠️ متأسفانه در پردازش درخواست شما خطایی رخ داد. لطفاً کمی بعد دوباره تلاش کنید."
+            if update.effective_message:
+                await update.effective_message.reply_text(error_msg)
+            elif update.callback_query:
+                await update.callback_query.answer(error_msg, show_alert=True)
+        except Exception as e:
+            logger.warning("Could not send error notification to user: %s", e)
+
+
 def main():
+    setup_logging()
     init_db()
     ensure_dirs()
 
     app = Application.builder().token(BOT_TOKEN).build()
+    app.add_error_handler(global_error_handler)
 
     # ════════════════════════════════════════════════════════
     #  ConversationHandlers

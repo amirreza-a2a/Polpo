@@ -6,11 +6,13 @@ __pycache__/
 
 # فایل‌های لاگ و دیتابیس (اگر دیتابیس محلی دارید)
 *.log
+logs/
 *.db
 *.sqlite3
 
 # فایل‌های موقت و سیستم‌عامل
 temp_files/
+worker.lock
 .DS_Store
 Thumbs.db
 
