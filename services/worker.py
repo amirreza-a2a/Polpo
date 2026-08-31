@@ -16,6 +16,7 @@ from database.models import (
     get_next_pending_job, get_job, update_job_status,
     get_prompt_by_id, increment_user_pages,
     increment_job_retry_count, requeue_job_for_auto_retry,
+    get_user_by_id,
     # pipeline2
     get_next_pending_pipeline2_job, get_pipeline2_job,
     update_pipeline2_job_status, get_pipeline2_prompt_by_id,
@@ -100,14 +101,7 @@ def on_api_switch(telegram_id: int, old: str, new: str):
     notify_user(telegram_id, f"🔄 API تغییر کرد\nاز: {old}\nبه: {new}")
 
 
-def get_user_by_id(user_id: int) -> dict:
-    from database.connection import get_connection
-    conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
-        user = cur.fetchone()
-    conn.close()
-    return user
+
 
 
 # ─── بازیابی فایل PDF از آرشیو ───────────────────────────

@@ -77,3 +77,85 @@ Never hardcode tokens, passwords, or API keys in any file you create or edit. Ne
 print live secret values in full inside reports, logs, or chat output — redact or
 truncate them (e.g., show only the first/last few characters) if you must reference
 that a secret exists somewhere.
+
+
+## 8. Desktop-First, Deployment-Agnostic Architecture
+
+PolpoT must be architected around its long-term application boundary, not around the limitations of its current deployment host or current user interface.
+
+### 8.1 Architectural Priority
+
+The architectural priority order is:
+
+1. Domain correctness and maintainability
+2. Reusable Application Services
+3. Stable REST/API boundary for the future Qt Desktop Client
+4. Testability and transport independence
+5. Infrastructure portability
+6. Telegram as a current transport adapter
+7. cPanel as a current deployment environment
+
+Telegram and cPanel are implementation/deployment concerns, not architectural drivers.
+
+### 8.2 No cPanel-Driven Technology Choices
+
+Do not choose a library, framework, execution model, storage mechanism, networking architecture, or concurrency model merely because it is easy to deploy on cPanel.
+
+When a design has two viable options:
+
+* Prefer the option that provides the stronger long-term architecture for the Qt Desktop Client, REST API, concurrency, testability, and maintainability.
+* Then provide a deployment adapter or operational workaround for the current cPanel environment when practical.
+
+A cPanel limitation must never silently become an architectural requirement.
+
+### 8.3 No Telegram-Driven Architecture
+
+Telegram must remain a transport adapter.
+
+Do not place domain rules, application workflows, persistence logic, AI orchestration, storage policy, or business decisions inside Telegram handlers merely because the current product interface is Telegram.
+
+Any capability that may later be used by Qt or REST must live below the Telegram adapter boundary.
+
+### 8.4 Desktop Client Is a First-Class Future Client
+
+The future Qt Desktop Client is not an optional presentation detail. It is a first-class consumer of the application's capabilities.
+
+Therefore:
+
+* REST API contracts must be designed as stable application interfaces, not Telegram wrappers.
+* Application Services must be usable without Telegram dependencies.
+* Authentication, job submission, status tracking, artifact retrieval, prompt selection, API management, and recovery workflows must be representable through transport-neutral application services.
+* Qt must never need to import backend Python implementation modules directly.
+
+### 8.5 Deployment Portability
+
+Core architectural decisions must remain valid if the deployment environment changes from:
+
+`cPanel/shared hosting`
+
+to:
+
+`VPS / dedicated server / container / cloud platform / managed service`
+
+without requiring a redesign of the Domain or Application layers.
+
+Infrastructure-specific constraints belong behind adapters.
+
+### 8.6 Decision Rule
+
+For every architectural decision, explicitly ask:
+
+> "Would we still choose this design if cPanel and Telegram were removed from the requirements and the primary client were the Qt Desktop Client over REST?"
+
+If the answer is no, the decision must be reviewed before implementation.
+
+### 8.7 Required Design Documentation
+
+When a technology or architectural choice is influenced by cPanel or Telegram, the implementation plan must explicitly state:
+
+* what the ideal platform-independent design would be;
+* what constraint the current environment introduces;
+* where that constraint is isolated;
+* whether the resulting compromise can later be removed without changing Domain/Application contracts.
+
+Do not optimize the core architecture for a temporary hosting or transport constraint.

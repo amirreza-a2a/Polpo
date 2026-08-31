@@ -35,6 +35,15 @@ def get_user(telegram_id: int) -> dict | None:
     return user
 
 
+def get_user_by_id(user_id: int) -> dict | None:
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+        user = cur.fetchone()
+    conn.close()
+    return user
+
+
 def reset_daily_pages_if_needed(user_id: int):
     """اگر روز عوض شده باشد، صفحات مصرفی را ریست می‌کند."""
     conn = get_connection()
@@ -134,17 +143,19 @@ def update_private_api_priority(api_id: int, user_id: int, priority: int):
 # ════════════════════════════════════════════════════════════
 
 def add_public_api(api_key: str, label: str, provider: str,
-                   models: list, daily_limit: int, priority: int,
-                   donated_by: int = None) -> int:
+                   models: list, daily_limit: int = 500,
+                   priority: int = 1, donated_by: int = None,
+                   selected_model: str = None,
+                   base_url: str = None) -> int:
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute(
             """INSERT INTO public_apis
-               (api_key, label, provider, supported_models,
-                daily_page_limit, priority, donated_by)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+               (api_key, label, provider, supported_models, daily_page_limit,
+                priority, donated_by, selected_model, base_url)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (api_key, label, provider, json.dumps(models),
-             daily_limit, priority, donated_by),
+             daily_limit, priority, donated_by, selected_model, base_url),
         )
         new_id = cur.lastrowid
     conn.close()
@@ -523,26 +534,7 @@ def get_today_stats() -> dict:
 
 
 
-def add_public_api(api_key: str, label: str, provider: str,
-                   models: list, daily_limit: int = 500,
-                   priority: int = 1, donated_by: int = None,
-                   selected_model: str = None,
-                   base_url: str = None) -> int:
-    import json
-    from database.connection import get_connection
-    conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute(
-            """INSERT INTO public_apis
-               (api_key, label, provider, supported_models, daily_page_limit,
-                priority, donated_by, selected_model, base_url)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-            (api_key, label, provider, json.dumps(models),
-             daily_limit, priority, donated_by, selected_model, base_url),
-        )
-        new_id = cur.lastrowid
-    conn.close()
-    return new_id
+
 
 
 
