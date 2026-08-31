@@ -17,5 +17,8 @@ PyMySQL==1.1.1
 # ── Async Helper ───────────────────────────────────────────────────────
 nest-asyncio==1.6.0           # ⚠️ در requirements قدیمی نبود ولی در backup.py هست
 
+# ── Configuration & Secrets ────────────────────────────────────────────
+python-dotenv==1.0.1
+
 # ── Data Validation (dependency داخلی python-telegram-bot) ─────────────
 pydantic==2.8.2

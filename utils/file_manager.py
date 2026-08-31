@@ -30,7 +30,7 @@ def get_job_dir(job_id: int) -> str:
 
 def get_pipeline2_dir(p2_job_id: int) -> str:
     """مسیر پوشه‌ی اختصاصی pipeline2_job را برمی‌گرداند و می‌سازد."""
-    d = os.path.join("output_files", "pipeline2", f"job_{p2_job_id}")
+    d = os.path.join(OUTPUT_DIR, "pipeline2", f"job_{p2_job_id}")
     os.makedirs(d, exist_ok=True)
     return d
  

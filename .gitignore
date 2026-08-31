@@ -19,7 +19,6 @@ Thumbs.db
 # فایل‌های حساس و شخصی
 .env
 rate_limits.json
-config.py
 
 # فایل‌های پروژه که نباید در گیت باشند
 pdf_bot.zip

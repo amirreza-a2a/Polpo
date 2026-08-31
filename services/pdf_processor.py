@@ -17,7 +17,7 @@ from config import DPI
 from utils.rate_limiter import wait_if_needed, mark_request_sent
 from services.api_manager import switch_to_next_api, report_pages_used, get_default_model
 from database.models import update_job_progress, update_job_status
-from utils.file_manager import get_attachments_dir
+from utils.file_manager import get_attachments_dir, get_output_path
 
 
 # ─── الگوی مختصات در متن markdown ───────────────────────
@@ -143,7 +143,7 @@ def process_job(job: dict, prompt_text: str,
                 notify_switch_callback=None) -> bool:
     job_id      = job["id"]
     file_path   = job["file_path"]
-    output_path = job.get("output_path") or f"output_files/job_{job_id}/output.md"
+    output_path = job.get("output_path") or get_output_path(job_id)
     switch_log  = job.get("api_switch_log") or []
 
     attachments_dir = get_attachments_dir(job_id)
@@ -172,10 +172,10 @@ def process_job(job: dict, prompt_text: str,
         model_label = current_api.get("selected_model", "?")
         print(f"  📄 صفحه {page_num + 1}/{total_pages} | API: {current_api['label']} | مدل: {model_label}")
 
-        wait_if_needed(current_api["id"], current_api["provider"])
+        wait_if_needed(current_api)
 
         result = _process_single_page(pil_img, prompt_text, current_api)
-        mark_request_sent(current_api["id"])
+        mark_request_sent(current_api)
 
         if result is None:
             print(f"  🔄 سوئیچ API در صفحه {page_num + 1}...")
@@ -194,9 +194,9 @@ def process_job(job: dict, prompt_text: str,
             if notify_switch_callback:
                 notify_switch_callback(job["user_id"], old_label, current_api["label"])
 
-            wait_if_needed(current_api["id"], current_api["provider"])
+            wait_if_needed(current_api)
             result = _process_single_page(pil_img, prompt_text, current_api)
-            mark_request_sent(current_api["id"])
+            mark_request_sent(current_api)
 
             if result is None:
                 update_job_status(
