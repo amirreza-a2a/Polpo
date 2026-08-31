@@ -20,6 +20,8 @@ class ArtifactType(str, Enum):
     OUTPUT_MARKDOWN = "output_markdown"
     UNIFIED_MARKDOWN = "unified_markdown"
     ATTACHMENTS_ZIP = "attachments_zip"
+    PIPELINE2_MARKDOWN = "pipeline2_markdown"
+
 
 
 @dataclass(frozen=True)

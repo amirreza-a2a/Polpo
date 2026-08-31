@@ -13,6 +13,19 @@ class PromptType(str, Enum):
     PIPELINE_2 = "pipeline2"
     QUICK_CONVERT = "quick_convert"
 
+    @classmethod
+    def _missing_(cls, value: object):
+        if isinstance(value, str):
+            normalized = value.lower().replace("_", "").strip()
+            if normalized in ("pipeline1", "p1"):
+                return cls.PIPELINE_1
+            if normalized in ("pipeline2", "p2"):
+                return cls.PIPELINE_2
+            if normalized in ("quickconvert", "quick"):
+                return cls.QUICK_CONVERT
+        return super()._missing_(value)
+
+
 
 @dataclass
 class Prompt:

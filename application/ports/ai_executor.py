@@ -33,6 +33,7 @@ class IAIExecutionService(ABC):
         self,
         chain: List[ApiSlot],
         prompt: str,
+        input_text: Optional[str] = None,
         at_page: int = 0,
         on_switch: Optional[Callable[[str, str, str, int], None]] = None,
     ) -> Tuple[Optional[str], Optional[ApiSlot]]:

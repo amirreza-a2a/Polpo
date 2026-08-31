@@ -51,6 +51,39 @@ class MySQLJobRepository(IJobRepository):
             rows = cur.fetchall()
             return [self._row_to_entity(r) for r in rows]
 
+    def count_by_user(self, user_id: int, status: Optional[JobStatus] = None) -> int:
+        with self.conn.cursor() as cur:
+            if status:
+                cur.execute("SELECT COUNT(*) FROM jobs WHERE user_id = %s AND status = %s", (user_id, status.value))
+            else:
+                cur.execute("SELECT COUNT(*) FROM jobs WHERE user_id = %s", (user_id,))
+            row = cur.fetchone()
+            return row[0] if row else 0
+
+    def get_queue_position(self, job_id: int) -> int:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM jobs WHERE status = 'pending' AND id <= %s",
+                (job_id,),
+            )
+            row = cur.fetchone()
+            return row[0] if row else 1
+
+    def get_today_stats(self) -> dict:
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM jobs WHERE DATE(created_at) = CURDATE()")
+            total_jobs = cur.fetchone()[0]
+            cur.execute("SELECT COALESCE(SUM(processed_pages), 0) FROM jobs WHERE DATE(created_at) = CURDATE()")
+            total_pages = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM jobs WHERE status = 'pending'")
+            in_queue = cur.fetchone()[0]
+            return {
+                "total_jobs": total_jobs,
+                "total_pages": int(total_pages),
+                "in_queue": in_queue,
+            }
+
+
     def save(self, job: Job) -> Job:
         with self.conn.cursor() as cur:
             api_chain_json = json.dumps([slot.to_dict() for slot in job.api_chain], ensure_ascii=False)
@@ -214,6 +247,10 @@ class MySQLPipeline2JobRepository(IPipeline2JobRepository):
                 """,
                 (input_path, output_path, p2_job_id),
             )
+
+    def update_output_path(self, p2_job_id: int, output_path: str) -> None:
+        self.update_paths(p2_job_id, output_path=output_path)
+
 
     def _row_to_entity(self, row: dict) -> Pipeline2Job:
         chain_raw = json.loads(row["api_chain"]) if row.get("api_chain") else []
@@ -466,6 +503,32 @@ class MySQLPromptRepository(IPromptRepository):
             cur.execute(f"UPDATE {table} SET is_default = 0")
             cur.execute(f"UPDATE {table} SET is_default = 1 WHERE id = %s", (prompt_id,))
 
+    def toggle_active(self, prompt_id: int, is_active: bool) -> bool:
+        with self.conn.cursor() as cur:
+            cur.execute("UPDATE prompts SET is_active = %s WHERE id = %s", (int(is_active), prompt_id))
+            if cur.rowcount > 0:
+                return True
+            cur.execute("UPDATE pipeline2_prompts SET is_active = %s WHERE id = %s", (int(is_active), prompt_id))
+            return cur.rowcount > 0
+
+    def get_quick_convert_prompt(self) -> Optional[str]:
+        with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
+            cur.execute("SELECT setting_value FROM bot_settings WHERE setting_key = 'quick_convert_prompt'")
+            row = cur.fetchone()
+            return row["setting_value"] if row else None
+
+    def set_quick_convert_prompt(self, text: str) -> None:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO bot_settings (setting_key, setting_value)
+                VALUES ('quick_convert_prompt', %s)
+                ON DUPLICATE KEY UPDATE setting_value = %s
+                """,
+                (text, text),
+            )
+
+
 
 class MySQLApiRepository(IApiRepository):
     def __init__(self, conn):
@@ -498,6 +561,12 @@ class MySQLApiRepository(IApiRepository):
                     slots.append(self._row_to_entity(r, "public"))
         return slots
 
+    def list_public(self) -> List[ApiSlot]:
+        with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
+            cur.execute("SELECT * FROM public_apis ORDER BY priority ASC, id ASC")
+            rows = cur.fetchall()
+            return [self._row_to_entity(r, "public") for r in rows]
+
     def save_private(
         self,
         user_id: int,
@@ -526,9 +595,65 @@ class MySQLApiRepository(IApiRepository):
                 base_url=base_url,
             )
 
+    def save_public(
+        self,
+        provider: str,
+        api_key: str,
+        label: str,
+        models: List[str],
+        daily_limit: int,
+        selected_model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        donated_by: Optional[int] = None,
+    ) -> ApiSlot:
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT COALESCE(MAX(priority), 0) + 1 FROM public_apis")
+            priority = cur.fetchone()[0]
+            cur.execute(
+                """
+                INSERT INTO public_apis (provider, api_key, label, models, daily_page_limit, priority, donated_by, selected_model, base_url, is_active)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 1)
+                """,
+                (provider, api_key, label, json.dumps(models, ensure_ascii=False), daily_limit, priority, donated_by, selected_model, base_url),
+            )
+            new_id = cur.lastrowid
+            return ApiSlot(
+                id=new_id,
+                provider=provider,
+                label=label,
+                slot_type="public",
+                credential_ref=CredentialRef(identifier=str(new_id), provider=provider, slot_type="public"),
+                selected_model=selected_model,
+                base_url=base_url,
+                supported_models=models,
+            )
+
+    def toggle_public(self, api_id: int, is_active: bool) -> bool:
+        with self.conn.cursor() as cur:
+            cur.execute("UPDATE public_apis SET is_active = %s WHERE id = %s", (int(is_active), api_id))
+            return cur.rowcount > 0
+
+    def update_public_model_url(
+        self,
+        api_id: int,
+        selected_model: Optional[str] = None,
+        base_url: Optional[str] = None,
+    ) -> bool:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE public_apis SET selected_model = %s, base_url = %s, updated_at = NOW() WHERE id = %s",
+                (selected_model, base_url, api_id),
+            )
+            return cur.rowcount > 0
+
     def delete_private(self, api_id: int, user_id: int) -> bool:
         with self.conn.cursor() as cur:
             cur.execute("DELETE FROM private_apis WHERE id = %s AND user_id = %s", (api_id, user_id))
+            return cur.rowcount > 0
+
+    def delete_public(self, api_id: int) -> bool:
+        with self.conn.cursor() as cur:
+            cur.execute("DELETE FROM public_apis WHERE id = %s", (api_id,))
             return cur.rowcount > 0
 
     def report_pages_used(self, api_id: int, slot_type: str, pages: int = 1) -> None:
@@ -567,6 +692,19 @@ class MySQLDonationRepository(IDonationRepository):
                 (user_id, provider, api_key, label, json.dumps(models, ensure_ascii=False)),
             )
             return cur.lastrowid
+
+    def get_by_id(self, donation_id: int) -> Optional[dict]:
+        with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
+            cur.execute("SELECT * FROM donations WHERE id = %s", (donation_id,))
+            row = cur.fetchone()
+            if row and isinstance(row.get("models"), str):
+                row["models"] = json.loads(row["models"])
+            return row
+
+    def update_status(self, donation_id: int, status: str) -> bool:
+        with self.conn.cursor() as cur:
+            cur.execute("UPDATE donations SET status = %s WHERE id = %s", (status, donation_id))
+            return cur.rowcount > 0
 
     def list_all(self) -> List[dict]:
         with self.conn.cursor(pymysql.cursors.DictCursor) as cur:

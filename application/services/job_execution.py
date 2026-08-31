@@ -207,3 +207,63 @@ class JobExecutionService:
             uow.jobs.update_status(job.id, JobStatus.FAILED, error_message=error_msg)
             uow.commit()
         self.notifier.notify_job_failed(job.user_id, job.id, error_msg)
+
+    def execute_next_pipeline2_job(self) -> Optional[Pipeline2Job]:
+        with self.uow_factory.create() as uow:
+            p2_job = uow.pipeline2_jobs.get_next_pending()
+            if not p2_job:
+                return None
+
+            JobStateTransitionPolicy.validate_transition(p2_job.status, JobStatus.PROCESSING)
+            p2_job.status = JobStatus.PROCESSING
+            uow.pipeline2_jobs.update_status(p2_job.id, JobStatus.PROCESSING)
+            uow.commit()
+
+        logger.info(f"[Pipeline2 Job {p2_job.id}] Started execution.")
+
+        try:
+            # بارگذاری متن ورودی از فایل markdown مبدأ
+            source_handle = ArtifactHandle(
+                storage_backend=StorageBackendType.LOCAL_FS,
+                uri=p2_job.input_path,
+                artifact_type=ArtifactType.OUTPUT_MARKDOWN,
+                job_id=p2_job.source_job_id,
+                filename="input.md",
+            )
+            raw_text = self.storage.retrieve(source_handle).decode("utf-8")
+        except Exception as e:
+            logger.error(f"[Pipeline2 Job {p2_job.id}] Failed to load input text: {e}")
+            with self.uow_factory.create() as uow:
+                uow.pipeline2_jobs.update_status(p2_job.id, JobStatus.FAILED, error_message=f"Input artifact missing: {e}")
+                uow.commit()
+            return p2_job
+
+        # فراخوانی مجری هوش مصنوعی برای متن
+        result, used_slot = self.ai_executor.execute_text_with_fallback(
+            chain=p2_job.api_chain,
+            prompt=p2_job.prompt_text or "Refine and structure markdown content",
+            input_text=raw_text,
+        )
+
+        if result is None:
+            with self.uow_factory.create() as uow:
+                uow.pipeline2_jobs.update_status(p2_job.id, JobStatus.PAUSED, error_message="All APIs exhausted for Pipeline 2.")
+                uow.commit()
+            return p2_job
+
+        # ذخیره خروجی بهبودیافته
+        output_handle = self.storage.store(
+            job_id=p2_job.source_job_id,
+            artifact_type=ArtifactType.PIPELINE2_MARKDOWN,
+            filename=f"p2_output_{p2_job.id}.md",
+            data=result.encode("utf-8"),
+            mime_type="text/markdown",
+        )
+
+        with self.uow_factory.create() as uow:
+            uow.pipeline2_jobs.update_output_path(p2_job.id, output_handle.uri)
+            uow.pipeline2_jobs.update_status(p2_job.id, JobStatus.DONE)
+            uow.commit()
+
+        self.notifier.notify_job_completed(p2_job.user_id, p2_job.source_job_id, output_handle.uri)
+        return p2_job

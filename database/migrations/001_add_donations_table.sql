@@ -10,6 +10,9 @@ CREATE TABLE IF NOT EXISTS `donations` (
     `api_key` TEXT NOT NULL,
     `label` VARCHAR(128) NOT NULL,
     `models` TEXT NULL,
+    `status` VARCHAR(32) NOT NULL DEFAULT 'pending',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-    KEY `idx_user_id` (`user_id`)
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY `idx_user_id` (`user_id`),
+    KEY `idx_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

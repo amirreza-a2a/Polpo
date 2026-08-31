@@ -48,3 +48,10 @@ class JobDetailDTO:
     auto_pipeline2: bool
     created_at: Optional[str]
     updated_at: Optional[str]
+
+
+@dataclass
+class ArtifactDownloadDTO:
+    data: bytes
+    filename: str
+    mime_type: str = "application/octet-stream"

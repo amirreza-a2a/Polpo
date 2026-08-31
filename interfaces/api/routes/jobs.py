@@ -67,7 +67,7 @@ async def list_jobs(
     """
     لیست کارهای ثبت‌شده توسط کاربر جاری.
     """
-    return container.job_submission_service.list_user_jobs(user.id, limit, offset)
+    return container.job_query_service.list_user_jobs(user.id, limit, offset)
 
 
 @router.get("/{job_id}", response_model=JobDetailDTO)
@@ -79,7 +79,7 @@ async def get_job_detail(
     """
     دریافت جزئیات کامل وضعیت کار، پیشرفت صفحات و لاگ سوئیچ اسلات‌ها.
     """
-    return container.job_submission_service.get_job_detail(job_id, user.id)
+    return container.job_query_service.get_job_detail(job_id, user.id)
 
 
 @router.post("/{job_id}/resume", response_model=JobResponseDTO)
@@ -142,7 +142,7 @@ async def stream_job_events(
     """
     جریان زنده رویدادهای پیشرفت کار از طریق Server-Sent Events (SSE) برای کلاینت دسکتاپ.
     """
-    job_detail = container.job_submission_service.get_job_detail(job_id, user.id)
+    job_detail = container.job_query_service.get_job_detail(job_id, user.id)
 
     async def event_generator():
         q = container.notifier.subscribe(job_id)

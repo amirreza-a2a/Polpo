@@ -4,12 +4,13 @@
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from database.models import get_or_create_user
+from infrastructure.composition import get_app_container
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    get_or_create_user(user.id, user.username)
+    container = get_app_container()
+    container.user_service.get_or_create_telegram_user(user.id, user.username)
 
     text = (
         f"سلام *{user.first_name}* 👋\n\n"

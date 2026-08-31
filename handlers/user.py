@@ -1,5 +1,5 @@
 # ============================================================
-#  handlers/user.py  —  بخش تاریخچه و Resume اضافه شد
+#  handlers/user.py  —  Migrated to Application Services
 # ============================================================
 
 import math
@@ -7,21 +7,13 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
 from config import DAILY_PAGE_LIMIT, BACKUP_CHANNEL_ID
-from database.models import (
-    get_or_create_user, get_user, get_user_private_apis,
-    add_private_api, delete_private_api, set_user_fallback,
-    reset_daily_pages_if_needed,
-    get_user_jobs_paginated, get_job_for_user,
-    update_job_api_chain, requeue_job,
-    set_auto_retry,
-    set_auto_pipeline2,
-    get_active_pipeline2_prompts,
-)
+from infrastructure.composition import get_app_container
+from application.dto.api_dto import RegisterApiCommand, DonateApiCommand
+from application.dto.user_dto import UpdatePreferencesCommand
+from core.entities.prompt import PromptType
 from services.api_manager import (
-    detect_provider_and_models, get_default_base_url, build_api_chain,
+    detect_provider_and_models, get_default_base_url,
 )
-
-
 
 # ─── states ──────────────────────────────────────────────
 WAITING_API_KEY      = 1
@@ -45,7 +37,6 @@ STATUS_EMOJI = {
 }
 
 
-
 def escape_md(text: str) -> str:
     """کاراکترهای خاص Markdown (نسخه legacy) را escape می‌کند."""
     if not text:
@@ -54,6 +45,7 @@ def escape_md(text: str) -> str:
         text = text.replace(ch, f'\\{ch}')
     return text
 
+
 # ════════════════════════════════════════════════════════════
 #  پنل اصلی
 # ════════════════════════════════════════════════════════════
@@ -61,34 +53,34 @@ def escape_md(text: str) -> str:
 async def show_panel(update, context):
     query   = update.callback_query
     user_tg = update.effective_user
-    db_user = get_or_create_user(user_tg.id, user_tg.username)
-    reset_daily_pages_if_needed(db_user["id"])
+    container = get_app_container()
+    user_dto = container.user_service.get_or_create_telegram_user(user_tg.id, user_tg.username)
 
-    pages_used = db_user["daily_pages_used"]
+    pages_used = user_dto.daily_pages_used
     bar        = "🟩" * int((pages_used / DAILY_PAGE_LIMIT) * 10) + "⬜" * (10 - int((pages_used / DAILY_PAGE_LIMIT) * 10))
 
     text = (
         f"🗂 *پنل شخصی شما*\n\n"
         f"📊 مصرف امروز: {pages_used}/{DAILY_PAGE_LIMIT} صفحه\n{bar}\n\n"
-        f"🔄 Fallback: {'✅ فعال' if db_user['use_public_fallback'] else '🔒 غیرفعال'}\n"
-        f"🔁 Auto-Retry: {'✅ فعال' if db_user.get('auto_retry') else '🔒 غیرفعال'}\n"
-        f"✨ پردازش خودکار: {'✅ فعال' if db_user.get('auto_pipeline2') else '🔒 غیرفعال'}"
-        + ("\n   _جاب‌های متوقف‌شده تا ۵ بار خودکار retry می‌شوند_" if db_user.get('auto_retry') else "")
+        f"🔄 Fallback: {'✅ فعال' if user_dto.use_public_fallback else '🔒 غیرفعال'}\n"
+        f"🔁 Auto-Retry: {'✅ فعال' if user_dto.auto_retry else '🔒 غیرفعال'}\n"
+        f"✨ پردازش خودکار: {'✅ فعال' if user_dto.auto_pipeline2 else '🔒 غیرفعال'}"
+        + ("\n   _جاب‌های متوقف‌شده تا ۵ بار خودکار retry می‌شوند_" if user_dto.auto_retry else "")
     )
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔑 API های من",      callback_data="panel_apis")],
         [InlineKeyboardButton("📋 تاریخچه",          callback_data="history_page:1")],
         [InlineKeyboardButton("🎁 اهدای API عمومی", callback_data="panel_donate")],
         [InlineKeyboardButton(
-            "🔒 غیرفعال‌کردن Fallback" if db_user["use_public_fallback"] else "✅ فعال‌کردن Fallback",
+            "🔒 غیرفعال‌کردن Fallback" if user_dto.use_public_fallback else "✅ فعال‌کردن Fallback",
             callback_data="toggle_fallback",
         )],
         [InlineKeyboardButton(
-            "🔴 خاموش‌کردن Auto-Retry" if db_user.get("auto_retry") else "🔁 روشن‌کردن Auto-Retry",
+            "🔴 خاموش‌کردن Auto-Retry" if user_dto.auto_retry else "🔁 روشن‌کردن Auto-Retry",
             callback_data="toggle_auto_retry",
         )],
         [InlineKeyboardButton(
-            "🔴 خاموش‌کردن پردازش خودکار" if db_user.get("auto_pipeline2") else "✨ روشن‌کردن پردازش خودکار",
+            "🔴 خاموش‌کردن پردازش خودکار" if user_dto.auto_pipeline2 else "✨ روشن‌کردن پردازش خودکار",
             callback_data="toggle_auto_p2",
         )],
     ])
@@ -109,10 +101,10 @@ async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_tg = update.effective_user
     await query.answer()
 
-    page    = int(query.data.split(":")[1])
-    db_user = get_or_create_user(user_tg.id)
-    jobs, total = get_user_jobs_paginated(db_user["id"], page, HISTORY_PER_PAGE)
-    total_pages = max(1, math.ceil(total / HISTORY_PER_PAGE))
+    page = int(query.data.split(":")[1])
+    container = get_app_container()
+    user_dto = container.user_service.get_or_create_telegram_user(user_tg.id, user_tg.username)
+    jobs, total, total_pages = container.job_query_service.get_paginated_history(user_dto.id, page, HISTORY_PER_PAGE)
 
     if not jobs:
         await query.edit_message_text(
@@ -126,27 +118,27 @@ async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = [f"📋 *تاریخچه* — صفحه {page}/{total_pages}\n"]
     for job in jobs:
-        emoji = STATUS_EMOJI.get(job["status"], "❓")
+        emoji = STATUS_EMOJI.get(job.status, "❓")
         lines.append(
-            f"{emoji} *#{job['id']}* {escape_md(job['file_name'])}\n"
-            f"   {job['processed_pages']}/{job['total_pages']} صفحه — `{job['status']}`"
+            f"{emoji} *#{job.id}* {escape_md(job.file_name)}\n"
+            f"   {job.processed_pages}/{job.total_pages} صفحه — `{job.status}`"
         )
 
     # دکمه‌های هر جاب
     action_buttons = []
     for job in jobs:
         row = []
-        if job["status"] == "done" and job.get("backup_message_id"):
+        if job.status == "done":
             row.append(InlineKeyboardButton(
-                f"📥 #{job['id']}", callback_data=f"redeliver:{job['id']}"
+                f"📥 #{job.id}", callback_data=f"redeliver:{job.id}"
             ))
             row.append(InlineKeyboardButton(
-                f"✨ #{job['id']}", callback_data=f"start_p2:{job['id']}"
+                f"✨ #{job.id}", callback_data=f"start_p2:{job.id}"
             ))
-        elif job["status"] in ("paused", "failed"):
-            label = "▶️" if job["status"] == "paused" else "🔄"
+        elif job.status in ("paused", "failed"):
+            label = "▶️" if job.status == "paused" else "🔄"
             row.append(InlineKeyboardButton(
-                f"{label} #{job['id']}", callback_data=f"resume_show:{job['id']}"
+                f"{label} #{job.id}", callback_data=f"resume_show:{job.id}"
             ))
         if row:
             action_buttons.append(row)
@@ -180,41 +172,33 @@ async def redeliver_job(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_tg = update.effective_user
     await query.answer()
 
-    db_user = get_or_create_user(user_tg.id)
-    job     = get_job_for_user(job_id, db_user["id"])
+    container = get_app_container()
+    user_dto = container.user_service.get_or_create_telegram_user(user_tg.id, user_tg.username)
 
-    if not job:
+    try:
+        job = container.job_query_service.get_job_detail(job_id, user_dto.id)
+    except Exception:
         await query.answer("❌ جاب یافت نشد.", show_alert=True)
         return
 
-    if job["status"] != "done":
+    if job.status != "done":
         await query.answer("❌ این جاب هنوز تمام نشده.", show_alert=True)
-        return
-
-    if not job.get("backup_message_id"):
-        await query.answer("❌ بکاپ این جاب موجود نیست.", show_alert=True)
         return
 
     await query.edit_message_text(f"📥 در حال ارسال فایل‌های جاب #{job_id}...")
 
     try:
-        # ─── ارسال MD با copy_message ──────────────────────
-        await context.bot.copy_message(
-            chat_id      = user_tg.id,
-            from_chat_id = BACKUP_CHANNEL_ID,
-            message_id   = job["backup_message_id"],
-            caption      = f"📄 {job['file_name']} — دریافت مجدد",
+        stream, filename, mime_type = container.artifact_service.get_job_artifact_stream(
+            job_id=job.id,
+            user_id=user_dto.id,
+            artifact_type="output_markdown",
         )
-
-        # ─── ارسال ZIP (اگر بکاپ داشت) ────────────────────
-        if job.get("backup_zip_msg_id"):
-            await context.bot.copy_message(
-                chat_id      = user_tg.id,
-                from_chat_id = BACKUP_CHANNEL_ID,
-                message_id   = job["backup_zip_msg_id"],
-                caption      = f"🖼 تصاویر {job['file_name']}",
-            )
-
+        await context.bot.send_document(
+            chat_id=user_tg.id,
+            document=stream,
+            filename=filename,
+            caption=f"📄 {job.file_name} — دریافت مجدد",
+        )
         await query.edit_message_text(
             f"✅ فایل‌های جاب *#{job_id}* ارسال شد.",
             parse_mode="Markdown",
@@ -233,20 +217,22 @@ async def show_resume_options(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_tg = update.effective_user
     await query.answer()
 
-    db_user = get_or_create_user(user_tg.id)
-    job     = get_job_for_user(job_id, db_user["id"])
+    container = get_app_container()
+    user_dto = container.user_service.get_or_create_telegram_user(user_tg.id, user_tg.username)
 
-    if not job:
+    try:
+        job = container.job_query_service.get_job_detail(job_id, user_dto.id)
+    except Exception:
         await query.answer("❌ جاب یافت نشد.", show_alert=True)
         return
 
-    status_text = "متوقف‌شده" if job["status"] == "paused" else "ناموفق"
-    error_text  = f"\n⚠️ دلیل: {job['error_message']}" if job.get("error_message") else ""
+    status_text = "متوقف‌شده" if job.status == "paused" else "ناموفق"
+    error_text  = f"\n⚠️ دلیل: {job.error_message}" if job.error_message else ""
 
     text = (
         f"🔄 *جاب #{job_id}* — {status_text}\n\n"
-        f"📄 فایل: {job['file_name']}\n"
-        f"📊 پیشرفت: {job['processed_pages']}/{job['total_pages']} صفحه پردازش شده"
+        f"📄 فایل: {job.file_name}\n"
+        f"📊 پیشرفت: {job.processed_pages}/{job.total_pages} صفحه پردازش شده"
         f"{error_text}\n\n"
         "چطور ادامه دهیم؟"
     )
@@ -269,26 +255,23 @@ async def resume_same_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_tg = update.effective_user
     await query.answer()
 
-    db_user = get_or_create_user(user_tg.id)
-    job     = get_job_for_user(job_id, db_user["id"])
+    container = get_app_container()
+    user_dto = container.user_service.get_or_create_telegram_user(user_tg.id, user_tg.username)
 
-    if not job or job["status"] not in ("paused", "failed"):
-        await query.answer("❌ این جاب قابل ادامه نیست.", show_alert=True)
+    try:
+        job = container.job_query_service.get_job_detail(job_id, user_dto.id)
+        if job.status not in ("paused", "failed"):
+            await query.answer("❌ این جاب قابل ادامه نیست.", show_alert=True)
+            return
+
+        container.job_recovery_service.resume_job(job_id, user_dto.id)
+    except Exception as e:
+        await query.answer(f"❌ خطا: {e}", show_alert=True)
         return
-
-    await query.edit_message_text(f"⏳ در حال آماده‌سازی ادامه جاب #{job_id}...")
-
-    # بررسی وجود فایل (worker این را هم بررسی می‌کند، اما اینجا اطلاع می‌دهیم)
-    import os
-    file_exists = os.path.exists(job.get("file_path") or "")
-    file_note   = "" if file_exists else "\n📥 فایل از آرشیو دانلود می‌شود."
-
-    requeue_job(job_id)
 
     await query.edit_message_text(
         f"✅ *جاب #{job_id} مجدداً در صف قرار گرفت!*\n\n"
-        f"📊 ادامه از صفحه {job['processed_pages'] + 1}/{job['total_pages']}"
-        f"{file_note}",
+        f"📊 ادامه از صفحه {job.processed_pages + 1}/{job.total_pages}",
         parse_mode="Markdown",
     )
 
@@ -298,14 +281,14 @@ async def resume_same_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ════════════════════════════════════════════════════════════
 
 async def resume_new_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """انتخاب نوع API برای resume."""
     query   = update.callback_query
     job_id  = int(query.data.split(":")[1])
     user_tg = update.effective_user
     await query.answer()
 
-    db_user      = get_or_create_user(user_tg.id)
-    private_apis = get_user_private_apis(db_user["id"])
+    container = get_app_container()
+    user_dto = container.user_service.get_or_create_telegram_user(user_tg.id, user_tg.username)
+    private_apis = container.api_service.list_user_apis(user_dto.id, include_public=False)
 
     context.user_data["resume_job_id"] = job_id
 
@@ -321,19 +304,20 @@ async def resume_new_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
         )
     else:
-        await _do_resume_with_chain(query, context, job_id, db_user["id"],
+        await _do_resume_with_chain(query, context, job_id, user_dto.id,
                                     include_private=False, include_public=True)
 
+
 async def resume_api_source(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """پس از انتخاب نوع API برای resume."""
     query   = update.callback_query
     parts   = query.data.split(":")
     job_id  = int(parts[1])
-    source  = parts[2]   # private | public
+    source  = parts[2]
     user_tg = update.effective_user
     await query.answer()
 
-    db_user = get_or_create_user(user_tg.id)
+    container = get_app_container()
+    user_dto = container.user_service.get_or_create_telegram_user(user_tg.id, user_tg.username)
 
     if source == "private":
         buttons = InlineKeyboardMarkup([
@@ -347,8 +331,9 @@ async def resume_api_source(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=buttons,
         )
     else:
-        await _do_resume_with_chain(query, context, job_id, db_user["id"],
+        await _do_resume_with_chain(query, context, job_id, user_dto.id,
                                     include_private=False, include_public=True)
+
 
 async def resume_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query   = update.callback_query
@@ -358,64 +343,72 @@ async def resume_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_tg = update.effective_user
     await query.answer()
 
-    db_user = get_or_create_user(user_tg.id)
+    container = get_app_container()
+    user_dto = container.user_service.get_or_create_telegram_user(user_tg.id, user_tg.username)
+
     if fb == "yes":
-        await _do_resume_with_chain(query, context, job_id, db_user["id"],
+        await _do_resume_with_chain(query, context, job_id, user_dto.id,
                                     include_private=True, include_public=True)
     else:
-        await _do_resume_with_chain(query, context, job_id, db_user["id"],
+        await _do_resume_with_chain(query, context, job_id, user_dto.id,
                                     include_private=True, include_public=False)
 
 
 async def _do_resume_with_chain(query, context, job_id: int, user_db_id: int,
                                  include_private: bool, include_public: bool):
-    """chain جدید می‌سازد، جاب را آپدیت می‌کند، و requeue می‌کند."""
-    
-    chain = build_api_chain(user_db_id, include_private, include_public)
-    if not chain:
+    container = get_app_container()
+    apis = container.api_service.list_user_apis(user_db_id, include_public=include_public)
+    if not include_private:
+        apis = [a for a in apis if a.slot_type == "public"]
+    elif not include_public:
+        apis = [a for a in apis if a.slot_type == "private"]
+
+    if not apis:
         await query.edit_message_text(
             "❌ هیچ API‌ای در دسترس نیست. ابتدا یک API اضافه کنید."
         )
         return
 
-    update_job_api_chain(job_id, chain)
-    requeue_job(job_id)
+    chain_ids = [a.id for a in apis]
+    container.job_recovery_service.resume_job(job_id, user_db_id, new_chain_ids=chain_ids)
 
     await query.edit_message_text(
         f"✅ *جاب #{job_id} با API جدید در صف قرار گرفت!*\n\n"
-        f"API اول: `{chain[0]['label']}`",
+        f"API اول: `{apis[0].label}`",
         parse_mode="Markdown",
     )
 
 
 # ════════════════════════════════════════════════════════════
-#  بقیه توابع (از user.py قبلی — بدون تغییر)
+#  مدیریت API های کاربر
 # ════════════════════════════════════════════════════════════
 
 async def show_my_apis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query   = update.callback_query
     user_tg = update.effective_user
     await query.answer()
-    db_user = get_or_create_user(user_tg.id)
-    apis    = get_user_private_apis(db_user["id"])
+
+    container = get_app_container()
+    user_dto = container.user_service.get_or_create_telegram_user(user_tg.id, user_tg.username)
+    apis    = container.api_service.list_user_apis(user_dto.id, include_public=False)
 
     if not apis:
         text = "🔑 *API های شخصی*\n\nهنوز هیچ API‌ای اضافه نکرده‌اید."
     else:
         lines = ["🔑 *API های شخصی شما:*\n"]
-        for api in apis:
+        for idx, api in enumerate(apis, 1):
             lines.append(
-                f"*{api['chain_priority']}.* {api['label']}\n"
-                f"   Provider: `{api['provider']}`\n"
-                f"   مدل: `{api.get('selected_model') or '—'}`\n"
-                f"   Base URL: `{api.get('base_url') or 'پیش‌فرض'}`\n"
+                f"*{idx}.* {api.label}\n"
+                f"   Provider: `{api.provider}`\n"
+                f"   مدل: `{api.selected_model or '—'}`\n"
+                f"   Base URL: `{api.base_url or 'پیش‌فرض'}`\n"
             )
         text = "\n".join(lines)
 
     buttons = [[InlineKeyboardButton("➕ افزودن API جدید", callback_data="add_api")]]
     if apis:
         del_buttons = [
-            InlineKeyboardButton(f"🗑 {a['label']}", callback_data=f"del_api:{a['id']}")
+            InlineKeyboardButton(f"🗑 {a.label}", callback_data=f"del_api:{a.id}")
             for a in apis
         ]
         buttons += [del_buttons[i:i+2] for i in range(0, len(del_buttons), 2)]
@@ -500,15 +493,19 @@ async def receive_api_base_url_text(update, context):
 async def receive_api_label(update, context):
     label   = update.message.text.strip()[:100]
     user_tg = update.effective_user
-    db_user = get_or_create_user(user_tg.id)
-    priority = len(get_user_private_apis(db_user["id"])) + 1
-    add_private_api(
-        user_id=db_user["id"], api_key=context.user_data["new_api_key"],
-        label=label, provider=context.user_data["new_api_provider"],
-        models=context.user_data["new_api_models"], priority=priority,
+    container = get_app_container()
+    user_dto = container.user_service.get_or_create_telegram_user(user_tg.id, user_tg.username)
+
+    cmd = RegisterApiCommand(
+        user_id=user_dto.id,
+        provider=context.user_data["new_api_provider"],
+        api_key=context.user_data["new_api_key"],
+        label=label,
         selected_model=context.user_data.get("new_api_model"),
         base_url=context.user_data.get("new_api_base_url"),
     )
+    container.api_service.register_private_api(cmd)
+
     await update.message.reply_text(
         f"✅ *API اضافه شد!*\n🏷 {label} | 🤖 `{context.user_data.get('new_api_model')}`",
         parse_mode="Markdown",
@@ -586,34 +583,43 @@ async def receive_donate_base_url_text(update, context):
 
 async def _finalize_donation(update, context):
     user_tg = update.effective_user
-    data    = {
-        "api_key": context.user_data["donate_key"],
-        "provider": context.user_data["donate_provider"],
-        "models": context.user_data["donate_models"],
-        "selected_model": context.user_data.get("donate_model"),
-        "base_url": context.user_data.get("donate_base_url"),
-        "donated_by": user_tg.id,
-    }
-    context.bot_data[f"donation_{user_tg.id}"] = data
+    container = get_app_container()
+    user_dto = container.user_service.get_or_create_telegram_user(user_tg.id, user_tg.username)
+
+    cmd = DonateApiCommand(
+        user_id=user_dto.id,
+        provider=context.user_data["donate_provider"],
+        api_key=context.user_data["donate_key"],
+        label=f"Donation from {user_tg.id}",
+        models=context.user_data.get("donate_models") or [context.user_data.get("donate_model") or "default"],
+    )
+    donation_id = container.api_service.donate_api(cmd)
+
     msg = update.callback_query.message if update.callback_query else update.message
     await msg.reply_text(
-        f"✅ درخواست ارسال شد!\n🤖 مدل: `{data['selected_model'] or '—'}`",
+        f"✅ درخواست ارسال شد!\n🤖 مدل: `{context.user_data.get('donate_model') or '—'}`",
         parse_mode="Markdown",
     )
     from config import ADMIN_IDS
-    masked = data["api_key"][:8] + "..." + data["api_key"][-4:]
+    raw_key = context.user_data["donate_key"]
+    masked = raw_key[:8] + "..." + raw_key[-4:] if len(raw_key) > 12 else "***"
     for admin_id in ADMIN_IDS:
-        await context.bot.send_message(
-            chat_id=admin_id,
-            text=(f"🎁 *اهدای API*\nکاربر: `{user_tg.id}`\n"
-                  f"Provider: `{data['provider']}`\nمدل: `{data['selected_model']}`\n"
-                  f"Key: `{masked}`"),
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("✅ تایید", callback_data=f"admin_approve_donation:{user_tg.id}"),
-                InlineKeyboardButton("❌ رد",    callback_data=f"admin_reject_donation:{user_tg.id}"),
-            ]]),
-            parse_mode="Markdown",
-        )
+        try:
+            await context.bot.send_message(
+                chat_id=admin_id,
+                text=(f"🎁 *اهدای API*\nکاربر: `{user_tg.id}`\n"
+                      f"شناسه اهدا: `{donation_id}`\n"
+                      f"Provider: `{cmd.provider}`\nمدل: `{context.user_data.get('donate_model')}`\n"
+                      f"Key: `{masked}`"),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("✅ تایید", callback_data=f"admin_approve_donation:{donation_id}"),
+                    InlineKeyboardButton("❌ رد",    callback_data=f"admin_reject_donation:{donation_id}"),
+                ]]),
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
+
     for k in ("donate_key","donate_provider","donate_models","donate_model","donate_base_url"):
         context.user_data.pop(k, None)
 
@@ -622,8 +628,10 @@ async def delete_api_confirm(update, context):
     query  = update.callback_query
     api_id = int(query.data.split(":")[1])
     await query.answer()
-    db_user = get_or_create_user(update.effective_user.id)
-    deleted = delete_private_api(api_id, db_user["id"])
+
+    container = get_app_container()
+    user_dto = container.user_service.get_or_create_telegram_user(update.effective_user.id, update.effective_user.username)
+    deleted = container.api_service.delete_private_api(api_id, user_dto.id)
     await query.answer("✅ API حذف شد." if deleted else "❌ یافت نشد.", show_alert=True)
     await show_my_apis(update, context)
 
@@ -632,10 +640,11 @@ async def toggle_fallback(update, context):
     query   = update.callback_query
     user_tg = update.effective_user
     await query.answer()
-    db_user      = get_user(user_tg.id)
-    new_fallback = not bool(db_user["use_public_fallback"])
-    set_user_fallback(user_tg.id, new_fallback)
-    await query.answer(f"Fallback: {'✅ فعال' if new_fallback else '🔒 غیرفعال'}", show_alert=True)
+
+    container = get_app_container()
+    user_dto = container.user_service.get_or_create_telegram_user(user_tg.id, user_tg.username)
+    updated = container.user_service.toggle_fallback(user_dto.id)
+    await query.answer(f"Fallback: {'✅ فعال' if updated.use_public_fallback else '🔒 غیرفعال'}", show_alert=True)
     await show_panel(update, context)
 
 
@@ -643,37 +652,38 @@ async def toggle_auto_retry(update, context):
     query   = update.callback_query
     user_tg = update.effective_user
     await query.answer()
-    db_user   = get_user(user_tg.id)
-    new_value = not bool(db_user.get("auto_retry"))
-    set_auto_retry(user_tg.id, new_value)
+
+    container = get_app_container()
+    user_dto = container.user_service.get_or_create_telegram_user(user_tg.id, user_tg.username)
+    updated = container.user_service.toggle_auto_retry(user_dto.id)
     await query.answer(
-        f"Auto-Retry: {'✅ فعال شد' if new_value else '🔴 غیرفعال شد'}",
+        f"Auto-Retry: {'✅ فعال شد' if updated.auto_retry else '🔴 غیرفعال شد'}",
         show_alert=True,
     )
     await show_panel(update, context)
 
 
 async def toggle_auto_p2_start(update, context):
-    """شروع فلوی روشن/خاموش‌کردن پردازش خودکار."""
     query   = update.callback_query
     user_tg = update.effective_user
     await query.answer()
 
-    db_user = get_user(user_tg.id)
+    container = get_app_container()
+    user_dto = container.user_service.get_or_create_telegram_user(user_tg.id, user_tg.username)
 
-    if db_user.get("auto_pipeline2"):
-        set_auto_pipeline2(user_tg.id, False)
+    if user_dto.auto_pipeline2:
+        container.user_service.toggle_auto_pipeline2(user_dto.id)
         await query.answer("✨ پردازش خودکار غیرفعال شد.", show_alert=True)
         await show_panel(update, context)
         return
 
-    prompts = get_active_pipeline2_prompts()
+    prompts = container.prompt_service.list_prompts(PromptType.PIPELINE_2)
     if not prompts:
         await query.answer("❌ هیچ پرامپتی برای پردازش هوشمند تنظیم نشده.", show_alert=True)
         return
 
     buttons = [
-        [InlineKeyboardButton(f"✨ {p['title']}", callback_data=f"set_auto_p2_prompt:{p['id']}")]
+        [InlineKeyboardButton(f"✨ {p.name}", callback_data=f"set_auto_p2_prompt:{p.id}")]
         for p in prompts
     ]
     buttons.append([InlineKeyboardButton("🔙 بازگشت", callback_data="panel_main")])
@@ -692,7 +702,14 @@ async def set_auto_p2_prompt(update, context):
     user_tg   = update.effective_user
     await query.answer()
 
-    set_auto_pipeline2(user_tg.id, True, prompt_id)
+    container = get_app_container()
+    user_dto = container.user_service.get_or_create_telegram_user(user_tg.id, user_tg.username)
+    container.user_service.update_preferences(UpdatePreferencesCommand(
+        user_id=user_dto.id,
+        auto_pipeline2=True,
+        default_pipeline2_prompt_id=prompt_id,
+    ))
+
     await query.answer("✅ پردازش خودکار فعال شد.", show_alert=True)
     await show_panel(update, context)
 

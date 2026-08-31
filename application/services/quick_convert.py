@@ -43,11 +43,16 @@ class QuickConvertService:
 
             prompt_text = cmd.prompt_text
             if not prompt_text:
-                prompt_entity = uow.prompts.get_default(PromptType.QUICK_CONVERT)
-                if prompt_entity:
-                    prompt_text = prompt_entity.text
+                custom_prompt = uow.prompts.get_quick_convert_prompt()
+                if custom_prompt:
+                    prompt_text = custom_prompt
                 else:
-                    prompt_text = "Transcribe this image into clean GitHub-flavored markdown."
+                    prompt_entity = uow.prompts.get_default(PromptType.QUICK_CONVERT)
+                    if prompt_entity:
+                        prompt_text = prompt_entity.text
+                    else:
+                        prompt_text = "Transcribe this image into clean GitHub-flavored markdown."
+
 
             chain = uow.apis.list_by_user(user.id, include_public=user.preferences.use_public_fallback)
             if not chain:

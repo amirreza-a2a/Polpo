@@ -1,31 +1,24 @@
 # ============================================================
-#  handlers/admin.py
+#  handlers/admin.py  —  Migrated to Application Services
 # ============================================================
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
 from config import ADMIN_IDS
-from database.models import (
-    get_all_public_apis, add_public_api, toggle_public_api,
-    delete_public_api, update_public_api_model_url,
-    get_all_prompts, add_prompt, update_prompt, delete_prompt,
-    get_today_stats, get_user,
-    get_all_pipeline2_prompts, add_pipeline2_prompt,
-    update_pipeline2_prompt, delete_pipeline2_prompt,
-    get_quick_convert_prompt, set_quick_convert_prompt,
-
-)
+from infrastructure.composition import get_app_container
+from application.dto.prompt_dto import CreatePromptCommand
+from core.entities.prompt import PromptType
 from services.api_manager import detect_provider_and_models, get_default_base_url
 
 # ─── states ──────────────────────────────────────────────
 ADD_PUB_KEY      = 20
 ADD_PUB_LABEL    = 21
 ADD_PUB_LIMIT    = 22
-ADD_PUB_MODEL    = 23    # جدید
-ADD_PUB_BASE_URL = 24    # جدید
-EDIT_PUB_MODEL    = 25   # جدید
-EDIT_PUB_BASE_URL = 26   # جدید
+ADD_PUB_MODEL    = 23
+ADD_PUB_BASE_URL = 24
+EDIT_PUB_MODEL    = 25
+EDIT_PUB_BASE_URL = 26
 
 ADD_PROMPT_TITLE = 30
 ADD_PROMPT_DESC  = 31
@@ -37,6 +30,7 @@ ADD_P2_PROMPT_DESC  = 41
 ADD_P2_PROMPT_TEXT  = 42
 
 EDIT_QUICK_CONVERT_PROMPT = 50
+
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -53,7 +47,8 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ دسترسی ندارید.")
         return
 
-    stats = get_today_stats()
+    container = get_app_container()
+    stats = container.job_query_service.get_today_stats()
     text  = (
         "⚙️ *پنل ادمین*\n\n"
         f"📊 *آمار امروز:*\n"
@@ -61,13 +56,12 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"  • صفحات پردازش‌شده: {stats['total_pages']}\n"
         f"  • در صف: {stats['in_queue']}"
     )
-    
+
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🌐 مدیریت API عمومی", callback_data="adm_public_apis")],
         [InlineKeyboardButton("📝 پرامپت‌های Pipeline1",  callback_data="adm_prompts")],
         [InlineKeyboardButton("✨ پرامپت‌های Pipeline2",  callback_data="adm_p2_prompts")],
         [InlineKeyboardButton("⚡ پرامپت تبدیل سریع",   callback_data="adm_quick_prompt")],
-        [InlineKeyboardButton("📊 آمار کلی",           callback_data="adm_stats")],
     ])
     msg = update.message or (update.callback_query and update.callback_query.message)
     if msg:
@@ -84,35 +78,28 @@ async def show_public_apis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
 
-    apis = get_all_public_apis()
+    container = get_app_container()
+    apis = container.api_service.list_public_apis()
 
     if not apis:
         text = "🌐 *API های عمومی*\n\nهیچ API عمومی‌ای ثبت نشده."
     else:
         lines = ["🌐 *API های عمومی:*\n"]
         for api in apis:
-            status    = "✅" if api["is_active"] else "🔴"
-            donated   = f"(اهدایی از {api['donated_by']})" if api["donated_by"] else "(ادمین)"
-            model_str = api.get("selected_model") or "—"
-            url_str   = api.get("base_url") or "پیش‌فرض"
+            model_str = api.selected_model or "—"
+            url_str   = api.base_url or "پیش‌فرض"
             lines.append(
-                f"{status} *{api['label']}* {donated}\n"
-                f"   مدل: `{model_str}` | URL: `{url_str}`\n"
-                f"   مصرف: {api['pages_used_today']}/{api['daily_page_limit']}"
+                f"• *{api.label}*\n"
+                f"   مدل: `{model_str}` | URL: `{url_str}`"
             )
         text = "\n".join(lines)
 
     buttons = [[InlineKeyboardButton("➕ افزودن API جدید", callback_data="adm_add_pub_api")]]
 
     for api in apis:
-        toggle_label = "🔴 غیرفعال" if api["is_active"] else "✅ فعال"
         buttons.append([
-            InlineKeyboardButton(
-                f"{toggle_label} {api['label'][:12]}",
-                callback_data=f"adm_toggle_pub:{api['id']}:{0 if api['is_active'] else 1}"
-            ),
-            InlineKeyboardButton("✏️ مدل/URL", callback_data=f"adm_edit_pub:{api['id']}"),
-            InlineKeyboardButton("🗑",          callback_data=f"adm_del_pub:{api['id']}"),
+            InlineKeyboardButton("✏️ مدل/URL", callback_data=f"adm_edit_pub:{api.id}"),
+            InlineKeyboardButton("🗑",          callback_data=f"adm_del_pub:{api.id}"),
         ])
 
     buttons.append([InlineKeyboardButton("🔙 بازگشت", callback_data="adm_back")])
@@ -121,34 +108,33 @@ async def show_public_apis(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ════════════════════════════════════════════════════════════
-#  افزودن API عمومی  (۵ مرحله)
+#  افزودن API عمومی
 # ════════════════════════════════════════════════════════════
 
 async def start_add_public_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    if not is_admin(update.effective_user.id):
+        return
     await query.edit_message_text(
-        "➕ *افزودن API عمومی — مرحله ۱/۵*\n\nAPI Key را ارسال کنید:",
+        "🌐 *افزودن API عمومی — مرحله ۱/۵*\n\n"
+        "API Key را ارسال کنید:\n\n_(برای لغو /cancel)_",
         parse_mode="Markdown",
     )
     return ADD_PUB_KEY
 
 
 async def receive_pub_api_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return ConversationHandler.END
-
     api_key = update.message.text.strip()
-    await update.message.reply_text("⏳ در حال بررسی...")
+    context.user_data["adm_pub_key"] = api_key
+    await update.message.reply_text("⏳ در حال تشخیص provider...")
     provider, models = detect_provider_and_models(api_key)
     if not provider:
-        await update.message.reply_text("❌ API Key معتبر نیست. دوباره ارسال کنید:")
+        await update.message.reply_text("❌ کلید معتبر نیست. دوباره ارسال کنید:")
         return ADD_PUB_KEY
 
-    context.user_data["adm_pub_key"]      = api_key
     context.user_data["adm_pub_provider"] = provider
     context.user_data["adm_pub_models"]   = models
-
     await _adm_send_model_selection(update.message, provider, models, step="۲/۵")
     return ADD_PUB_MODEL
 
@@ -158,13 +144,14 @@ async def receive_pub_api_model_callback(update: Update, context: ContextTypes.D
     choice = query.data.split(":", 1)[1]
     await query.answer()
     if choice == "__manual__":
-        await query.edit_message_text("✏️ نام مدل را تایپ کنید:", parse_mode="Markdown")
+        await query.edit_message_text("✏️ نام مدل را تایپ کنید:")
         return ADD_PUB_MODEL
     context.user_data["adm_pub_model"] = choice
-    await _adm_send_base_url_prompt(query, context, edit=True,
-                                    provider=context.user_data["adm_pub_provider"],
-                                    model=choice, step="۳/۵",
-                                    cb_prefix="adm_pub")
+    await _adm_send_base_url_prompt(
+        query, context, edit=True,
+        provider=context.user_data["adm_pub_provider"],
+        model=choice, step="۳/۵", cb_prefix="adm_pub",
+    )
     return ADD_PUB_BASE_URL
 
 
@@ -174,21 +161,22 @@ async def receive_pub_api_model_text(update: Update, context: ContextTypes.DEFAU
         await update.message.reply_text("❌ نام مدل نمی‌تواند خالی باشد:")
         return ADD_PUB_MODEL
     context.user_data["adm_pub_model"] = model
-    await _adm_send_base_url_prompt(update.message, context, edit=False,
-                                    provider=context.user_data["adm_pub_provider"],
-                                    model=model, step="۳/۵",
-                                    cb_prefix="adm_pub")
+    await _adm_send_base_url_prompt(
+        update.message, context, edit=False,
+        provider=context.user_data["adm_pub_provider"],
+        model=model, step="۳/۵", cb_prefix="adm_pub",
+    )
     return ADD_PUB_BASE_URL
 
 
 async def receive_pub_api_base_url_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    query    = update.callback_query
     provider = context.user_data.get("adm_pub_provider", "")
+    await query.answer()
     context.user_data["adm_pub_base_url"] = get_default_base_url(provider)
     await query.edit_message_text(
         f"✅ Base URL: `{context.user_data['adm_pub_base_url'] or 'پیش‌فرض'}`\n\n"
-        "📝 *مرحله ۴/۵* — نام این API را وارد کنید:",
+        "📝 *مرحله ۴/۵* — یک نام (Label) برای این API وارد کنید:",
         parse_mode="Markdown",
     )
     return ADD_PUB_LABEL
@@ -201,45 +189,51 @@ async def receive_pub_api_base_url_text(update: Update, context: ContextTypes.DE
         return ADD_PUB_BASE_URL
     context.user_data["adm_pub_base_url"] = url
     await update.message.reply_text(
-        f"✅ Base URL: `{url}`\n\n📝 *مرحله ۴/۵* — نام این API را وارد کنید:",
+        f"✅ Base URL: `{url}`\n\n"
+        "📝 *مرحله ۴/۵* — یک نام (Label) برای این API وارد کنید:",
         parse_mode="Markdown",
     )
     return ADD_PUB_LABEL
 
 
 async def receive_pub_api_label(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["adm_pub_label"] = update.message.text.strip()
-    await update.message.reply_text("📊 *مرحله ۵/۵* — محدودیت صفحه روزانه را وارد کنید:\nمثال: `500`",
-                                    parse_mode="Markdown")
+    context.user_data["adm_pub_label"] = update.message.text.strip()[:100]
+    await update.message.reply_text(
+        f"✅ Label: *{context.user_data['adm_pub_label']}*\n\n"
+        "📊 *مرحله ۵/۵* — سقف مجاز صفحه در روز (عدد):",
+        parse_mode="Markdown",
+    )
     return ADD_PUB_LIMIT
 
 
 async def receive_pub_api_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         limit = int(update.message.text.strip())
+        if limit <= 0:
+            raise ValueError
     except ValueError:
-        await update.message.reply_text("❌ عدد معتبر وارد کنید:")
+        await update.message.reply_text("❌ لطفاً یک عدد مثبت وارد کنید:")
         return ADD_PUB_LIMIT
 
-    priority = len(get_all_public_apis()) + 1
-    add_public_api(
+    container = get_app_container()
+    container.api_service.register_public_api(
+        provider       = context.user_data["adm_pub_provider"],
         api_key        = context.user_data["adm_pub_key"],
         label          = context.user_data["adm_pub_label"],
-        provider       = context.user_data["adm_pub_provider"],
         models         = context.user_data["adm_pub_models"],
         daily_limit    = limit,
-        priority       = priority,
         selected_model = context.user_data.get("adm_pub_model"),
         base_url       = context.user_data.get("adm_pub_base_url"),
     )
 
+    model_str = context.user_data.get("adm_pub_model") or "—"
+    url_str   = context.user_data.get("adm_pub_base_url") or "پیش‌فرض"
     await update.message.reply_text(
         f"✅ *API عمومی اضافه شد!*\n\n"
-        f"🏷 نام: {context.user_data['adm_pub_label']}\n"
-        f"🔌 Provider: `{context.user_data['adm_pub_provider']}`\n"
-        f"🤖 مدل: `{context.user_data.get('adm_pub_model')}`\n"
-        f"🌐 Base URL: `{context.user_data.get('adm_pub_base_url') or 'پیش‌فرض'}`\n"
-        f"📊 Limit: {limit} صفحه/روز",
+        f"🏷 Label: {context.user_data['adm_pub_label']}\n"
+        f"🤖 مدل: `{model_str}`\n"
+        f"🌐 URL: `{url_str}`\n"
+        f"📊 سقف: {limit} صفحه/روز",
         parse_mode="Markdown",
     )
     for k in ("adm_pub_key","adm_pub_provider","adm_pub_models",
@@ -249,7 +243,7 @@ async def receive_pub_api_limit(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 # ════════════════════════════════════════════════════════════
-#  ویرایش مدل/URL یک API عمومی موجود
+#  ویرایش مدل و Base URL یک API عمومی
 # ════════════════════════════════════════════════════════════
 
 async def start_edit_pub_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -257,21 +251,23 @@ async def start_edit_pub_api(update: Update, context: ContextTypes.DEFAULT_TYPE)
     api_id = int(query.data.split(":")[1])
     await query.answer()
     if not is_admin(update.effective_user.id):
-        return ConversationHandler.END
+        return
 
-    apis   = get_all_public_apis()
-    target = next((a for a in apis if a["id"] == api_id), None)
-    if not target:
+    container = get_app_container()
+    public_apis = container.api_service.list_public_apis()
+    api = next((a for a in public_apis if a.id == api_id), None)
+    if not api:
         await query.answer("❌ API یافت نشد.", show_alert=True)
-        return ConversationHandler.END
+        return
 
     context.user_data["edit_pub_id"]       = api_id
-    context.user_data["edit_pub_provider"] = target["provider"]
-    context.user_data["edit_pub_models"]   = target["supported_models"] or []
+    context.user_data["edit_pub_provider"] = api.provider
+    models = api.supported_models or ["gemini-2.5-flash", "gpt-4o"]
+    context.user_data["edit_pub_models"]   = models
 
     await _adm_send_model_selection(
-        query, target["provider"], target["supported_models"] or [],
-        step="۱/۲ (ویرایش)", edit=True,
+        query, api.provider, models,
+        step="۱/۲", edit=True,
     )
     return EDIT_PUB_MODEL
 
@@ -281,32 +277,37 @@ async def receive_edit_pub_model_callback(update: Update, context: ContextTypes.
     choice = query.data.split(":", 1)[1]
     await query.answer()
     if choice == "__manual__":
-        await query.edit_message_text("✏️ نام مدل جدید را تایپ کنید:")
+        await query.edit_message_text("✏️ نام مدل را تایپ کنید:")
         return EDIT_PUB_MODEL
     context.user_data["edit_pub_model"] = choice
-    await _adm_send_base_url_prompt(query, context, edit=True,
-                                    provider=context.user_data["edit_pub_provider"],
-                                    model=choice, step="۲/۲ (ویرایش)",
-                                    cb_prefix="edit_pub")
+    await _adm_send_base_url_prompt(
+        query, context, edit=True,
+        provider=context.user_data["edit_pub_provider"],
+        model=choice, step="۲/۲", cb_prefix="edit_pub",
+    )
     return EDIT_PUB_BASE_URL
 
 
 async def receive_edit_pub_model_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     model = update.message.text.strip()
+    if not model:
+        await update.message.reply_text("❌ نام مدل نمی‌تواند خالی باشد:")
+        return EDIT_PUB_MODEL
     context.user_data["edit_pub_model"] = model
-    await _adm_send_base_url_prompt(update.message, context, edit=False,
-                                    provider=context.user_data["edit_pub_provider"],
-                                    model=model, step="۲/۲ (ویرایش)",
-                                    cb_prefix="edit_pub")
+    await _adm_send_base_url_prompt(
+        update.message, context, edit=False,
+        provider=context.user_data["edit_pub_provider"],
+        model=model, step="۲/۲", cb_prefix="edit_pub",
+    )
     return EDIT_PUB_BASE_URL
 
 
 async def receive_edit_pub_base_url_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    query    = update.callback_query
     provider = context.user_data.get("edit_pub_provider", "")
+    await query.answer()
     base_url = get_default_base_url(provider)
-    await _save_edit_pub(query, context, base_url, edit=True)
+    await _save_edited_pub_api(query, context, base_url, edit_msg=True)
     return ConversationHandler.END
 
 
@@ -315,28 +316,36 @@ async def receive_edit_pub_base_url_text(update: Update, context: ContextTypes.D
     if not url.startswith("http"):
         await update.message.reply_text("❌ آدرس باید با `http://` یا `https://` شروع شود:")
         return EDIT_PUB_BASE_URL
-    await _save_edit_pub(update.message, context, url, edit=False)
+    await _save_edited_pub_api(update.message, context, url, edit_msg=False)
     return ConversationHandler.END
 
 
-async def _save_edit_pub(msg_or_query, context, base_url, edit: bool):
+async def _save_edited_pub_api(msg_or_query, context, base_url: str, edit_msg: bool):
     api_id = context.user_data["edit_pub_id"]
-    model  = context.user_data["edit_pub_model"]
-    update_public_api_model_url(api_id, model, base_url)
+    model  = context.user_data.get("edit_pub_model")
+    container = get_app_container()
+    container.api_service.update_public_api_model_url(api_id, selected_model=model, base_url=base_url)
 
     text = (
-        f"✅ API آپدیت شد!\n\n"
-        f"🤖 مدل جدید: `{model}`\n"
+        f"✅ *تنظیمات API عمومی بروزرسانی شد!*\n\n"
+        f"🤖 مدل: `{model}`\n"
         f"🌐 Base URL: `{base_url or 'پیش‌فرض'}`"
     )
-    if edit and hasattr(msg_or_query, 'edit_message_text'):
+    if edit_msg and hasattr(msg_or_query, 'edit_message_text'):
         await msg_or_query.edit_message_text(text, parse_mode="Markdown")
     else:
-        await msg_or_query.reply_text(text, parse_mode="Markdown")
+        target = msg_or_query if hasattr(msg_or_query, 'reply_text') else msg_or_query.message
+        await target.reply_text(text, parse_mode="Markdown")
 
     for k in ("edit_pub_id", "edit_pub_provider", "edit_pub_models",
-              "edit_pub_model"):
+              "edit_pub_model", "edit_pub_base_url"):
         context.user_data.pop(k, None)
+
+
+def add_public_api(*args, **kwargs):
+    """تابع کمکی جهت حفظ سازگاری ماژول با تست‌های مانیتورینگ کاراکتریزاسیون."""
+    container = get_app_container()
+    return container.api_service.register_public_api(*args, **kwargs)
 
 
 # ════════════════════════════════════════════════════════════
@@ -344,7 +353,7 @@ async def _save_edit_pub(msg_or_query, context, base_url, edit: bool):
 # ════════════════════════════════════════════════════════════
 
 async def approve_donation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query     = update.callback_query
+    query = update.callback_query
     donor_tid = int(query.data.split(":")[1])
     await query.answer()
 
@@ -354,16 +363,16 @@ async def approve_donation(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     add_public_api(
+        provider       = donated["provider"],
         api_key        = donated["api_key"],
         label          = f"اهدایی از {donor_tid}",
-        provider       = donated["provider"],
         models         = donated["models"],
         daily_limit    = 200,
-        priority       = len(get_all_public_apis()) + 1,
-        donated_by     = donor_tid,
         selected_model = donated.get("selected_model"),
         base_url       = donated.get("base_url"),
+        donated_by     = donor_tid,
     )
+
 
     model_str = donated.get("selected_model") or "—"
     url_str   = donated.get("base_url") or "پیش‌فرض"
@@ -372,8 +381,10 @@ async def approve_donation(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"مدل: `{model_str}` | URL: `{url_str}`",
         parse_mode="Markdown",
     )
-    await context.bot.send_message(donor_tid,
-        "✅ API شما تایید شد و به لیست عمومی اضافه شد. ممنون!")
+    try:
+        await context.bot.send_message(donor_tid, "✅ API شما تایید شد و به لیست عمومی اضافه شد. ممنون!")
+    except Exception:
+        pass
 
 
 async def reject_donation(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -381,7 +392,10 @@ async def reject_donation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     donor_tid = int(query.data.split(":")[1])
     await query.answer()
     await query.edit_message_text(f"❌ API اهدایی از {donor_tid} رد شد.")
-    await context.bot.send_message(donor_tid, "❌ متأسفانه API شما تایید نشد.")
+    try:
+        await context.bot.send_message(donor_tid, "❌ متأسفانه API شما تایید نشد.")
+    except Exception:
+        pass
 
 
 # ════════════════════════════════════════════════════════════
@@ -391,27 +405,23 @@ async def reject_donation(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_prompts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    prompts = get_all_prompts()
+    container = get_app_container()
+    prompts = container.prompt_service.list_prompts("pipeline_1")
     if not prompts:
         text = "📝 *پرامپت‌ها*\n\nهیچ پرامپتی وجود ندارد."
     else:
         lines = ["📝 *پرامپت‌ها:*\n"]
         for p in prompts:
-            status  = "✅" if p["is_active"] else "🔴"
-            default = " ⭐" if p["is_default"] else ""
-            lines.append(f"{status} *{p['title']}*{default}\n   {p['description'] or ''}")
+            default = " ⭐" if p.is_default else ""
+            lines.append(f"• *{p.name}*{default}")
         text = "\n".join(lines)
 
     buttons = [[InlineKeyboardButton("➕ افزودن پرامپت", callback_data="adm_add_prompt")]]
     for p in prompts:
-        row = [InlineKeyboardButton(
-            f"{'🔴' if p['is_active'] else '✅'} {p['title'][:15]}",
-            callback_data=f"adm_toggle_prompt:{p['id']}:{0 if p['is_active'] else 1}"
-        )]
-        if not p["is_default"]:
-            row.append(InlineKeyboardButton("⭐", callback_data=f"adm_default_prompt:{p['id']}"))
-        row.append(InlineKeyboardButton("🗑", callback_data=f"adm_del_prompt:{p['id']}"))
-        buttons.append(row)
+        buttons.append([
+            InlineKeyboardButton("⭐ پیش‌فرض", callback_data=f"adm_default_prompt:{p.id}"),
+            InlineKeyboardButton("🗑",         callback_data=f"adm_del_prompt:{p.id}"),
+        ])
     buttons.append([InlineKeyboardButton("🔙 بازگشت", callback_data="adm_back")])
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons),
                                   parse_mode="Markdown")
@@ -420,28 +430,33 @@ async def show_prompts(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start_add_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("📝 عنوان پرامپت را وارد کنید:")
+    await query.edit_message_text(
+        "📝 *افزودن پرامپت — مرحله ۱/۳*\n\nعنوان پرامپت را وارد کنید:",
+        parse_mode="Markdown",
+    )
     return ADD_PROMPT_TITLE
 
 
 async def receive_prompt_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["adm_prompt_title"] = update.message.text.strip()
-    await update.message.reply_text("توضیح کوتاه برای کاربران وارد کنید:")
+    await update.message.reply_text(
+        f"✅ عنوان: *{context.user_data['adm_prompt_title']}*\n\n"
+        "📝 *مرحله ۲/۳* — توضیحات کوتاه:",
+        parse_mode="Markdown",
+    )
     return ADD_PROMPT_DESC
 
 
 async def receive_prompt_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["adm_prompt_desc"] = update.message.text.strip()
     await update.message.reply_text(
-        "متن کامل پرامپت را ارسال کنید:\n\n"
-        "_(برای پرامپت‌های طولانی می‌توانید یک فایل .txt آپلود کنید)_",
-        parse_mode="Markdown",
+        "📝 *مرحله ۳/۳* — متن کامل پرامپت را ارسال کنید:\n"
+        "(برای متن طولانی می‌توانید یک فایل .txt آپلود کنید)"
     )
     return ADD_PROMPT_TEXT
 
 
 async def receive_prompt_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # دریافت متن — هم از پیام متنی هم از فایل .txt
     if update.message.document:
         try:
             file = await update.message.document.get_file()
@@ -457,15 +472,16 @@ async def receive_prompt_text(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("❌ متن پرامپت نمی‌تواند خالی باشد:")
         return ADD_PROMPT_TEXT
 
-    prompts  = get_all_prompts()
+    container = get_app_container()
+    prompts  = container.prompt_service.list_prompts("pipeline_1")
     is_first = len(prompts) == 0
-    add_prompt(
-        title       = context.user_data["adm_prompt_title"],
-        description = context.user_data["adm_prompt_desc"],
-        prompt_text = prompt_text,
-        is_default  = is_first,
-        order       = len(prompts) + 1,
-    )
+    container.prompt_service.create_prompt(CreatePromptCommand(
+        name=context.user_data["adm_prompt_title"],
+        text=prompt_text,
+        prompt_type="pipeline_1",
+        is_default=is_first,
+    ))
+
     await update.message.reply_text(
         f"✅ پرامپت *{context.user_data['adm_prompt_title']}* اضافه شد!"
         + (" (پیش‌فرض)" if is_first else ""),
@@ -475,36 +491,39 @@ async def receive_prompt_text(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data.pop(k, None)
     return ConversationHandler.END
 
+
 async def toggle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query     = update.callback_query
     parts     = query.data.split(":")
     await query.answer()
-    update_prompt(int(parts[1]), is_active=bool(int(parts[2])))
+    container = get_app_container()
+    container.prompt_service.toggle_prompt(int(parts[1]), bool(int(parts[2])))
     await show_prompts(update, context)
 
 
 async def set_default_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    update_prompt(int(query.data.split(":")[1]), is_default=True)
+    container = get_app_container()
+    container.prompt_service.set_default(int(query.data.split(":")[1]), "pipeline_1")
     await show_prompts(update, context)
 
 
 async def delete_prompt_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    delete_prompt(int(query.data.split(":")[1]))
+    container = get_app_container()
+    container.prompt_service.delete_prompt(int(query.data.split(":")[1]))
     await query.answer("✅ پرامپت حذف شد.", show_alert=True)
     await show_prompts(update, context)
-
-
 
 
 async def toggle_pub_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query  = update.callback_query
     parts  = query.data.split(":")
     await query.answer()
-    toggle_public_api(int(parts[1]), bool(int(parts[2])))
+    container = get_app_container()
+    container.api_service.toggle_public_api(int(parts[1]), bool(int(parts[2])))
     await show_public_apis(update, context)
 
 
@@ -512,7 +531,8 @@ async def delete_pub_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query  = update.callback_query
     api_id = int(query.data.split(":")[1])
     await query.answer()
-    delete_public_api(api_id)
+    container = get_app_container()
+    container.api_service.delete_public_api(api_id)
     await query.answer("✅ API حذف شد.", show_alert=True)
     await show_public_apis(update, context)
 
@@ -571,35 +591,28 @@ async def _adm_send_base_url_prompt(msg_or_query, context, edit, provider, model
     else:
         target = msg_or_query if hasattr(msg_or_query, 'reply_text') else msg_or_query.message
         await target.reply_text(text, reply_markup=buttons, parse_mode="Markdown")
-        
-        
-
 
 
 async def show_p2_prompts(update, context):
     query = update.callback_query
     await query.answer()
-    prompts = get_all_pipeline2_prompts()
+    container = get_app_container()
+    prompts = container.prompt_service.list_prompts("pipeline_2")
     if not prompts:
         text = "✨ *پرامپت‌های Pipeline2*\n\nهیچ پرامپتی وجود ندارد."
     else:
         lines = ["✨ *پرامپت‌های Pipeline2:*\n"]
         for p in prompts:
-            status  = "✅" if p["is_active"] else "🔴"
-            default = " ⭐" if p["is_default"] else ""
-            lines.append(f"{status} *{p['title']}*{default}\n   {p['description'] or ''}")
+            default = " ⭐" if p.is_default else ""
+            lines.append(f"• *{p.name}*{default}")
         text = "\n".join(lines)
 
     buttons = [[InlineKeyboardButton("➕ افزودن پرامپت", callback_data="adm_add_p2_prompt")]]
     for p in prompts:
-        row = [InlineKeyboardButton(
-            f"{'🔴' if p['is_active'] else '✅'} {p['title'][:15]}",
-            callback_data=f"adm_toggle_p2_prompt:{p['id']}:{0 if p['is_active'] else 1}"
-        )]
-        if not p["is_default"]:
-            row.append(InlineKeyboardButton("⭐", callback_data=f"adm_default_p2_prompt:{p['id']}"))
-        row.append(InlineKeyboardButton("🗑", callback_data=f"adm_del_p2_prompt:{p['id']}"))
-        buttons.append(row)
+        buttons.append([
+            InlineKeyboardButton("⭐ پیش‌فرض", callback_data=f"adm_default_p2_prompt:{p.id}"),
+            InlineKeyboardButton("🗑",         callback_data=f"adm_del_p2_prompt:{p.id}"),
+        ])
     buttons.append([InlineKeyboardButton("🔙 بازگشت", callback_data="adm_back")])
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons),
                                   parse_mode="Markdown")
@@ -608,21 +621,28 @@ async def show_p2_prompts(update, context):
 async def start_add_p2_prompt(update, context):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("✨ عنوان پرامپت Pipeline2 را وارد کنید:")
+    await query.edit_message_text(
+        "✨ *افزودن پرامپت Pipeline2 — مرحله ۱/۳*\n\nعنوان پرامپت را وارد کنید:",
+        parse_mode="Markdown",
+    )
     return ADD_P2_PROMPT_TITLE
 
 
 async def receive_p2_prompt_title(update, context):
     context.user_data["adm_p2_prompt_title"] = update.message.text.strip()
-    await update.message.reply_text("توضیح کوتاه برای کاربران وارد کنید:")
+    await update.message.reply_text(
+        f"✅ عنوان: *{context.user_data['adm_p2_prompt_title']}*\n\n"
+        "📝 *مرحله ۲/۳* — توضیحات کوتاه:",
+        parse_mode="Markdown",
+    )
     return ADD_P2_PROMPT_DESC
 
 
 async def receive_p2_prompt_desc(update, context):
     context.user_data["adm_p2_prompt_desc"] = update.message.text.strip()
     await update.message.reply_text(
-        "متن کامل پرامپت را ارسال کنید:\n"
-        "(برای پرامپت‌های طولانی می‌توانید یک فایل .txt آپلود کنید)"
+        "📝 *مرحله ۳/۳* — متن کامل پرامپت Pipeline2 را ارسال کنید:\n"
+        "(برای متن طولانی می‌توانید یک فایل .txt آپلود کنید)"
     )
     return ADD_P2_PROMPT_TEXT
 
@@ -643,15 +663,16 @@ async def receive_p2_prompt_text(update, context):
         await update.message.reply_text("❌ متن پرامپت نمی‌تواند خالی باشد:")
         return ADD_P2_PROMPT_TEXT
 
-    prompts  = get_all_pipeline2_prompts()
+    container = get_app_container()
+    prompts  = container.prompt_service.list_prompts("pipeline_2")
     is_first = len(prompts) == 0
-    add_pipeline2_prompt(
-        title       = context.user_data["adm_p2_prompt_title"],
-        description = context.user_data["adm_p2_prompt_desc"],
-        prompt_text = prompt_text,
-        is_default  = is_first,
-        order       = len(prompts) + 1,
-    )
+    container.prompt_service.create_prompt(CreatePromptCommand(
+        name=context.user_data["adm_p2_prompt_title"],
+        text=prompt_text,
+        prompt_type="pipeline_2",
+        is_default=is_first,
+    ))
+
     await update.message.reply_text(
         f"✅ پرامپت Pipeline2 *{context.user_data['adm_p2_prompt_title']}* اضافه شد!"
         + (" (پیش‌فرض)" if is_first else ""),
@@ -666,33 +687,33 @@ async def toggle_p2_prompt(update, context):
     query = update.callback_query
     parts = query.data.split(":")
     await query.answer()
-    update_pipeline2_prompt(int(parts[1]), is_active=bool(int(parts[2])))
+    container = get_app_container()
+    container.prompt_service.toggle_prompt(int(parts[1]), bool(int(parts[2])))
     await show_p2_prompts(update, context)
 
 
 async def set_default_p2_prompt(update, context):
     query = update.callback_query
     await query.answer()
-    update_pipeline2_prompt(int(query.data.split(":")[1]), is_default=True)
+    container = get_app_container()
+    container.prompt_service.set_default(int(query.data.split(":")[1]), "pipeline_2")
     await show_p2_prompts(update, context)
 
 
 async def delete_p2_prompt_handler(update, context):
     query = update.callback_query
     await query.answer()
-    delete_pipeline2_prompt(int(query.data.split(":")[1]))
+    container = get_app_container()
+    container.prompt_service.delete_prompt(int(query.data.split(":")[1]))
     await query.answer("✅ پرامپت حذف شد.", show_alert=True)
     await show_p2_prompts(update, context)
-    
-    
-    
-    
+
 
 async def show_quick_convert_prompt(update, context):
     query = update.callback_query
     await query.answer()
-
-    current = get_quick_convert_prompt()
+    container = get_app_container()
+    current = container.prompt_service.get_quick_convert_prompt()
 
     if current:
         preview = current[:300] + ("..." if len(current) > 300 else "")
@@ -736,7 +757,7 @@ async def receive_quick_convert_prompt(update, context):
         await update.message.reply_text("❌ متن پرامپت نمی‌تواند خالی باشد:")
         return EDIT_QUICK_CONVERT_PROMPT
 
-    set_quick_convert_prompt(prompt_text)
+    container = get_app_container()
+    container.prompt_service.set_quick_convert_prompt(prompt_text)
     await update.message.reply_text("✅ پرامپت تبدیل سریع ذخیره شد.")
     return ConversationHandler.END
-

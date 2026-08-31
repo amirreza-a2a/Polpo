@@ -26,9 +26,17 @@ if "telegram" not in sys.modules:
     mock_tg = types.ModuleType("telegram")
     mock_tg.Update = MagicMock
     mock_tg.Bot = MagicMock
-    mock_tg.InlineKeyboardButton = MagicMock
-    mock_tg.InlineKeyboardMarkup = MagicMock
+    class DummyMarkup:
+        def __init__(self, inline_keyboard=None, **kwargs):
+            self.inline_keyboard = inline_keyboard
+    class DummyButton:
+        def __init__(self, text="", callback_data=None, **kwargs):
+            self.text = text
+            self.callback_data = callback_data
+    mock_tg.InlineKeyboardButton = DummyButton
+    mock_tg.InlineKeyboardMarkup = DummyMarkup
     sys.modules["telegram"] = mock_tg
+
 
 if "telegram.ext" not in sys.modules:
     mock_tg_ext = types.ModuleType("telegram.ext")

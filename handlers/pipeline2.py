@@ -1,16 +1,12 @@
 # ============================================================
-#  handlers/pipeline2.py  —  فلوی انتخاب پرامپت + API برای Pipeline 2
+#  handlers/pipeline2.py  —  Migrated to Application Services
 # ============================================================
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from database.models import (
-    get_or_create_user, get_job_for_user,
-    get_active_pipeline2_prompts, get_user_private_apis,
-    create_pipeline2_job,
-)
-from services.api_manager import build_api_chain, get_default_model
+from infrastructure.composition import get_app_container
+from interfaces.telegram.error_formatter import format_telegram_error
 
 
 # ════════════════════════════════════════════════════════════
@@ -23,14 +19,20 @@ async def start_pipeline2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_tg = update.effective_user
     await query.answer()
 
-    db_user = get_or_create_user(user_tg.id)
-    job     = get_job_for_user(job_id, db_user["id"])
+    container = get_app_container()
+    user_dto = container.user_service.get_or_create_telegram_user(user_tg.id, user_tg.username)
 
-    if not job or job["status"] != "done":
+    try:
+        job = container.job_query_service.get_job_detail(job_id, user_dto.id)
+    except Exception:
         await query.answer("❌ این جاب آماده پردازش هوشمند نیست.", show_alert=True)
         return
 
-    prompts = get_active_pipeline2_prompts()
+    if not job or job.status != "done":
+        await query.answer("❌ این جاب آماده پردازش هوشمند نیست.", show_alert=True)
+        return
+
+    prompts = container.prompt_service.list_prompts("pipeline_2")
     if not prompts:
         await query.answer("❌ هیچ پرامپتی برای پردازش هوشمند تنظیم نشده.", show_alert=True)
         return
@@ -38,13 +40,13 @@ async def start_pipeline2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["p2_source_job_id"] = job_id
 
     buttons = [
-        [InlineKeyboardButton(f"✨ {p['title']}", callback_data=f"p2_select_prompt:{p['id']}")]
+        [InlineKeyboardButton(f"✨ {p.name}", callback_data=f"p2_select_prompt:{p.id}")]
         for p in prompts
     ]
     buttons.append([InlineKeyboardButton("🔙 بازگشت", callback_data="history_page:1")])
 
     await query.edit_message_text(
-        f"✨ *پردازش هوشمند — {job['file_name']}*\n\n"
+        f"✨ *پردازش هوشمند — {job.file_name}*\n\n"
         "🔤 نوع پردازش را انتخاب کنید:",
         reply_markup=InlineKeyboardMarkup(buttons),
         parse_mode="Markdown",
@@ -61,8 +63,9 @@ async def on_p2_prompt_selected(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
     context.user_data["p2_prompt_id"] = prompt_id
 
-    db_user      = get_or_create_user(update.effective_user.id)
-    private_apis = get_user_private_apis(db_user["id"])
+    container = get_app_container()
+    user_dto = container.user_service.get_or_create_telegram_user(update.effective_user.id, update.effective_user.username)
+    private_apis = container.api_service.list_user_apis(user_dto.id, include_public=False)
 
     if private_apis:
         buttons = [
@@ -114,40 +117,50 @@ async def on_p2_fallback_selected(update: Update, context: ContextTypes.DEFAULT_
 async def _finalize_p2_job(query, context: ContextTypes.DEFAULT_TYPE,
                             include_private: bool, include_public: bool):
     user_tg     = query.from_user
-    db_user     = get_or_create_user(user_tg.id)
+    container   = get_app_container()
+    user_dto    = container.user_service.get_or_create_telegram_user(user_tg.id, user_tg.username)
     source_job_id = context.user_data.get("p2_source_job_id")
     prompt_id     = context.user_data.get("p2_prompt_id")
 
-    source_job = get_job_for_user(source_job_id, db_user["id"])
-    if not source_job:
+    try:
+        source_job = container.job_query_service.get_job_detail(source_job_id, user_dto.id)
+    except Exception:
         await query.edit_message_text("❌ جاب اصلی یافت نشد.")
         return
 
-    chain = build_api_chain(db_user["id"], include_private, include_public)
-    if not chain:
+    apis = container.api_service.list_user_apis(user_dto.id, include_public=include_public)
+    if not include_private:
+        apis = [a for a in apis if a.slot_type == "public"]
+    elif not include_public:
+        apis = [a for a in apis if a.slot_type == "private"]
+
+    if not apis:
         await query.edit_message_text(
             "❌ هیچ API‌ای در دسترس نیست.\n"
             "یک API خصوصی اضافه کنید یا بعداً دوباره امتحان کنید."
         )
         return
 
-    first_model = chain[0].get("selected_model") or get_default_model(chain[0]["provider"])
+    chain_ids = [a.id for a in apis]
 
-    p2_id = create_pipeline2_job(
-        source_job_id = source_job_id,
-        user_id       = db_user["id"],
-        prompt_id     = prompt_id,
-        api_chain     = chain,
-        model         = first_model,
-    )
+    try:
+        p2_id = container.job_submission_service.submit_pipeline2_job(
+            source_job_id=source_job_id,
+            user_id=user_dto.id,
+            prompt_id=prompt_id,
+            api_chain_ids=chain_ids,
+        )
 
-    await query.edit_message_text(
-        f"✅ *پردازش هوشمند #{p2_id} در صف قرار گرفت!*\n\n"
-        f"📄 فایل اصلی: {source_job['file_name']}\n"
-        f"🔌 API اول: `{chain[0]['label']}`\n\n"
-        "پس از پردازش، فایل بهبودیافته برای شما ارسال می‌شود.",
-        parse_mode="Markdown",
-    )
-
-    context.user_data.pop("p2_source_job_id", None)
-    context.user_data.pop("p2_prompt_id", None)
+        await query.edit_message_text(
+            f"✅ *پردازش هوشمند #{p2_id} در صف قرار گرفت!*\n\n"
+            f"📄 فایل اصلی: {source_job.file_name}\n"
+            f"🔌 API اول: `{apis[0].label}`\n\n"
+            "پس از پردازش، فایل بهبودیافته برای شما ارسال می‌شود.",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        error_msg = format_telegram_error(e)
+        await query.edit_message_text(error_msg)
+    finally:
+        context.user_data.pop("p2_source_job_id", None)
+        context.user_data.pop("p2_prompt_id", None)

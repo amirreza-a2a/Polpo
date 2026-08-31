@@ -131,35 +131,60 @@ class JobSubmissionService:
                 self.storage.cleanup_job_artifacts(job_id_created)
             raise e
 
-    def list_user_jobs(self, user_id: int, limit: int = 50, offset: int = 0) -> List[JobResponseDTO]:
+    def submit_pipeline2_job(
+        self,
+        source_job_id: int,
+        user_id: int,
+        prompt_id: Optional[int] = None,
+        api_chain_ids: Optional[List[int]] = None,
+    ) -> int:
         with self.uow_factory.create() as uow:
-            jobs = uow.jobs.list_by_user(user_id, limit, offset)
-            return [self._to_response_dto(j) for j in jobs]
+            source_job = uow.jobs.get_by_id(source_job_id)
+            if not source_job or source_job.user_id != user_id:
+                raise EntityNotFoundError("Job", source_job_id)
 
-    def get_job_detail(self, job_id: int, user_id: int) -> JobDetailDTO:
-        with self.uow_factory.create() as uow:
-            job = uow.jobs.get_by_id(job_id)
-            if not job or job.user_id != user_id:
-                raise EntityNotFoundError("Job", job_id)
+            if source_job.status != JobStatus.DONE:
+                raise DomainError("Source job is not completed yet.")
 
-            active_label = job.current_api.label if job.current_api else None
-            return JobDetailDTO(
-                id=job.id,
-                user_id=job.user_id,
-                file_name=job.file_name,
-                status=job.status.value,
-                total_pages=job.total_pages,
-                processed_pages=job.processed_pages,
-                prompt_id=job.prompt_id,
-                prompt_text=job.prompt_text,
-                active_api_label=active_label,
-                api_switch_log=job.api_switch_log,
-                output_path=job.output_path,
-                error_message=job.error_message,
-                auto_pipeline2=job.auto_pipeline2,
-                created_at=job.created_at.strftime("%Y-%m-%d %H:%M:%S") if job.created_at else None,
-                updated_at=job.updated_at.strftime("%Y-%m-%d %H:%M:%S") if job.updated_at else None,
+            user = uow.users.get_by_id(user_id)
+            if not user:
+                raise EntityNotFoundError("User", user_id)
+
+            # تعیین پرامپت Pipeline 2
+            prompt_text = ""
+            if prompt_id:
+                p = uow.prompts.get_by_id(prompt_id)
+                if p:
+                    prompt_text = p.text
+            if not prompt_text:
+                default_p = uow.prompts.get_default(PromptType.PIPELINE_2)
+                prompt_text = default_p.text if default_p else "Refine and structure markdown content."
+
+            # تعیین زنجیره API
+            if api_chain_ids:
+                all_apis = uow.apis.list_by_user(user.id, include_public=True)
+                api_map = {a.id: a for a in all_apis}
+                chain = [api_map[aid] for aid in api_chain_ids if aid in api_map]
+            else:
+                chain = uow.apis.list_by_user(user.id, include_public=user.preferences.use_public_fallback)
+
+            if not chain:
+                raise AIChainExhaustedError("No API slots available for Pipeline 2.")
+
+            from core.entities.job import Pipeline2Job
+            p2_job = Pipeline2Job(
+                id=None,
+                source_job_id=source_job_id,
+                user_id=user_id,
+                prompt_id=prompt_id,
+                prompt_text=prompt_text,
+                api_chain=chain,
+                status=JobStatus.PENDING,
+                input_path=source_job.output_path,
             )
+            saved_p2 = uow.pipeline2_jobs.save(p2_job)
+            uow.commit()
+            return saved_p2.id
 
     def _to_response_dto(self, job: Job) -> JobResponseDTO:
         return JobResponseDTO(

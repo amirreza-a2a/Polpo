@@ -75,6 +75,37 @@ class UserManagementService:
             uow.commit()
             return self._to_dto(user)
 
+    def toggle_fallback(self, user_id: int) -> UserDTO:
+        with self.uow_factory.create() as uow:
+            user = uow.users.get_by_id(user_id)
+            if not user:
+                raise EntityNotFoundError("User", user_id)
+            user.preferences.use_public_fallback = not user.preferences.use_public_fallback
+            uow.users.save(user)
+            uow.commit()
+            return self._to_dto(user)
+
+    def toggle_auto_retry(self, user_id: int) -> UserDTO:
+        with self.uow_factory.create() as uow:
+            user = uow.users.get_by_id(user_id)
+            if not user:
+                raise EntityNotFoundError("User", user_id)
+            user.preferences.auto_retry = not user.preferences.auto_retry
+            uow.users.save(user)
+            uow.commit()
+            return self._to_dto(user)
+
+    def toggle_auto_pipeline2(self, user_id: int) -> UserDTO:
+        with self.uow_factory.create() as uow:
+            user = uow.users.get_by_id(user_id)
+            if not user:
+                raise EntityNotFoundError("User", user_id)
+            user.preferences.auto_pipeline2 = not user.preferences.auto_pipeline2
+            uow.users.save(user)
+            uow.commit()
+            return self._to_dto(user)
+
+
     def _to_dto(self, user: User) -> UserDTO:
         return UserDTO(
             id=user.id,

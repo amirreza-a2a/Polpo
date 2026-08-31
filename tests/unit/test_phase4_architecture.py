@@ -496,13 +496,14 @@ class TestFastAPIRestBoundary(unittest.TestCase):
     def test_rest_routes_do_not_access_repositories_directly(self):
         """Hardening 4 & 9e: Jobs routes call Application Services rather than uow_factory."""
         self.mock_container.auth_service.authenticate_token.return_value = User(id=1)
-        self.mock_container.job_submission_service.list_user_jobs.return_value = []
+        self.mock_container.job_query_service.list_user_jobs.return_value = []
 
         resp = self.client.get("/api/v1/jobs", headers=self.auth_headers)
         self.assertEqual(resp.status_code, 200)
-        self.mock_container.job_submission_service.list_user_jobs.assert_called_once_with(1, 50, 0)
+        self.mock_container.job_query_service.list_user_jobs.assert_called_once_with(1, 50, 0)
         # uow_factory must not have been called by the route
         self.mock_container.uow_factory.assert_not_called()
+
 
 
 if __name__ == "__main__":

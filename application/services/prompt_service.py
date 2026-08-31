@@ -98,3 +98,24 @@ class PromptService:
             res = uow.prompts.delete(prompt_id)
             uow.commit()
             return res
+
+    def set_default(self, prompt_id: int, prompt_type: str) -> None:
+        pt = PromptType(prompt_type)
+        with self.uow_factory.create() as uow:
+            uow.prompts.set_default(prompt_id, pt)
+            uow.commit()
+
+    def toggle_prompt(self, prompt_id: int, is_active: bool) -> bool:
+        with self.uow_factory.create() as uow:
+            res = uow.prompts.toggle_active(prompt_id, is_active)
+            uow.commit()
+            return res
+
+    def get_quick_convert_prompt(self) -> Optional[str]:
+        with self.uow_factory.create() as uow:
+            return uow.prompts.get_quick_convert_prompt()
+
+    def set_quick_convert_prompt(self, text: str) -> None:
+        with self.uow_factory.create() as uow:
+            uow.prompts.set_quick_convert_prompt(text)
+            uow.commit()

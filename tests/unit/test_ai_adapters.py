@@ -468,7 +468,7 @@ class TestProcessorPropagationBoundary(unittest.TestCase):
             _call_ai_text("Sample Document Text", "Refine Prompt", api_entry)
         self.assertIn("Pipeline2 Type Misconfiguration", str(ctx.exception))
 
-    @patch("handlers.quick_convert.execute_single_vision_request")
+    @patch("services.ai_executor.execute_single_vision_request")
     def test_quick_convert_propagates_non_ai_exceptions(self, mock_vision_exec):
         mock_vision_exec.side_effect = KeyError("Missing required internal field")
         img = Image.new("RGB", (10, 10))
@@ -477,36 +477,30 @@ class TestProcessorPropagationBoundary(unittest.TestCase):
         with self.assertRaises(KeyError):
             _call_vision_api(img, "Prompt", api_entry)
 
-    @patch("handlers.quick_convert.increment_user_pages")
-    @patch("handlers.quick_convert.execute_vision_with_fallback")
-    @patch("handlers.quick_convert.build_api_chain")
-    @patch("handlers.quick_convert.get_quick_convert_prompt")
-    @patch("handlers.quick_convert.reset_daily_pages_if_needed")
-    @patch("handlers.quick_convert.get_or_create_user")
-    def test_quick_convert_delegates_fallback_to_ai_executor(
-        self, mock_get_user, mock_reset, mock_prompt, mock_chain, mock_exec_fallback, mock_incr
-    ):
+    @patch("handlers.quick_convert.get_app_container")
+    def test_quick_convert_delegates_fallback_to_ai_executor(self, mock_get_container):
         """
-        Verify that handle_quick_photo delegates multi-slot fallback to execute_vision_with_fallback
-        and does not implement an independent fallback loop.
+        Verify that handle_quick_photo delegates processing to QuickConvertService.
         """
         import asyncio
-        mock_get_user.return_value = {"id": 42, "daily_pages_used": 0, "use_public_fallback": False}
-        mock_prompt.return_value = "Convert quickly"
-        mock_chain.return_value = [
-            {"id": 1, "provider": "google", "api_key": "k1", "label": "Key 1"},
-            {"id": 2, "provider": "openai", "api_key": "k2", "label": "Key 2"},
-        ]
-        mock_exec_fallback.return_value = ("# Transcribed Quick Output", {"id": 2, "label": "Key 2"})
+        mock_container = MagicMock()
+        mock_user = MagicMock()
+        mock_user.id = 42
+        mock_container.user_service.get_or_create_telegram_user.return_value = mock_user
+        mock_res_dto = MagicMock()
+        mock_res_dto.markdown_content = "# Transcribed Quick Output"
+        mock_container.quick_convert_service.convert_image.return_value = mock_res_dto
+        mock_get_container.return_value = mock_container
 
         mock_update = MagicMock()
         mock_msg = MagicMock()
         mock_update.message = mock_msg
         mock_photo = MagicMock()
-        mock_file = AsyncMock()
-        mock_file.download_as_bytearray.return_value = bytearray(b"\xff\xd8\xff\xe0" + b"\x00" * 20)
+        mock_file = MagicMock()
+        mock_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"\xff\xd8\xff\xe0" + b"\x00" * 20))
         mock_photo.get_file = AsyncMock(return_value=mock_file)
         mock_msg.photo = [mock_photo]
+
 
         mock_status = AsyncMock()
         mock_msg.reply_text = AsyncMock(return_value=mock_status)
@@ -514,12 +508,11 @@ class TestProcessorPropagationBoundary(unittest.TestCase):
 
         asyncio.run(handle_quick_photo(mock_update, MagicMock()))
 
-        # execute_vision_with_fallback must be called exactly once
-        mock_exec_fallback.assert_called_once()
-        call_kwargs = mock_exec_fallback.call_args[1]
-        self.assertEqual(call_kwargs["prompt"], "Convert quickly")
-        self.assertEqual(call_kwargs["job"]["api_chain"], mock_chain.return_value)
-        mock_incr.assert_called_once_with(42, 1)
+        # quick_convert_service.convert_image must be called exactly once
+        mock_container.quick_convert_service.convert_image.assert_called_once()
+        cmd = mock_container.quick_convert_service.convert_image.call_args[0][0]
+        self.assertEqual(cmd.user_id, 42)
+
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ from core.entities.api_slot import ApiSlot
 from application.services.job_submission import JobSubmissionService
 from application.services.job_execution import JobExecutionService
 from application.services.job_recovery import JobRecoveryService
+from application.services.job_query import JobQueryService
 from application.services.quick_convert import QuickConvertService
 from application.services.user_service import UserManagementService
 from application.services.prompt_service import PromptService
@@ -39,6 +40,7 @@ class AppContainer:
         db_manager: Optional[DatabaseManager] = None,
         storage_adapter: Optional[LocalStorageAdapter] = None,
         token_secret: Optional[str] = None,
+        notifier: Optional[InMemoryEventNotifier] = None,
     ):
         # 1. زیرساخت پایگاه‌داده و امنیت
         self.db_manager = db_manager or DatabaseManager()
@@ -50,7 +52,8 @@ class AppContainer:
         self.storage = storage_adapter or LocalStorageAdapter()
         self.doc_processor = PyMuPDFDocumentProcessor()
         self.rate_limiter = RateLimiterAdapter()
-        self.notifier = InMemoryEventNotifier()
+        self.notifier = notifier or InMemoryEventNotifier()
+
 
         # 3. Factory ایجاد آداپتور هوش مصنوعی برای هر اسلات
         def resolve_ai_adapter(slot: ApiSlot) -> AIProviderPort:
@@ -86,6 +89,8 @@ class AppContainer:
             storage=self.storage,
             doc_processor=self.doc_processor,
         )
+
+        self.job_query_service = JobQueryService(self.uow_factory)
 
         self.job_execution_service = JobExecutionService(
             uow_factory=self.uow_factory,

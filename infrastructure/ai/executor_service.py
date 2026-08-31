@@ -91,11 +91,14 @@ class RateLimitedAIExecutor(IAIExecutionService):
         self,
         chain: List[ApiSlot],
         prompt: str,
+        input_text: Optional[str] = None,
         at_page: int = 0,
         on_switch: Optional[Callable[[str, str, str, int], None]] = None,
     ) -> Tuple[Optional[str], Optional[ApiSlot]]:
         if not chain:
             return None, None
+
+        full_prompt = f"{prompt}\n\n---\n\n{input_text}" if input_text else prompt
 
         current_idx = 0
         while current_idx < len(chain):
@@ -104,12 +107,13 @@ class RateLimitedAIExecutor(IAIExecutionService):
                 self.rate_limiter.wait_if_needed(slot)
                 adapter = self.adapter_factory(slot)
                 req = TextPromptRequest(
-                    prompt=prompt,
+                    prompt=full_prompt,
                     model=slot.selected_model,
                 )
                 resp = adapter.generate_text(req)
                 self.rate_limiter.mark_request_sent(slot)
                 return resp.content, slot
+
 
             except AIError as err:
                 reason = self._classify_ai_error(err)

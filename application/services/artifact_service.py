@@ -51,5 +51,24 @@ class ArtifactService:
         stream = self.storage.open_stream(handle)
         return stream, filename, mime_type
 
+    def get_artifact(
+        self,
+        user_id: int,
+        job_id: int,
+        artifact_type: str = "output_markdown",
+    ):
+        from application.dto.job_dto import ArtifactDownloadDTO
+        stream, filename, mime_type = self.get_job_artifact_stream(
+            job_id=job_id,
+            user_id=user_id,
+            artifact_type=artifact_type,
+        )
+        try:
+            data = stream.read()
+        finally:
+            stream.close()
+        return ArtifactDownloadDTO(data=data, filename=filename, mime_type=mime_type)
+
+
     def prune_expired_artifacts(self, max_age_hours: int = 48) -> int:
         return self.storage.prune_expired(max_age_hours)
