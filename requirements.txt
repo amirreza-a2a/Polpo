@@ -21,4 +21,10 @@ nest-asyncio==1.6.0           # ⚠️ در requirements قدیمی نبود و�
 python-dotenv==1.0.1
 
 # ── Data Validation (dependency داخلی python-telegram-bot) ─────────────
-pydantic==2.8.2
+pydantic==2.13.5
+
+# ── REST API & Client Transport (FastAPI for Qt Desktop & External Clients) ──
+fastapi==0.141.1
+uvicorn==0.52.4
+httpx==0.28.1
+python-multipart==0.0.32
