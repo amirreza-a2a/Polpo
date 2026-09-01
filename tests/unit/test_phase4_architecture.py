@@ -12,7 +12,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import tests.characterization.conftest_base
-from fastapi.testclient import TestClient
 
 # Core imports
 import core.entities.job as job_entity_mod
@@ -42,17 +41,13 @@ from application.services.job_submission import JobSubmissionService
 from application.services.job_execution import JobExecutionService
 from application.services.job_recovery import JobRecoveryService
 from application.services.quick_convert import QuickConvertService
-from application.services.auth_service import AuthService
 from application.ports.ai_executor import IAIExecutionService
 from application.ports.notifier import IProgressNotifier
 
 # Infrastructure
 from infrastructure.storage.local_storage import LocalStorageAdapter
-from infrastructure.security.token_service import SecureTokenService
 from infrastructure.ai.executor_service import RateLimitedAIExecutor
 from infrastructure.notifier.event_notifier import InMemoryEventNotifier
-from interfaces.api.app import app
-from interfaces.api.deps import get_container
 
 
 class TestPhase4DomainPurity(unittest.TestCase):
@@ -176,67 +171,6 @@ class TestLocalStorageAdapter(unittest.TestCase):
         self.assertFalse(self.storage.exists(handle))
         with self.assertRaises(ArtifactNotFoundError):
             self.storage.retrieve(handle)
-
-
-class TestSecureTokenService(unittest.TestCase):
-    def setUp(self):
-        self.token_service = SecureTokenService(secret_key="test_secret_32_bytes_long_key_!")
-
-    def test_access_token_creation_and_verification(self):
-        token = self.token_service.create_access_token(user_id=42, expires_minutes=60)
-        self.assertIsInstance(token, str)
-        verified_user_id = self.token_service.verify_access_token(token)
-        self.assertEqual(verified_user_id, 42)
-
-    def test_missing_signing_secret_fails_securely(self):
-        """Hardening 3d: Missing signing secret raises ValueError."""
-        with patch.dict("os.environ", {}, clear=True):
-            with patch("infrastructure.security.token_service.BOT_TOKEN", ""):
-                with self.assertRaises(ValueError) as ctx:
-                    SecureTokenService(secret_key="")
-                self.assertIn("Security fatal", str(ctx.exception))
-
-    def test_machine_api_key_creation_and_verification(self):
-        """Hardening 3c: Machine API key is created and verified independently."""
-        api_key = self.token_service.create_machine_api_key(user_id=77)
-        self.assertTrue(api_key.startswith("polpot_key_77_"))
-        verified_user_id = self.token_service.verify_machine_api_key(api_key)
-        self.assertEqual(verified_user_id, 77)
-
-        # Invalid or tampered keys
-        self.assertIsNone(self.token_service.verify_machine_api_key("polpot_key_77_invalid_signature"))
-        self.assertIsNone(self.token_service.verify_machine_api_key("invalid_format"))
-
-    def test_invalid_and_tampered_tokens(self):
-        self.assertIsNone(self.token_service.verify_access_token("invalid.token"))
-        self.assertIsNone(self.token_service.verify_access_token("garbage_string"))
-
-    def test_one_time_exchange_code(self):
-        code = self.token_service.create_one_time_exchange_code(user_id=99)
-        user_id = self.token_service.exchange_code_for_user_id(code)
-        self.assertEqual(user_id, 99)
-        self.assertIsNone(self.token_service.exchange_code_for_user_id(code))
-
-
-class TestAuthServiceHardening(unittest.TestCase):
-    def setUp(self):
-        self.mock_uow = MagicMock()
-        self.mock_uow_factory = MagicMock()
-        self.mock_uow_factory.create.return_value.__enter__.return_value = self.mock_uow
-        self.mock_uow_factory.create.return_value.__exit__.return_value = None
-
-        self.mock_token_service = MagicMock()
-        self.auth_service = AuthService(self.mock_uow_factory, self.mock_token_service)
-
-    def test_existing_username_cannot_be_registered_again(self):
-        """Hardening 3a: Existing username cannot be registered again to hijack account."""
-        self.mock_uow.users.get_by_username.return_value = User(
-            id=10, username="target_victim", is_admin=False
-        )
-
-        with self.assertRaises(DomainError) as ctx:
-            self.auth_service.register_desktop_user("target_victim")
-        self.assertIn("already registered", str(ctx.exception))
 
 
 class TestApplicationServices(unittest.TestCase):
@@ -399,109 +333,6 @@ class TestNotifierSSEEvents(unittest.TestCase):
         self.assertEqual(event["data"]["page"], 3)
         self.assertEqual(event["data"]["from_api"], "Google Gemini")
         self.assertEqual(event["data"]["to_api"], "OpenAI GPT-4o")
-
-
-class TestFastAPIRestBoundary(unittest.TestCase):
-    """
-    Integration tests for the FastAPI REST API boundary serving Qt Desktop and web clients.
-    """
-
-    def setUp(self):
-        self.mock_container = MagicMock()
-        app.dependency_overrides[get_container] = lambda: self.mock_container
-
-        self.client = TestClient(app)
-        self.token_service = SecureTokenService(secret_key="test_secret_key_for_api_suite_")
-        self.test_token = self.token_service.create_access_token(user_id=1)
-        self.auth_headers = {"Authorization": f"Bearer {self.test_token}"}
-
-    def tearDown(self):
-        app.dependency_overrides.clear()
-
-    def test_health_check_endpoint(self):
-        resp = self.client.get("/health")
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json()["status"], "ok")
-
-    def test_get_current_user_profile(self):
-        self.mock_container.auth_service.authenticate_token.return_value = User(
-            id=1, telegram_id=123, username="qt_user", quota=QuotaAllocation(daily_limit=50, daily_pages_used=2)
-        )
-        self.mock_container.user_service.get_user_by_id.return_value = {
-            "id": 1,
-            "telegram_id": 123,
-            "username": "qt_user",
-            "is_admin": False,
-            "daily_pages_used": 2,
-            "daily_limit": 50,
-            "remaining_pages": 48,
-            "use_public_fallback": True,
-            "auto_retry": False,
-            "auto_pipeline2": False,
-            "default_prompt_id": None,
-            "default_pipeline2_prompt_id": None,
-        }
-
-        resp = self.client.get("/api/v1/users/me", headers=self.auth_headers)
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json()["username"], "qt_user")
-        self.assertEqual(resp.json()["remaining_pages"], 48)
-
-    def test_x_api_key_behavior(self):
-        """Hardening 3c & 9c: Machine API Key header x-api-key is verified explicitly via authenticate_api_key."""
-        self.mock_container.auth_service.authenticate_api_key.return_value = User(
-            id=1, username="api_machine"
-        )
-        self.mock_container.user_service.get_user_by_id.return_value = {
-            "id": 1,
-            "telegram_id": None,
-            "username": "api_machine",
-            "is_admin": False,
-            "daily_pages_used": 0,
-            "daily_limit": 50,
-            "remaining_pages": 50,
-            "use_public_fallback": True,
-            "auto_retry": False,
-            "auto_pipeline2": False,
-            "default_prompt_id": None,
-            "default_pipeline2_prompt_id": None,
-        }
-
-        api_key = self.token_service.create_machine_api_key(user_id=1)
-        headers = {"X-API-Key": api_key}
-        resp = self.client.get("/api/v1/users/me", headers=headers)
-        self.assertEqual(resp.status_code, 200)
-        self.mock_container.auth_service.authenticate_api_key.assert_called_once_with(api_key)
-
-        # Invalid format rejected
-        self.mock_container.auth_service.authenticate_api_key.side_effect = AuthenticationError("Invalid machine API key.")
-        resp_invalid = self.client.get("/api/v1/users/me", headers={"X-API-Key": "invalid_raw_key"})
-        self.assertEqual(resp_invalid.status_code, 401)
-
-
-    def test_rfc_7807_problem_json_response(self):
-        """Hardening 5: Errors return application/problem+json RFC 7807 formatted body."""
-        resp = self.client.get("/api/v1/users/me")
-        self.assertEqual(resp.status_code, 401)
-        self.assertIn("application/problem+json", resp.headers["content-type"])
-        body = resp.json()
-        self.assertIn("type", body)
-        self.assertIn("title", body)
-        self.assertEqual(body["status"], 401)
-        self.assertIn("detail", body)
-        self.assertEqual(body["instance"], "/api/v1/users/me")
-
-    def test_rest_routes_do_not_access_repositories_directly(self):
-        """Hardening 4 & 9e: Jobs routes call Application Services rather than uow_factory."""
-        self.mock_container.auth_service.authenticate_token.return_value = User(id=1)
-        self.mock_container.job_query_service.list_user_jobs.return_value = []
-
-        resp = self.client.get("/api/v1/jobs", headers=self.auth_headers)
-        self.assertEqual(resp.status_code, 200)
-        self.mock_container.job_query_service.list_user_jobs.assert_called_once_with(1, 50, 0)
-        # uow_factory must not have been called by the route
-        self.mock_container.uow_factory.assert_not_called()
-
 
 
 if __name__ == "__main__":

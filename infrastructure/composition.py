@@ -12,7 +12,6 @@ from infrastructure.storage.local_storage import LocalStorageAdapter
 from infrastructure.document.pymupdf_processor import PyMuPDFDocumentProcessor
 from infrastructure.rate_limiting.rate_limiter_adapter import RateLimiterAdapter
 from infrastructure.notifier.event_notifier import InMemoryEventNotifier
-from infrastructure.security.token_service import SecureTokenService
 from infrastructure.ai.factory import create_ai_adapter
 from infrastructure.ai.executor_service import RateLimitedAIExecutor
 from core.entities.api_slot import ApiSlot
@@ -26,7 +25,6 @@ from application.services.user_service import UserManagementService
 from application.services.prompt_service import PromptService
 from application.services.api_service import ApiManagementService
 from application.services.artifact_service import ArtifactService
-from application.services.auth_service import AuthService
 
 
 class AppContainer:
@@ -39,14 +37,12 @@ class AppContainer:
         self,
         db_manager: Optional[DatabaseManager] = None,
         storage_adapter: Optional[LocalStorageAdapter] = None,
-        token_secret: Optional[str] = None,
         notifier: Optional[InMemoryEventNotifier] = None,
     ):
         # 1. زیرساخت پایگاه‌داده و امنیت
         self.db_manager = db_manager or DatabaseManager()
         self.uow_factory = MySQLUnitOfWorkFactory(self.db_manager)
         self.credential_resolver = MySQLCredentialResolver(self.db_manager)
-        self.token_service = SecureTokenService(secret_key=token_secret)
 
         # 2. زیرساخت فایل، پردازش سند و شبکه
         self.storage = storage_adapter or LocalStorageAdapter()
@@ -78,7 +74,6 @@ class AppContainer:
         self.prompt_service = PromptService(self.uow_factory)
         self.api_service = ApiManagementService(self.uow_factory, self.provider_detector)
         self.artifact_service = ArtifactService(self.storage, self.uow_factory)
-        self.auth_service = AuthService(self.uow_factory, self.token_service)
 
 
         self.quick_convert_service = QuickConvertService(

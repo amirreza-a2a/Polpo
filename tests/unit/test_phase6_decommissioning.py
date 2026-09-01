@@ -170,7 +170,7 @@ class TestPhase6DecommissioningAndCleanArchitecture(unittest.TestCase):
         """
         Verify AppContainer provides all required application services in the canonical composition root.
         """
-        container = AppContainer(token_secret="test_secret_for_tests")
+        container = AppContainer()
         self.assertIsInstance(container, AppContainer)
         self.assertIsNotNone(container.user_service)
         self.assertIsNotNone(container.prompt_service)
@@ -181,7 +181,6 @@ class TestPhase6DecommissioningAndCleanArchitecture(unittest.TestCase):
         self.assertIsNotNone(container.job_recovery_service)
         self.assertIsNotNone(container.quick_convert_service)
         self.assertIsNotNone(container.artifact_service)
-        self.assertIsNotNone(container.auth_service)
 
     def test_canonical_provider_detector(self):
 
