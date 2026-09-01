@@ -100,7 +100,7 @@ class MySQLJobRepository(IJobRepository):
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
-                        job.user_id, job.file_name, job.file_path, job.total_pages, job.processed_pages,
+                        getattr(job, "user_id", 1), job.file_name, job.file_path, job.total_pages, job.processed_pages,
                         job.status.value, job.prompt_id, job.prompt_text, api_chain_json, job.current_api_index,
                         switch_log_json, job.output_path, job.error_message, job.retry_count,
                         int(job.auto_pipeline2), job.pipeline2_prompt_id,
@@ -155,7 +155,6 @@ class MySQLJobRepository(IJobRepository):
 
         return Job(
             id=row["id"],
-            user_id=row["user_id"],
             file_name=row["file_name"],
             file_path=row["file_path"],
             total_pages=row.get("total_pages") or 0,
@@ -208,7 +207,7 @@ class MySQLPipeline2JobRepository(IPipeline2JobRepository):
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
-                        job.source_job_id, job.user_id, job.prompt_id, job.prompt_text,
+                        job.source_job_id, getattr(job, "user_id", 1), job.prompt_id, job.prompt_text,
                         job.status.value, job.input_path, job.output_path, chain_json, job.current_api_index,
                     ),
                 )
@@ -258,7 +257,6 @@ class MySQLPipeline2JobRepository(IPipeline2JobRepository):
         return Pipeline2Job(
             id=row["id"],
             source_job_id=row["source_job_id"],
-            user_id=row["user_id"],
             prompt_id=row.get("prompt_id"),
             prompt_text=row.get("prompt_text"),
             status=JobStatus(row["status"]) if row.get("status") else JobStatus.PENDING,
@@ -585,12 +583,13 @@ class MySQLApiRepository(IApiRepository):
                 (user_id, provider, api_key, label, model, base_url),
             )
             new_id = cur.lastrowid
+            desktop_type = "custom" if provider == "custom" else "byok"
             return ApiSlot(
                 id=new_id,
                 provider=provider,
                 label=label,
-                slot_type="private",
-                credential_ref=CredentialRef(identifier=str(new_id), provider=provider, slot_type="private"),
+                slot_type=desktop_type,
+                credential_ref=CredentialRef(identifier=str(new_id), provider=provider, slot_type=desktop_type),
                 selected_model=model,
                 base_url=base_url,
             )
@@ -617,12 +616,13 @@ class MySQLApiRepository(IApiRepository):
                 (provider, api_key, label, json.dumps(models, ensure_ascii=False), daily_limit, priority, donated_by, selected_model, base_url),
             )
             new_id = cur.lastrowid
+            desktop_type = "custom" if provider == "custom" else "byok"
             return ApiSlot(
                 id=new_id,
                 provider=provider,
                 label=label,
-                slot_type="public",
-                credential_ref=CredentialRef(identifier=str(new_id), provider=provider, slot_type="public"),
+                slot_type=desktop_type,
+                credential_ref=CredentialRef(identifier=str(new_id), provider=provider, slot_type=desktop_type),
                 selected_model=selected_model,
                 base_url=base_url,
                 supported_models=models,
@@ -666,12 +666,13 @@ class MySQLApiRepository(IApiRepository):
 
     def _row_to_entity(self, row: dict, slot_type: str) -> ApiSlot:
         models = json.loads(row["models"]) if row.get("models") else None
+        desktop_type = "custom" if row.get("provider") == "custom" else "byok"
         return ApiSlot(
             id=row["id"],
             provider=row["provider"],
             label=row.get("label") or f"{row['provider']}_{row['id']}",
-            slot_type=slot_type,
-            credential_ref=CredentialRef(identifier=str(row["id"]), provider=row["provider"], slot_type=slot_type),
+            slot_type=desktop_type,
+            credential_ref=CredentialRef(identifier=str(row["id"]), provider=row["provider"], slot_type=desktop_type),
             selected_model=row.get("selected_model"),
             base_url=row.get("base_url"),
             supported_models=models,

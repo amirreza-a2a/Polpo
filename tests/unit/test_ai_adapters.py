@@ -10,7 +10,8 @@ from PIL import Image
 
 import tests.characterization.conftest_base
 from application.ports.ai_provider import AIProviderPort
-from core.ai.types import ApiSlot, VisionPromptRequest, TextPromptRequest, AIResponse
+from core.entities.api_slot import ApiSlot
+from core.ai.types import VisionPromptRequest, TextPromptRequest, AIResponse
 import core.ai.types as core_ai_types
 import core.ai.exceptions as core_ai_exceptions
 from core.ai.exceptions import (
@@ -71,9 +72,8 @@ class TestCoreAIIndependence(unittest.TestCase):
     def test_api_slot_entity_creation_and_serialization(self):
         data = {
             "id": 5,
-            "type": "private",
+            "type": "byok",
             "provider": "google",
-            "api_key": "sec_key",
             "label": "My Key",
             "selected_model": "gemini-3.5-flash",
             "base_url": None,
@@ -82,12 +82,12 @@ class TestCoreAIIndependence(unittest.TestCase):
         slot = ApiSlot.from_dict(data)
         self.assertEqual(slot.id, 5)
         self.assertEqual(slot.provider, "google")
-        self.assertEqual(slot.slot_type, "private")
+        self.assertEqual(slot.slot_type, "byok")
         self.assertEqual(slot.selected_model, "gemini-3.5-flash")
 
         serialized = slot.to_dict()
         self.assertEqual(serialized["id"], 5)
-        self.assertEqual(serialized["type"], "private")
+        self.assertEqual(serialized["type"], "byok")
         self.assertEqual(serialized["provider"], "google")
 
 
@@ -265,7 +265,7 @@ class TestAIExecutionPolicy(unittest.TestCase):
         mock_adapter.generate_vision.return_value = AIResponse(content="Page 1 Markdown")
         self.mock_factory.return_value = mock_adapter
 
-        slot = ApiSlot(id=1, provider="google", api_key="k1", label="Key 1", slot_type="private")
+        slot = ApiSlot(id=1, provider="google", label="Key 1", slot_type="byok")
         chain = [slot]
 
         content, active_slot = self.executor.execute_vision_with_fallback(chain, b"dummy_bytes", "Prompt", at_page=1)
@@ -284,8 +284,8 @@ class TestAIExecutionPolicy(unittest.TestCase):
 
         self.mock_factory.side_effect = [mock_adapter_1, mock_adapter_2]
 
-        slot_1 = ApiSlot(id=1, provider="google", api_key="k1", label="Key 1", slot_type="private")
-        slot_2 = ApiSlot(id=2, provider="openai", api_key="k2", label="Key 2", slot_type="public")
+        slot_1 = ApiSlot(id=1, provider="google", label="Key 1", slot_type="byok")
+        slot_2 = ApiSlot(id=2, provider="openai", label="Key 2", slot_type="byok")
         chain = [slot_1, slot_2]
 
         mock_switch_cb = MagicMock()
@@ -303,7 +303,7 @@ class TestAIExecutionPolicy(unittest.TestCase):
         mock_adapter.generate_vision.side_effect = AIProviderUnavailableError("503 Service Unavailable", provider="google")
         self.mock_factory.return_value = mock_adapter
 
-        slot = ApiSlot(id=1, provider="google", api_key="k1", label="Key 1", slot_type="private")
+        slot = ApiSlot(id=1, provider="google", label="Key 1", slot_type="byok")
         chain = [slot]
 
         content, active_slot = self.executor.execute_vision_with_fallback(chain, b"dummy_bytes", "Prompt", at_page=1)
@@ -320,8 +320,8 @@ class TestAIExecutionPolicy(unittest.TestCase):
         mock_adapter.generate_vision.side_effect = TypeError("Unexpected argument error")
         self.mock_factory.return_value = mock_adapter
 
-        slot_1 = ApiSlot(id=1, provider="google", api_key="k1", label="Key 1", slot_type="private")
-        slot_2 = ApiSlot(id=2, provider="openai", api_key="k2", label="Key 2", slot_type="public")
+        slot_1 = ApiSlot(id=1, provider="google", label="Key 1", slot_type="byok")
+        slot_2 = ApiSlot(id=2, provider="openai", label="Key 2", slot_type="byok")
         chain = [slot_1, slot_2]
 
         with self.assertRaises(TypeError):
@@ -336,8 +336,8 @@ class TestAIExecutionPolicy(unittest.TestCase):
         mock_adapter.generate_text.side_effect = RuntimeError("Fatal system crash")
         self.mock_factory.return_value = mock_adapter
 
-        slot_1 = ApiSlot(id=1, provider="google", api_key="k1", label="Key 1", slot_type="private")
-        slot_2 = ApiSlot(id=2, provider="openai", api_key="k2", label="Key 2", slot_type="public")
+        slot_1 = ApiSlot(id=1, provider="google", label="Key 1", slot_type="byok")
+        slot_2 = ApiSlot(id=2, provider="openai", label="Key 2", slot_type="byok")
         chain = [slot_1, slot_2]
 
         with self.assertRaises(RuntimeError):

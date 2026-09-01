@@ -8,12 +8,12 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class CredentialRef:
     """
-    Value object جهت ارجاع به اطلاعات هویتی بدون نگهداری رمز/کلید خام در دامنه.
-    زیرساخت این ارجاع را به کلید واقعی نگاشت می‌کند.
+    Value object representing a reference to stored credentials without holding plaintext secrets in domain entities.
+    The infrastructure layer resolves this reference at runtime via the OS keyring or secure vault.
     """
     identifier: str
     provider: str
-    slot_type: str = "private"  # 'private' | 'public' | 'system'
+    slot_type: str = "byok"  # 'byok' | 'custom'
 
     def __str__(self) -> str:
         return f"{self.slot_type}:{self.provider}:{self.identifier}"

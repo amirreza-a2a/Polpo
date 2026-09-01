@@ -9,7 +9,7 @@ import tests.characterization.conftest_base
 from handlers.quick_convert import TELEGRAM_MSG_LIMIT
 from application.dto.quick_convert_dto import QuickConvertCommand, QuickConvertResultDTO
 from application.services.quick_convert import QuickConvertService
-from core.ai.types import ApiSlot
+from core.entities.api_slot import ApiSlot
 
 
 class TestQuickConvertCharacterization(unittest.TestCase):
@@ -51,7 +51,7 @@ class TestQuickConvertCharacterization(unittest.TestCase):
         mock_user.preferences.use_public_fallback = True
         mock_uow.users.get_by_id.return_value = mock_user
 
-        mock_slot = ApiSlot(id=1, provider="google", api_key="k1", label="Key 1", slot_type="public", selected_model="gemini-3.5-flash")
+        mock_slot = ApiSlot(id=1, provider="google", label="Key 1", slot_type="byok", selected_model="gemini-3.5-flash")
         mock_uow.apis.list_public.return_value = [mock_slot]
         mock_uow.prompts.get_quick_convert_prompt.return_value = "Convert quickly"
 

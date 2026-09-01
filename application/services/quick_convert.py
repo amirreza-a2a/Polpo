@@ -6,11 +6,9 @@ from application.ports.unit_of_work import IUnitOfWorkFactory
 from application.ports.ai_executor import IAIExecutionService
 from application.dto.quick_convert_dto import QuickConvertCommand, QuickConvertResultDTO
 from core.entities.prompt import PromptType
-from core.policies.quota_policy import QuotaPolicy
 from core.ai.exceptions import AIChainExhaustedError
 from core.exceptions.domain_exceptions import (
     EntityNotFoundError,
-    QuotaExceededError,
 )
 
 
@@ -33,13 +31,6 @@ class QuickConvertService:
             user = uow.users.get_by_id(cmd.user_id)
             if not user:
                 raise EntityNotFoundError("User", cmd.user_id)
-
-            if QuotaPolicy.should_reset_quota(user.quota.last_active_date):
-                uow.users.reset_daily_quota(user.id)
-                user.quota.daily_pages_used = 0
-
-            if not QuotaPolicy.can_consume(user.quota, 1):
-                raise QuotaExceededError("Daily page limit reached.")
 
             prompt_text = cmd.prompt_text
             if not prompt_text:

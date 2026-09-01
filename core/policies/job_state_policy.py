@@ -7,27 +7,28 @@ from core.entities.job import JobStatus
 
 
 class InvalidStateTransitionError(Exception):
-    """خطای تغییر وضعیت نامعتبر کار."""
+    """Raised when an invalid job lifecycle state transition is attempted."""
     pass
 
 
 class JobStateTransitionPolicy:
     """
-    سیاست رسمی ماشین وضعیت کارها (State Machine).
-    قوانین مجاز بودن گذارهای وضعیت را در لایه دامنه تعریف می‌کند.
+    Formal state transition policy for document processing jobs.
+    Defines permitted state transitions in the domain layer.
     """
 
     ALLOWED_TRANSITIONS: dict[JobStatus, Set[JobStatus]] = {
-        JobStatus.PENDING: {JobStatus.PROCESSING, JobStatus.FAILED},
-        JobStatus.PROCESSING: {JobStatus.DONE, JobStatus.PAUSED, JobStatus.FAILED},
-        JobStatus.PAUSED: {JobStatus.PENDING, JobStatus.FAILED},
-        JobStatus.FAILED: {JobStatus.PENDING},
-        JobStatus.DONE: set(),  # Done یک وضعیت نهایی و غیرقابل تغییر برای همان Job ID است.
+        JobStatus.PENDING: {JobStatus.PROCESSING, JobStatus.FAILED, JobStatus.CANCELLED},
+        JobStatus.PROCESSING: {JobStatus.DONE, JobStatus.PAUSED, JobStatus.FAILED, JobStatus.CANCELLED},
+        JobStatus.PAUSED: {JobStatus.PENDING, JobStatus.FAILED, JobStatus.CANCELLED},
+        JobStatus.FAILED: {JobStatus.PENDING, JobStatus.CANCELLED},
+        JobStatus.CANCELLED: {JobStatus.PENDING},
+        JobStatus.DONE: set(),  # DONE is a terminal state with no outgoing transitions.
     }
 
     @classmethod
     def validate_transition(cls, current_status: JobStatus, target_status: JobStatus) -> None:
-        """بررسی مجاز بودن تغییر وضعیت، در صورت نامعتبر بودن استثنا پرتاب می‌شود."""
+        """Validates whether a state transition is legal, raising InvalidStateTransitionError if not."""
         if current_status == target_status:
             return
 
@@ -39,7 +40,7 @@ class JobStateTransitionPolicy:
 
     @classmethod
     def can_transition(cls, current_status: JobStatus, target_status: JobStatus) -> bool:
-        """بررسی مجاز بودن تغییر وضعیت بدون پرتاب استثنا."""
+        """Checks whether a state transition is legal without raising an exception."""
         if current_status == target_status:
             return True
         return target_status in cls.ALLOWED_TRANSITIONS.get(current_status, set())

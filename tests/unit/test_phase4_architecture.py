@@ -27,7 +27,6 @@ from core.entities.api_slot import ApiSlot
 from core.entities.credential_ref import CredentialRef
 from core.entities.artifact import ArtifactType
 from core.policies.job_state_policy import JobStateTransitionPolicy, InvalidStateTransitionError
-from core.policies.quota_policy import QuotaPolicy
 from core.policies.retry_policy import RetryPolicy
 from core.exceptions.domain_exceptions import (
     DomainError,
@@ -45,6 +44,7 @@ from application.services.job_recovery import JobRecoveryService
 from application.services.quick_convert import QuickConvertService
 from application.services.auth_service import AuthService
 from application.ports.ai_executor import IAIExecutionService
+from application.ports.notifier import IProgressNotifier
 
 # Infrastructure
 from infrastructure.storage.local_storage import LocalStorageAdapter
@@ -106,11 +106,11 @@ class TestPhase4DomainPurity(unittest.TestCase):
             id=1,
             provider="google",
             label="Google Slot 1",
-            slot_type="private",
-            credential_ref=CredentialRef(identifier="1", provider="google", slot_type="private"),
+            slot_type="byok",
+            credential_ref=CredentialRef(identifier="1", provider="google", slot_type="byok"),
             selected_model="gemini-3.5-flash",
         )
-        self.assertEqual(str(slot.credential_ref), "private:google:1")
+        self.assertEqual(str(slot.credential_ref), "byok:google:1")
         self.assertFalse(hasattr(slot, "api_key"))
 
     def test_job_state_transition_policy(self):
@@ -122,14 +122,8 @@ class TestPhase4DomainPurity(unittest.TestCase):
         with self.assertRaises(InvalidStateTransitionError):
             JobStateTransitionPolicy.validate_transition(JobStatus.DONE, JobStatus.PROCESSING)
 
-    def test_quota_and_retry_policies(self):
-        quota = QuotaAllocation(daily_limit=50, daily_pages_used=49)
-        self.assertTrue(QuotaPolicy.can_consume(quota, 1))
-        self.assertFalse(QuotaPolicy.can_consume(quota, 2))
-
-        self.assertTrue(QuotaPolicy.should_reset_quota(date(2026, 8, 30), date(2026, 9, 1)))
-        self.assertFalse(QuotaPolicy.should_reset_quota(date(2026, 9, 1), date(2026, 9, 1)))
-
+    def test_retry_policy(self):
+        self.assertTrue(RetryPolicy.is_eligible_for_retry(0))
         self.assertTrue(RetryPolicy.is_eligible_for_retry(2))
         self.assertFalse(RetryPolicy.is_eligible_for_retry(3))
 
@@ -256,7 +250,7 @@ class TestApplicationServices(unittest.TestCase):
         self.mock_uow_factory.create.return_value.__exit__.return_value = None
 
         self.mock_doc_processor = MagicMock()
-        self.mock_notifier = MagicMock()
+        self.mock_notifier = MagicMock(spec=IProgressNotifier)
         self.mock_ai_executor = MagicMock(spec=IAIExecutionService)
 
     def tearDown(self):
@@ -293,12 +287,11 @@ class TestApplicationServices(unittest.TestCase):
         self.mock_uow.users.get_by_id.return_value = user
         self.mock_uow.prompts.get_default.return_value = Prompt(id=1, name="P1", text="Convert to MD")
         self.mock_uow.apis.list_by_user.return_value = [
-            ApiSlot(id=1, provider="google", label="Key 1", slot_type="private")
+            ApiSlot(id=1, provider="google", label="Key 1", slot_type="byok")
         ]
 
         saved_job = Job(
             id=10,
-            user_id=1,
             file_name="sample.pdf",
             file_path="",
             total_pages=5,
@@ -332,14 +325,13 @@ class TestApplicationServices(unittest.TestCase):
 
         job = Job(
             id=20,
-            user_id=1,
             file_name="doc.pdf",
             file_path=handle.uri,
             total_pages=2,
             processed_pages=0,
             prompt_text="Extract Markdown",
             api_chain=[
-                ApiSlot(id=1, provider="google", label="Slot 1", slot_type="private"),
+                ApiSlot(id=1, provider="google", label="Slot 1", slot_type="byok"),
             ],
             current_api_index=0,
             status=JobStatus.PENDING,

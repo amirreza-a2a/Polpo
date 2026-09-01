@@ -7,7 +7,6 @@ from typing import Optional
 from application.ports.unit_of_work import IUnitOfWorkFactory
 from application.dto.user_dto import UserDTO, UpdatePreferencesCommand
 from core.entities.user import User, QuotaAllocation, UserPreferences
-from core.policies.quota_policy import QuotaPolicy
 from core.exceptions.domain_exceptions import EntityNotFoundError
 
 
@@ -25,7 +24,7 @@ class UserManagementService:
             if not user:
                 raise EntityNotFoundError("User", user_id)
 
-            if QuotaPolicy.should_reset_quota(user.quota.last_active_date):
+            if user.quota.last_active_date is not None and user.quota.last_active_date < date.today():
                 uow.users.reset_daily_quota(user.id)
                 user.quota.daily_pages_used = 0
                 uow.commit()
@@ -47,7 +46,7 @@ class UserManagementService:
                 user = uow.users.save(user)
                 uow.commit()
             else:
-                if QuotaPolicy.should_reset_quota(user.quota.last_active_date):
+                if user.quota.last_active_date is not None and user.quota.last_active_date < date.today():
                     uow.users.reset_daily_quota(user.id)
                     user.quota.daily_pages_used = 0
                     uow.commit()

@@ -3,7 +3,6 @@
 # ============================================================
 
 from core.ai.types import (
-    ApiSlot,
     VisionPromptRequest,
     TextPromptRequest,
     AIResponse,
@@ -22,7 +21,6 @@ from core.ai.exceptions import (
 )
 
 __all__ = [
-    "ApiSlot",
     "VisionPromptRequest",
     "TextPromptRequest",
     "AIResponse",

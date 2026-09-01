@@ -11,7 +11,7 @@ from core.exceptions.domain_exceptions import EntityNotFoundError, ArtifactNotFo
 
 class ArtifactService:
     """
-    سرویس دسترسی و بازیابی آرتیفکت‌های خروجی کارها جهت دانلود در REST و کلاینت دسکتاپ.
+    Application service for accessing and retrieving job output artifacts.
     """
 
     def __init__(self, storage: IArtifactStorage, uow_factory: IUnitOfWorkFactory):
@@ -21,18 +21,16 @@ class ArtifactService:
     def get_job_artifact_stream(
         self,
         job_id: int,
-        user_id: int,
+        user_id: int = 1,
         artifact_type: str = "output_markdown",
     ) -> Tuple[BinaryIO, str, str]:
         """
-        واکشی جریان دودویی (Stream) یک آرتیفکت خروجی با اعتبارسنجی مالکیت کاربر.
-        خروجی: (stream, filename, mime_type)
+        Retrieves a binary stream for a job artifact.
+        Returns: (stream, filename, mime_type)
         """
         with self.uow_factory.create() as uow:
             job = uow.jobs.get_by_id(job_id)
             if not job:
-                raise EntityNotFoundError("Job", job_id)
-            if job.user_id != user_id:
                 raise EntityNotFoundError("Job", job_id)
 
         at = ArtifactType(artifact_type)

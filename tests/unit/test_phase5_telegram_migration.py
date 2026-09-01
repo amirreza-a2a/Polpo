@@ -69,13 +69,13 @@ class MockJobRepo:
         return None
 
     def list_by_user(self, user_id: int, limit: int = 10, offset: int = 0):
-        user_jobs = [j for j in self.jobs.values() if j.user_id == user_id]
+        user_jobs = [j for j in self.jobs.values() if getattr(j, "user_id", 1) == user_id]
         return user_jobs[offset : offset + limit]
 
     def count_by_user(self, user_id: int, status=None):
         if status:
-            return sum(1 for j in self.jobs.values() if j.user_id == user_id and j.status == status)
-        return sum(1 for j in self.jobs.values() if j.user_id == user_id)
+            return sum(1 for j in self.jobs.values() if getattr(j, "user_id", 1) == user_id and j.status == status)
+        return sum(1 for j in self.jobs.values() if getattr(j, "user_id", 1) == user_id)
 
     def save(self, job: Job) -> Job:
         if job.id is None:
@@ -244,17 +244,17 @@ class MockApiRepo:
         return list(self.apis.values())
 
     def list_public(self):
-        return [a for a in self.apis.values() if a.slot_type == "public"]
+        return list(self.apis.values())
 
     def save_private(self, user_id: int, provider: str, api_key: str, label: str, model: str = None, base_url: str = None):
         slot = ApiSlot(
             id=self.counter,
             provider=provider,
             label=label,
-            slot_type="private",
+            slot_type="byok",
             selected_model=model or "default",
             base_url=base_url,
-            credential_ref=CredentialRef(identifier=str(self.counter), provider=provider, slot_type="private"),
+            credential_ref=CredentialRef(identifier=str(self.counter), provider=provider, slot_type="byok"),
         )
         self.apis[self.counter] = slot
         self.counter += 1
@@ -265,11 +265,11 @@ class MockApiRepo:
             id=self.counter,
             provider=provider,
             label=label,
-            slot_type="public",
+            slot_type="byok",
             selected_model=selected_model or (models[0] if models else "default"),
             base_url=base_url,
             supported_models=models,
-            credential_ref=CredentialRef(identifier=str(self.counter), provider=provider, slot_type="public"),
+            credential_ref=CredentialRef(identifier=str(self.counter), provider=provider, slot_type="byok"),
         )
         self.apis[self.counter] = slot
         self.counter += 1
@@ -698,7 +698,6 @@ class TestPipeline2EndToEndWorkflow(unittest.TestCase):
         )
         source_job = Job(
             id=10,
-            user_id=1,
             file_name="source.pdf",
             file_path="10/source.pdf",
             total_pages=1,
@@ -791,7 +790,7 @@ class TestDonationAndPromptCRUDIntegration(unittest.TestCase):
         # 2. Admin approves donation
         slot_dto = self.api_service.approve_donation(donation_id=don_id, selected_model="gemini-3.5-flash")
         self.assertIsNotNone(slot_dto)
-        self.assertEqual(slot_dto.slot_type, "public")
+        self.assertEqual(slot_dto.slot_type, "byok")
         self.assertEqual(slot_dto.provider, "google")
 
         # 3. Verify public APIs list includes approved donation

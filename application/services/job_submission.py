@@ -10,10 +10,8 @@ from application.ports.document_processor import IDocumentProcessor
 from core.entities.job import Job, JobStatus
 from core.entities.prompt import PromptType
 from core.entities.artifact import ArtifactType
-from core.policies.quota_policy import QuotaPolicy
 from core.exceptions.domain_exceptions import (
     EntityNotFoundError,
-    QuotaExceededError,
     DomainError,
 )
 from core.ai.exceptions import AIChainExhaustedError
@@ -21,8 +19,7 @@ from core.ai.exceptions import AIChainExhaustedError
 
 class JobSubmissionService:
     """
-    سرویس ثبت و پرس‌وجوی کارهای پردازش سند PDF.
-    مرز کامل استفاده از Use Caseها را جهت استقلال کامل لایه REST فراهم می‌کند.
+    Application service for validating and submitting PDF document conversion jobs.
     """
 
     def __init__(
@@ -36,7 +33,7 @@ class JobSubmissionService:
         self.doc_processor = doc_processor
 
     def submit_job(self, cmd: SubmitJobCommand) -> JobResponseDTO:
-        # 1. محاسبه صفحات PDF
+        # 1. Calculate PDF page count
         try:
             total_pages = self.doc_processor.get_page_count(cmd.file_bytes)
         except Exception as e:
@@ -49,19 +46,10 @@ class JobSubmissionService:
 
         try:
             with self.uow_factory.create() as uow:
-                # 2. بررسی کاربر و سهمیه
-                user = uow.users.get_by_id(cmd.user_id)
-                if not user:
-                    raise EntityNotFoundError("User", cmd.user_id)
+                # 2. Optional user resolution for legacy callers
+                user = uow.users.get_by_id(cmd.user_id) if hasattr(uow, "users") and uow.users else None
 
-                if QuotaPolicy.should_reset_quota(user.quota.last_active_date):
-                    uow.users.reset_daily_quota(user.id)
-                    user.quota.daily_pages_used = 0
-
-                if not QuotaPolicy.can_consume(user.quota, 1):
-                    raise QuotaExceededError("Daily page limit reached.")
-
-                # 3. حل پرامپت
+                # 3. Prompt resolution
                 prompt_text = cmd.prompt_text
                 prompt_id = cmd.prompt_id
                 if not prompt_text:
@@ -78,23 +66,25 @@ class JobSubmissionService:
                 if not prompt_text:
                     raise DomainError("No conversion prompt available.")
 
-                # 4. حل زنجیره API
+                # 4. API Chain resolution
                 chain = []
                 if cmd.api_chain_ids:
                     for aid in cmd.api_chain_ids:
-                        slot = uow.apis.get_by_id(aid, "private") or uow.apis.get_by_id(aid, "public")
+                        slot = uow.apis.get_by_id(aid)
                         if slot:
                             chain.append(slot)
                 else:
-                    chain = uow.apis.list_by_user(user.id, include_public=user.preferences.use_public_fallback)
+                    if hasattr(uow.apis, "list_all"):
+                        chain = uow.apis.list_all()
+                    else:
+                        chain = uow.apis.list_by_user(cmd.user_id, include_public=True)
 
                 if not chain:
-                    raise AIChainExhaustedError("No API slots configured or available for this user.")
+                    raise AIChainExhaustedError("No API slots configured or available.")
 
-                # 5. ایجاد رکورد اولیه در دیتابیس
+                # 5. Create initial job entity
                 job = Job(
                     id=None,
-                    user_id=user.id,
                     file_name=cmd.filename,
                     file_path="",
                     total_pages=total_pages,
@@ -105,13 +95,13 @@ class JobSubmissionService:
                     api_chain=chain,
                     current_api_index=0,
                     api_switch_log=[],
-                    auto_pipeline2=cmd.auto_pipeline2 or user.preferences.auto_pipeline2,
-                    pipeline2_prompt_id=cmd.pipeline2_prompt_id or user.preferences.default_pipeline2_prompt_id,
+                    auto_pipeline2=cmd.auto_pipeline2 or (user.preferences.auto_pipeline2 if user and hasattr(user, "preferences") else False),
+                    pipeline2_prompt_id=cmd.pipeline2_prompt_id or (user.preferences.default_pipeline2_prompt_id if user and hasattr(user, "preferences") else None),
                 )
                 saved_job = uow.jobs.save(job)
                 job_id_created = saved_job.id
 
-                # 6. ذخیره‌سازی فایل مبدأ در مخزن آرتیفکت
+                # 6. Ingest source document into artifact storage
                 artifact_handle = self.storage.store(
                     job_id=saved_job.id,
                     artifact_type=ArtifactType.SOURCE_PDF,
@@ -124,7 +114,7 @@ class JobSubmissionService:
                 uow.jobs.save(saved_job)
                 uow.commit()
 
-                return self._to_response_dto(saved_job)
+                return self._to_response_dto(saved_job, user_id=cmd.user_id)
 
         except Exception as e:
             if job_id_created is not None:
@@ -134,23 +124,19 @@ class JobSubmissionService:
     def submit_pipeline2_job(
         self,
         source_job_id: int,
-        user_id: int,
+        user_id: int = 1,
         prompt_id: Optional[int] = None,
         api_chain_ids: Optional[List[int]] = None,
     ) -> int:
         with self.uow_factory.create() as uow:
             source_job = uow.jobs.get_by_id(source_job_id)
-            if not source_job or source_job.user_id != user_id:
+            if not source_job:
                 raise EntityNotFoundError("Job", source_job_id)
 
             if source_job.status != JobStatus.DONE:
                 raise DomainError("Source job is not completed yet.")
 
-            user = uow.users.get_by_id(user_id)
-            if not user:
-                raise EntityNotFoundError("User", user_id)
-
-            # تعیین پرامپت Pipeline 2
+            # Resolve Pipeline 2 prompt
             prompt_text = ""
             if prompt_id:
                 p = uow.prompts.get_by_id(prompt_id)
@@ -160,13 +146,18 @@ class JobSubmissionService:
                 default_p = uow.prompts.get_default(PromptType.PIPELINE_2)
                 prompt_text = default_p.text if default_p else "Refine and structure markdown content."
 
-            # تعیین زنجیره API
+            # Resolve API chain
             if api_chain_ids:
-                all_apis = uow.apis.list_by_user(user.id, include_public=True)
-                api_map = {a.id: a for a in all_apis}
-                chain = [api_map[aid] for aid in api_chain_ids if aid in api_map]
+                chain = []
+                for aid in api_chain_ids:
+                    slot = uow.apis.get_by_id(aid)
+                    if slot:
+                        chain.append(slot)
             else:
-                chain = uow.apis.list_by_user(user.id, include_public=user.preferences.use_public_fallback)
+                if hasattr(uow.apis, "list_all"):
+                    chain = uow.apis.list_all()
+                else:
+                    chain = uow.apis.list_by_user(user_id, include_public=True)
 
             if not chain:
                 raise AIChainExhaustedError("No API slots available for Pipeline 2.")
@@ -175,7 +166,6 @@ class JobSubmissionService:
             p2_job = Pipeline2Job(
                 id=None,
                 source_job_id=source_job_id,
-                user_id=user_id,
                 prompt_id=prompt_id,
                 prompt_text=prompt_text,
                 api_chain=chain,
@@ -186,10 +176,10 @@ class JobSubmissionService:
             uow.commit()
             return saved_p2.id
 
-    def _to_response_dto(self, job: Job) -> JobResponseDTO:
+    def _to_response_dto(self, job: Job, user_id: int = 1) -> JobResponseDTO:
         return JobResponseDTO(
             id=job.id,
-            user_id=job.user_id,
+            user_id=user_id,
             file_name=job.file_name,
             status=job.status.value,
             total_pages=job.total_pages,

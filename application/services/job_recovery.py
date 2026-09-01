@@ -16,20 +16,17 @@ from core.exceptions.domain_exceptions import (
 
 class JobRecoveryService:
     """
-    سرویس بازیابی و از سرگیری کارهای متوقف‌شده یا ناموفق.
+    Application service for resuming and retrying paused or failed jobs.
     """
 
     def __init__(self, uow_factory: IUnitOfWorkFactory):
         self.uow_factory = uow_factory
 
-    def resume_job(self, job_id: int, user_id: int, new_chain_ids: Optional[List[int]] = None) -> JobResponseDTO:
+    def resume_job(self, job_id: int, user_id: int = 1, new_chain_ids: Optional[List[int]] = None) -> JobResponseDTO:
         with self.uow_factory.create() as uow:
             job = uow.jobs.get_by_id(job_id)
             if not job:
                 raise EntityNotFoundError("Job", job_id)
-
-            if job.user_id != user_id:
-                raise DomainError("Permission denied: You can only resume your own jobs.")
 
             if job.status not in (JobStatus.PAUSED, JobStatus.FAILED):
                 raise DomainError(f"Job is in state '{job.status.value}' and cannot be resumed.")
@@ -37,7 +34,7 @@ class JobRecoveryService:
             if new_chain_ids:
                 chain = []
                 for aid in new_chain_ids:
-                    slot = uow.apis.get_by_id(aid, "private") or uow.apis.get_by_id(aid, "public")
+                    slot = uow.apis.get_by_id(aid)
                     if slot:
                         chain.append(slot)
                 if chain:
@@ -53,7 +50,7 @@ class JobRecoveryService:
 
             return JobResponseDTO(
                 id=job.id,
-                user_id=job.user_id,
+                user_id=user_id,
                 file_name=job.file_name,
                 status=job.status.value,
                 total_pages=job.total_pages,
@@ -61,14 +58,11 @@ class JobRecoveryService:
                 auto_pipeline2=job.auto_pipeline2,
             )
 
-    def retry_job(self, job_id: int, user_id: int) -> JobResponseDTO:
+    def retry_job(self, job_id: int, user_id: int = 1) -> JobResponseDTO:
         with self.uow_factory.create() as uow:
             job = uow.jobs.get_by_id(job_id)
             if not job:
                 raise EntityNotFoundError("Job", job_id)
-
-            if job.user_id != user_id:
-                raise DomainError("Permission denied.")
 
             if not RetryPolicy.is_eligible_for_retry(job.retry_count):
                 raise DomainError(f"Maximum retry attempts ({RetryPolicy.MAX_AUTO_RETRIES}) reached.")
@@ -83,7 +77,7 @@ class JobRecoveryService:
 
             return JobResponseDTO(
                 id=job.id,
-                user_id=job.user_id,
+                user_id=user_id,
                 file_name=job.file_name,
                 status=job.status.value,
                 total_pages=job.total_pages,

@@ -15,6 +15,7 @@ class JobStatus(str, Enum):
     DONE = "done"
     PAUSED = "paused"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class JobType(str, Enum):
@@ -25,7 +26,7 @@ class JobType(str, Enum):
 
 @dataclass(frozen=True)
 class SwitchEvent:
-    """رویداد تغییر اسلات API در طول پردازش."""
+    """Represents an API switch event recorded during document execution."""
     page: int
     from_api: str
     to_api: str
@@ -35,9 +36,8 @@ class SwitchEvent:
 
 @dataclass
 class Job:
-    """موجودیت دامنه جهت نمایش یک کار پردازش سند PDF."""
+    """Domain entity representing a PDF document processing job."""
     id: Optional[int]
-    user_id: int
     file_name: str
     file_path: str
     total_pages: int = 0
@@ -53,6 +53,9 @@ class Job:
     retry_count: int = 0
     auto_pipeline2: bool = False
     pipeline2_prompt_id: Optional[int] = None
+    scheduled_at: Optional[datetime] = None
+    cancel_requested: bool = False
+    claimed_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -68,15 +71,14 @@ class Job:
 
     @property
     def is_terminal(self) -> bool:
-        return self.status in (JobStatus.DONE, JobStatus.FAILED)
+        return self.status in (JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELLED)
 
 
 @dataclass
 class Pipeline2Job:
-    """موجودیت دامنه جهت نمایش مرحله دوم یکپارچه‌سازی و بازنویسی سند."""
+    """Domain entity representing a Pipeline 2 typography refinement job."""
     id: Optional[int]
     source_job_id: int
-    user_id: int
     prompt_id: Optional[int] = None
     prompt_text: Optional[str] = None
     status: JobStatus = JobStatus.PENDING
@@ -85,5 +87,11 @@ class Pipeline2Job:
     api_chain: List[ApiSlot] = field(default_factory=list)
     current_api_index: int = 0
     error_message: Optional[str] = None
+    cancel_requested: bool = False
+    claimed_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.status in (JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELLED)

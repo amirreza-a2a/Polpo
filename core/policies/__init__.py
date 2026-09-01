@@ -4,13 +4,11 @@
 
 from core.policies.job_state_policy import JobStateTransitionPolicy, InvalidStateTransitionError
 from core.policies.fallback_policy import FallbackChainPolicy
-from core.policies.quota_policy import QuotaPolicy
 from core.policies.retry_policy import RetryPolicy
 
 __all__ = [
     "JobStateTransitionPolicy",
     "InvalidStateTransitionError",
     "FallbackChainPolicy",
-    "QuotaPolicy",
     "RetryPolicy",
 ]

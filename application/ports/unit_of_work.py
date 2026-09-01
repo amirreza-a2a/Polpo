@@ -4,26 +4,24 @@
 
 from abc import ABC, abstractmethod
 from application.ports.repositories import (
+    ISettingsRepository,
     IJobRepository,
     IPipeline2JobRepository,
-    IUserRepository,
     IPromptRepository,
     IApiRepository,
-    IDonationRepository,
 )
 
 
 class IUnitOfWork(ABC):
     """
-    درگاه مدیریت تراکنش و انسجام داده‌ها (Unit of Work).
-    عملیات‌های چند-مخزنی را تحت یک تراکنش اتمیک واحد قرار می‌دهد.
+    Transactional Unit of Work contract for the desktop application.
+    Coordinates persistence operations across local repositories within an atomic boundary.
     """
+    settings: ISettingsRepository
     jobs: IJobRepository
     pipeline2_jobs: IPipeline2JobRepository
-    users: IUserRepository
     prompts: IPromptRepository
     apis: IApiRepository
-    donations: IDonationRepository
 
     @abstractmethod
     def __enter__(self) -> "IUnitOfWork":
@@ -43,7 +41,7 @@ class IUnitOfWork(ABC):
 
 
 class IUnitOfWorkFactory(ABC):
-    """Factory جهت ایجاد نمونه‌های تازه از IUnitOfWork."""
+    """Factory interface for producing scoped IUnitOfWork instances."""
 
     @abstractmethod
     def create(self) -> IUnitOfWork:
