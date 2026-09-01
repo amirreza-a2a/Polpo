@@ -43,7 +43,7 @@ class InvariantDocProcessor:
     def render_page_to_jpeg(self, pdf_bytes: bytes, page_num: int) -> bytes:
         return b"jpeg_data"
 
-    def extract_and_crop_images(self, markdown_text: str, page_jpeg_bytes: bytes, job_id: int):
+    def extract_and_crop_images(self, markdown_text: str, page_jpeg_bytes: bytes, job_id: int, page_number: int = 1):
         return markdown_text, []
 
 

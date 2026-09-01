@@ -208,11 +208,12 @@ class JobExecutionService:
                             job.current_api_index = idx
                             break
 
-                # Extract and crop images
+                # Extract and crop images with deterministic page-isolated naming
                 final_page_md, cropped_images = self.doc_processor.extract_and_crop_images(
                     markdown_text=raw_page_md,
                     page_jpeg_bytes=page_jpeg_bytes,
                     job_id=job.id,
+                    page_number=page_num,
                 )
                 for crop_name, crop_bytes in cropped_images:
                     self.storage.store(

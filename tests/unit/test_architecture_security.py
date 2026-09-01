@@ -3,6 +3,7 @@
 #  Architectural Security & Secret Non-Persistence Enforcement
 # ============================================================
 
+import io
 import logging
 import tempfile
 import unittest
@@ -276,6 +277,11 @@ class TestArchitectureSecurity(unittest.TestCase):
         )
 
         # 4. Patch google.genai.Client to verify canary key genuinely enters client constructor, then force 401 failure
+        img_buf = io.BytesIO()
+        from PIL import Image as PILImage
+        PILImage.new("RGB", (10, 10), (255, 255, 255)).save(img_buf, format="JPEG")
+        valid_jpeg_bytes = img_buf.getvalue()
+
         with patch("google.genai.Client") as mock_genai_client:
             mock_client_instance = MagicMock()
             mock_client_instance.models.generate_content.side_effect = Exception(
@@ -285,7 +291,7 @@ class TestArchitectureSecurity(unittest.TestCase):
 
             content, active_slot = executor.execute_vision_with_fallback(
                 chain=[canary_slot],
-                image_bytes=b"dummy_jpeg",
+                image_bytes=valid_jpeg_bytes,
                 prompt="Transcribe page",
                 at_page=1,
             )

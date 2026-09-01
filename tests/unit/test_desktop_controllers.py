@@ -49,7 +49,7 @@ class DummyDocProcessor:
     def render_page_to_image(self, file_bytes: bytes, page_number: int, dpi: int = 150) -> bytes:
         return b"fake_jpeg_image_bytes"
 
-    def extract_and_crop_images(self, markdown_text: str, page_jpeg_bytes: bytes, job_id: int):
+    def extract_and_crop_images(self, markdown_text: str, page_jpeg_bytes: bytes, job_id: int, page_number: int = 1):
         return markdown_text, []
 
 

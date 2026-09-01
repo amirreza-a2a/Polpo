@@ -39,7 +39,7 @@ class DummyDocumentProcessor:
     def render_page_to_jpeg(self, pdf_bytes: bytes, page_num: int) -> bytes:
         return b"fake_jpeg_page_" + str(page_num).encode()
 
-    def extract_and_crop_images(self, markdown_text: str, page_jpeg_bytes: bytes, job_id: int):
+    def extract_and_crop_images(self, markdown_text: str, page_jpeg_bytes: bytes, job_id: int, page_number: int = 1):
         return markdown_text, []
 
 

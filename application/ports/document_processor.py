@@ -27,11 +27,13 @@ class IDocumentProcessor(ABC):
         markdown_text: str,
         page_jpeg_bytes: bytes,
         job_id: int,
+        page_number: int = 1,
     ) -> Tuple[str, List[Tuple[str, bytes]]]:
         """
-        استخراج برچسب‌های مختصات [[ymin, xmin, ymax, xmax]] از متن مارک‌داون
-        و برش تصاویر مربوطه.
-        خروجی: (متن مارک‌داون اصلاح‌شده با تگ ![[filename]], لیست تصاویر برش‌خورده (نام‌فایل, بایت‌ها))
+        Extracts coordinate tags [[ymin, xmin, ymax, xmax]] from markdown text,
+        crops the corresponding visual regions from the page image, and substitutes
+        Returns:
+          (modified_markdown_text, List[(filename, cropped_jpeg_bytes)])
         """
         pass
 

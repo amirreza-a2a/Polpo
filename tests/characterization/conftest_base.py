@@ -49,22 +49,32 @@ if "telegram.ext" not in sys.modules:
     mock_tg_ext.filters = MagicMock()
     sys.modules["telegram.ext"] = mock_tg_ext
 
-if "PIL" not in sys.modules:
-    mock_pil = types.ModuleType("PIL")
-    mock_pil_img = types.ModuleType("PIL.Image")
-    class ImageClass:
-        pass
-    mock_pil_img.Image = ImageClass
-    mock_pil_img.open = MagicMock()
-    mock_pil_img.new = MagicMock()
-    mock_pil.Image = mock_pil_img
-    sys.modules["PIL"] = mock_pil
-    sys.modules["PIL.Image"] = mock_pil_img
+try:
+    import PIL
+    import PIL.Image
+except ImportError:
+    if "PIL" not in sys.modules:
+        mock_pil = types.ModuleType("PIL")
+        mock_pil_img = types.ModuleType("PIL.Image")
+        class ImageClass:
+            pass
+        mock_pil_img.Image = ImageClass
+        mock_pil_img.open = MagicMock()
+        mock_pil_img.new = MagicMock()
+        mock_pil.Image = mock_pil_img
+        sys.modules["PIL"] = mock_pil
+        sys.modules["PIL.Image"] = mock_pil_img
 
-if "fitz" not in sys.modules:
-    mock_fitz = types.ModuleType("fitz")
-    mock_fitz.open = MagicMock()
-    sys.modules["fitz"] = mock_fitz
+try:
+    import pymupdf as fitz
+except ImportError:
+    try:
+        import fitz
+    except ImportError:
+        if "fitz" not in sys.modules:
+            mock_fitz = types.ModuleType("fitz")
+            mock_fitz.open = MagicMock()
+            sys.modules["fitz"] = mock_fitz
 
 if "google" not in sys.modules:
     mock_google = types.ModuleType("google")

@@ -548,7 +548,7 @@ class TestPipeline1AndFallbackEndToEndWorkflow(unittest.TestCase):
         self.doc_processor = MagicMock()
         self.doc_processor.get_page_count.return_value = 2
         self.doc_processor.render_page_to_jpeg.return_value = b"\xff\xd8\xff\xe0" + b"\x00" * 10
-        self.doc_processor.extract_and_crop_images.side_effect = lambda markdown_text, page_jpeg_bytes, job_id: (markdown_text, [])
+        self.doc_processor.extract_and_crop_images.side_effect = lambda markdown_text, page_jpeg_bytes, job_id, *args, **kwargs: (markdown_text, [])
 
         # Setup AI Adapters & Executor with Fallback
         self.adapter1 = MagicMock(spec=AIProviderPort)

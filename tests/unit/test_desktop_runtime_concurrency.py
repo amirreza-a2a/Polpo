@@ -40,7 +40,7 @@ class SlowDocumentProcessor:
             time.sleep(self.delay)
         return b"jpeg_page_" + str(page_num).encode()
 
-    def extract_and_crop_images(self, markdown_text: str, page_jpeg_bytes: bytes, job_id: int):
+    def extract_and_crop_images(self, markdown_text: str, page_jpeg_bytes: bytes, job_id: int, page_number: int = 1):
         return markdown_text, []
 
 

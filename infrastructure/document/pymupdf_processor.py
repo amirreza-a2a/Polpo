@@ -1,25 +1,33 @@
 # ============================================================
 #  infrastructure/document/pymupdf_processor.py
+#  High-Precision PDF Page Rendering & Image Extraction
 # ============================================================
 
-import io
 import re
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 try:
     import pymupdf as fitz
 except ImportError:
     import fitz
-from PIL import Image
+
 from application.ports.document_processor import IDocumentProcessor
+from core.entities.bounding_box import BoundingBox, CropPolicy
+from infrastructure.document.bounding_box_parser import BoundingBoxParser
+from infrastructure.document.coordinate_mapper import CoordinateMapper
+from infrastructure.document.image_cropper import ImageCropper
 
 
 class PyMuPDFDocumentProcessor(IDocumentProcessor):
     """
-    پیاده‌سازی درگاه پردازش اسناد PDF و برش تصاویر با استفاده از PyMuPDF و Pillow.
+    High-precision document processor implementing IDocumentProcessor.
+    Coordinates PyMuPDF page rendering, canonical BoundingBox parsing,
+    boundary-clamped coordinate mapping with safety padding, Pillow raster cropping,
+    and deterministic reverse-positional Markdown substitution.
     """
 
-    def __init__(self, default_dpi: int = 150):
+    def __init__(self, default_dpi: int = 150, crop_policy: Optional[CropPolicy] = None):
         self.default_dpi = default_dpi
+        self.crop_policy = crop_policy or CropPolicy()
 
     def get_page_count(self, pdf_bytes: bytes) -> int:
         with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
@@ -44,51 +52,66 @@ class PyMuPDFDocumentProcessor(IDocumentProcessor):
         markdown_text: str,
         page_jpeg_bytes: bytes,
         job_id: int,
+        page_number: int = 1,
     ) -> Tuple[str, List[Tuple[str, bytes]]]:
         """
-        تشخیص برچسب‌های مختصات [[ymin, xmin, ymax, xmax]] در متن و برش تصویر مربوطه.
-        مختصات بر پایه مقیاس 0 تا 1000 است.
+        Parses canonical normalized bounding box tags ([[ymin, xmin, ymax, xmax]]) from markdown,
+        maps coordinates to clamped/padded pixel rectangles, crops visual regions via PIL,
+        and performs collision-free positional Markdown substitution.
+
+        Guarantees:
+          - Page-isolated deterministic artifact names: crop_{job_id}_p{page_number}_{idx}.jpg
+          - Reverse-positional text replacement eliminating duplicate/substring collision.
+          - Clamped boundaries and configurable safety padding preventing cropped diagram borders.
         """
-        pattern = r"\[\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]\]"
-        matches = list(re.finditer(pattern, markdown_text))
-        if not matches:
+        if not markdown_text or not page_jpeg_bytes:
             return markdown_text, []
 
-        img = Image.open(io.BytesIO(page_jpeg_bytes))
-        width, height = img.size
+        parsed_matches = BoundingBoxParser.parse_matches(markdown_text)
+        if not parsed_matches:
+            return markdown_text, []
+
+        try:
+            width, height = ImageCropper.get_image_dimensions(page_jpeg_bytes)
+        except Exception:
+            return markdown_text, []
+
         cropped_list: List[Tuple[str, bytes]] = []
+        replacements: List[Tuple[int, int, str]] = []
 
-        modified_text = markdown_text
-        for idx, match in enumerate(matches, start=1):
+        for idx, match_item in enumerate(parsed_matches, start=1):
+            pixel_rect = CoordinateMapper.map_to_pixels(
+                box=match_item.box,
+                image_width=width,
+                image_height=height,
+                policy=self.crop_policy,
+            )
+
+            if pixel_rect is None:
+                # Sub-minimum or invalid geometry: skip crop
+                continue
+
             try:
-                ymin, xmin, ymax, xmax = map(int, match.groups())
-                # تبدیل مقیاس 1000 به پیکسل واقعی
-                left = int(xmin * width / 1000.0)
-                top = int(ymin * height / 1000.0)
-                right = int(xmax * width / 1000.0)
-                bottom = int(ymax * height / 1000.0)
-
-                # اعتبارسنجی ابعاد
-                if right > left and bottom > top:
-                    crop = img.crop((left, top, right, bottom))
-                    buf = io.BytesIO()
-                    crop.save(buf, format="JPEG", quality=90)
-                    filename = f"crop_{job_id}_{idx}.jpg"
-                    cropped_list.append((filename, buf.getvalue()))
-
-                    # جایگزینی تگ در متن
-                    modified_text = modified_text.replace(match.group(0), f"![[{filename}]]", 1)
+                crop_bytes = ImageCropper.crop_jpeg(
+                    image_bytes=page_jpeg_bytes,
+                    rect=pixel_rect,
+                    quality=self.crop_policy.jpeg_quality,
+                )
+                filename = f"crop_{job_id}_p{page_number}_{idx}.jpg"
+                cropped_list.append((filename, crop_bytes))
+                replacements.append((match_item.start, match_item.end, f"![[{filename}]]"))
             except Exception:
                 continue
 
+        modified_text = BoundingBoxParser.substitute_positional(markdown_text, replacements)
         return modified_text, cropped_list
 
     def unify_markdown(self, raw_text: str) -> str:
         """
-        یکپارچه‌سازی سطح Python (بدون AI):
-        - حذف سرتیترهای "## صفحه X"
-        - حذف خطوط جداکننده "---"
-        - حذف خطوط خالی اضافی
+        Python-level structural Markdown unification:
+        - Strips page headers '## صفحه X'
+        - Strips separator lines '---'
+        - Normalizes consecutive blank lines
         """
         page_header_pattern = re.compile(r"^##\s*صفحه\s*\d+\s*$", re.MULTILINE)
         separator_pattern = re.compile(r"^\s*---\s*$", re.MULTILINE)

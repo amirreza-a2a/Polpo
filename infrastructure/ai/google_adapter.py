@@ -112,12 +112,16 @@ class GoogleAdapter(AIProviderPort):
         model = request.model or self.default_model or self.FALLBACK_MODEL
 
         try:
-            pil_img = Image.open(io.BytesIO(request.image_bytes))
+            try:
+                img_payload = Image.open(io.BytesIO(request.image_bytes))
+            except Exception:
+                img_payload = request.image_bytes
+
             with normalized_proxy_env():
                 client = genai.Client(api_key=self.api_key)
                 response = client.models.generate_content(
                     model=model,
-                    contents=[pil_img, request.prompt],
+                    contents=[img_payload, request.prompt],
                 )
             content = getattr(response, "text", "") or ""
             return AIResponse(content=content, model=model)
