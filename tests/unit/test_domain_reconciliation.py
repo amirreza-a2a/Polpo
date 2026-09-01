@@ -513,5 +513,25 @@ class TestArchitectureInvariants(unittest.TestCase):
             JobStateTransitionPolicy.validate_transition(JobStatus.DONE, JobStatus.CANCELLED)
 
 
+    def test_sqlite_persistence_layer_has_zero_forbidden_legacy_imports(self):
+        """Verify that infrastructure/persistence/sqlite has zero imports from legacy MySQL or Telegram."""
+        forbidden = {
+            "pymysql",
+            "database.connection",
+            "interfaces.telegram",
+            "handlers",
+            "fastapi",
+            "uvicorn",
+            "telegram",
+        }
+        imported = self._collect_imports_from_dir("infrastructure/persistence/sqlite")
+        violation = imported.intersection(forbidden)
+        self.assertEqual(
+            violation,
+            set(),
+            f"infrastructure/persistence/sqlite layer must not import legacy modules. Violations: {violation}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
