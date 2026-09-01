@@ -57,7 +57,7 @@ Item {
 
             delegate: Card {
                 width: ListView.view.width
-                height: 96
+                implicitHeight: 104
 
                 RowLayout {
                     anchors.fill: parent
@@ -79,7 +79,7 @@ Item {
                                 Layout.maximumWidth: 260
                             }
                             StatusBadge {
-                                status: model.status
+                                status: model.actionState !== "" ? model.actionState : model.status
                             }
                             Text {
                                 text: model.activeApiLabel ? ("API: " + model.activeApiLabel) : ""
@@ -120,27 +120,70 @@ Item {
                     RowLayout {
                         spacing: 8
 
+                        // Transient Busy Indicator when any action is pending on this row
+                        RowLayout {
+                            spacing: 6
+                            visible: model.actionState !== ""
+                            BusyIndicator {
+                                running: model.actionState !== ""
+                                Layout.preferredWidth: 20
+                                Layout.preferredHeight: 20
+                            }
+                            Text {
+                                text: {
+                                    switch (model.actionState) {
+                                        case "cancelling": return "Cancelling…";
+                                        case "retrying": return "Retrying…";
+                                        case "resuming": return "Resuming…";
+                                        case "running_now": return "Starting…";
+                                        default: return "Processing…";
+                                    }
+                                }
+                                color: "#9CA3AF"
+                                font.pixelSize: 12
+                            }
+                        }
+
                         Button {
                             text: "Resume"
-                            visible: model.status === "paused"
-                            onClicked: jobController.resume_job(model.id)
+                            visible: model.status === "paused" && model.actionState === ""
+                            enabled: model.actionState === ""
+                            onClicked: {
+                                if (typeof jobQueueModel !== "undefined" && jobQueueModel) {
+                                    jobQueueModel.set_action_state(model.id, "resuming");
+                                }
+                                jobController.resume_job(model.id);
+                            }
                         }
 
                         Button {
                             text: "Run Now"
-                            visible: model.status === "paused" || model.scheduledAt !== ""
-                            onClicked: jobController.run_now(model.id)
+                            visible: (model.status === "paused" || model.scheduledAt !== "") && model.actionState === ""
+                            enabled: model.actionState === ""
+                            onClicked: {
+                                if (typeof jobQueueModel !== "undefined" && jobQueueModel) {
+                                    jobQueueModel.set_action_state(model.id, "running_now");
+                                }
+                                jobController.run_now(model.id);
+                            }
                         }
 
                         Button {
                             text: "Retry"
-                            visible: model.status === "failed"
-                            onClicked: jobController.retry_job(model.id)
+                            visible: model.status === "failed" && model.actionState === ""
+                            enabled: model.actionState === ""
+                            onClicked: {
+                                if (typeof jobQueueModel !== "undefined" && jobQueueModel) {
+                                    jobQueueModel.set_action_state(model.id, "retrying");
+                                }
+                                jobController.retry_job(model.id);
+                            }
                         }
 
                         Button {
                             text: "Reschedule"
-                            visible: model.status === "pending" || model.status === "paused"
+                            visible: (model.status === "pending" || model.status === "paused") && model.actionState === ""
+                            enabled: model.actionState === ""
                             onClicked: {
                                 root.targetJobId = model.id;
                                 rescheduleModal.open();
@@ -149,7 +192,14 @@ Item {
 
                         Button {
                             text: "Cancel"
-                            onClicked: jobController.cancel_job(model.id)
+                            visible: model.actionState === ""
+                            enabled: model.actionState === ""
+                            onClicked: {
+                                if (typeof jobQueueModel !== "undefined" && jobQueueModel) {
+                                    jobQueueModel.set_action_state(model.id, "cancelling");
+                                }
+                                jobController.cancel_job(model.id);
+                            }
                         }
                     }
                 }

@@ -6,6 +6,7 @@ import "../components"
 Item {
     id: root
     property int editingSlotId: 0
+    property int testingSlotId: 0
     property string statusNotice: ""
 
     Connections {
@@ -107,10 +108,14 @@ Item {
                         spacing: 8
 
                         Button {
-                            text: "Test"
+                            text: root.testingSlotId === model.id ? "Testing…" : "Test"
+                            enabled: root.testingSlotId === 0
                             onClicked: {
+                                root.testingSlotId = model.id;
+                                root.statusNotice = "Verifying provider connection for '" + model.label + "'...";
                                 var ok = apiKeyController.test_key(model.id);
                                 root.statusNotice = ok ? ("Key '" + model.label + "' verified OK.") : ("Verification failed for '" + model.label + "'.");
+                                root.testingSlotId = 0;
                             }
                         }
 

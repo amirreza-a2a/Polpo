@@ -70,12 +70,13 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
-            spacing: 10
+            spacing: 12
             model: typeof promptListModel !== "undefined" ? promptListModel : null
 
             delegate: Card {
                 width: ListView.view.width
-                height: 84
+                implicitHeight: 96
+                clip: true
 
                 RowLayout {
                     anchors.fill: parent
@@ -84,6 +85,7 @@ Item {
 
                     ColumnLayout {
                         Layout.fillWidth: true
+                        Layout.fillHeight: true
                         spacing: 4
 
                         RowLayout {
@@ -93,6 +95,8 @@ Item {
                                 color: "#F9FAFB"
                                 font.pixelSize: 15
                                 font.bold: true
+                                elide: Text.ElideRight
+                                Layout.maximumWidth: 260
                             }
                             Rectangle {
                                 color: "#1E3A8A"
@@ -115,17 +119,28 @@ Item {
                                 font.bold: true
                             }
                         }
-                        Text {
-                            text: model.text
-                            color: "#9CA3AF"
-                            font.pixelSize: 12
-                            elide: Text.ElideRight
+
+                        Item {
                             Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            clip: true
+
+                            Text {
+                                anchors.fill: parent
+                                text: model.text
+                                color: "#9CA3AF"
+                                font.pixelSize: 12
+                                wrapMode: Text.Wrap
+                                maximumLineCount: 2
+                                elide: Text.ElideRight
+                                textFormat: Text.PlainText
+                            }
                         }
                     }
 
                     RowLayout {
                         spacing: 8
+                        Layout.alignment: Qt.AlignVCenter
 
                         Button {
                             text: "Edit"
@@ -151,6 +166,14 @@ Item {
                     }
                 }
             }
+
+            Text {
+                anchors.centerIn: parent
+                text: "No prompt templates found. Click '+ New Prompt' to create one."
+                color: "#6B7280"
+                font.pixelSize: 14
+                visible: promptList.count === 0
+            }
         }
     }
 
@@ -158,8 +181,8 @@ Item {
         id: createPromptModal
         objectName: "createPromptModal"
         title: "Create System Prompt"
-        width: 520
-        height: 440
+        width: 600
+        height: 520
 
         ColumnLayout {
             anchors.fill: parent
@@ -169,7 +192,7 @@ Item {
             Text {
                 text: "Create New Prompt Template"
                 color: "#F9FAFB"
-                font.pixelSize: 16
+                font.pixelSize: 17
                 font.bold: true
             }
 
@@ -179,7 +202,8 @@ Item {
                 Text {
                     text: "Prompt Name:"
                     color: "#D1D5DB"
-                    Layout.preferredWidth: 100
+                    font.pixelSize: 13
+                    Layout.preferredWidth: 110
                 }
                 TextField {
                     id: createNameInput
@@ -194,7 +218,8 @@ Item {
                 Text {
                     text: "Pipeline Type:"
                     color: "#D1D5DB"
-                    Layout.preferredWidth: 100
+                    font.pixelSize: 13
+                    Layout.preferredWidth: 110
                 }
                 ComboBox {
                     id: createTypeCombo
@@ -204,22 +229,26 @@ Item {
             }
 
             Text {
-                text: "Prompt Text:"
+                text: "Prompt Instructions (Supports Persian / English & Multiline):"
                 color: "#D1D5DB"
                 font.pixelSize: 13
             }
 
             ScrollView {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 120
+                Layout.fillHeight: true
+                Layout.minimumHeight: 180
                 clip: true
 
                 TextArea {
                     id: createTextInput
                     width: parent.width
                     wrapMode: TextArea.Wrap
-                    placeholderText: "Enter AI system instructions..."
+                    textFormat: Text.PlainText
+                    selectByMouse: true
+                    placeholderText: "Enter complete AI system instructions (e.g. OCR extraction guidelines, formatting rules, LaTeX handling)..."
                     color: "#F3F4F6"
+                    font.pixelSize: 13
                     background: Rectangle {
                         color: "#111827"
                         border.color: "#374151"
@@ -230,10 +259,8 @@ Item {
 
             CheckBox {
                 id: createDefaultCheck
-                text: "Set as default for this pipeline"
+                text: "Set as default prompt for this pipeline"
             }
-
-            Item { Layout.fillHeight: true }
 
             RowLayout {
                 Layout.alignment: Qt.AlignHCenter
@@ -241,7 +268,11 @@ Item {
 
                 Button {
                     text: "Cancel"
-                    onClicked: createPromptModal.close()
+                    onClicked: {
+                        createNameInput.text = "";
+                        createTextInput.text = "";
+                        createPromptModal.close();
+                    }
                 }
 
                 Button {
@@ -267,8 +298,8 @@ Item {
         id: editPromptModal
         objectName: "editPromptModal"
         title: "Edit Prompt"
-        width: 520
-        height: 400
+        width: 600
+        height: 520
 
         ColumnLayout {
             anchors.fill: parent
@@ -278,7 +309,7 @@ Item {
             Text {
                 text: "Edit Prompt Template #" + root.editingPromptId
                 color: "#F9FAFB"
-                font.pixelSize: 16
+                font.pixelSize: 17
                 font.bold: true
             }
 
@@ -288,7 +319,8 @@ Item {
                 Text {
                     text: "Prompt Name:"
                     color: "#D1D5DB"
-                    Layout.preferredWidth: 100
+                    font.pixelSize: 13
+                    Layout.preferredWidth: 110
                 }
                 TextField {
                     id: editNameInput
@@ -297,21 +329,25 @@ Item {
             }
 
             Text {
-                text: "Prompt Text:"
+                text: "Prompt Instructions (Supports Persian / English & Multiline):"
                 color: "#D1D5DB"
                 font.pixelSize: 13
             }
 
             ScrollView {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 120
+                Layout.fillHeight: true
+                Layout.minimumHeight: 180
                 clip: true
 
                 TextArea {
                     id: editTextInput
                     width: parent.width
                     wrapMode: TextArea.Wrap
+                    textFormat: Text.PlainText
+                    selectByMouse: true
                     color: "#F3F4F6"
+                    font.pixelSize: 13
                     background: Rectangle {
                         color: "#111827"
                         border.color: "#374151"
@@ -322,10 +358,8 @@ Item {
 
             CheckBox {
                 id: editDefaultCheck
-                text: "Set as default"
+                text: "Set as default prompt for this pipeline"
             }
-
-            Item { Layout.fillHeight: true }
 
             RowLayout {
                 Layout.alignment: Qt.AlignHCenter

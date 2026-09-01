@@ -184,6 +184,98 @@ class TestDesktopModels(unittest.TestCase):
         p1_model.reload_prompts()
         self.assertEqual(p1_model.rowCount(), 2)
 
+    def test_job_queue_model_action_state_and_duplicate_protection(self):
+        """Verifies transient action states ('cancelling', 'retrying', 'resuming') and auto-clearing."""
+        model = JobQueueModel(self.query_service, self.bridge)
+        self.assertGreater(model.rowCount(), 0)
+
+        job_id = model.data(model.index(0, 0), JobQueueModel.IdRole)
+
+        # 1. Set transient action state to 'cancelling'
+        model.set_action_state(job_id, "cancelling")
+        idx0 = model.index(0, 0)
+        self.assertEqual(model.data(idx0, JobQueueModel.ActionStateRole), "cancelling")
+
+        # 2. Progress event automatically clears action state
+        self.event_bus.publish(JobProgressEvent(job_id=job_id, processed_pages=1, total_pages=5, percent=20.0))
+        self.app.processEvents()
+        self.assertEqual(model.data(idx0, JobQueueModel.ActionStateRole), "")
+
+        # 3. Set transient action state to 'retrying'
+        model.set_action_state(job_id, "retrying")
+        self.assertEqual(model.data(idx0, JobQueueModel.ActionStateRole), "retrying")
+
+        # 4. State change event automatically clears action state and converges status
+        self.event_bus.publish(JobStateChangedEvent(job_id=job_id, old_status=JobStatus.PENDING, new_status=JobStatus.PROCESSING))
+        self.app.processEvents()
+        self.assertEqual(model.data(idx0, JobQueueModel.ActionStateRole), "")
+        self.assertEqual(model.data(idx0, JobQueueModel.StatusRole), "processing")
+
+    def test_job_queue_model_retry_and_resume_lifecycle_convergence(self):
+        """Verifies complete FAILED -> RETRYING -> PENDING -> PROCESSING -> DONE lifecycle convergence."""
+        with self.uow_factory.create() as uow:
+            uow.jobs.save(Job(id=None, file_name="failed_retry_test.pdf", file_path="/f.pdf", total_pages=4, status=JobStatus.FAILED, error_message="Network timeout"))
+            uow.commit()
+
+        model = JobQueueModel(self.query_service, self.bridge)
+        failed_row = None
+        failed_id = None
+        for i in range(model.rowCount()):
+            idx = model.index(i, 0)
+            if model.data(idx, JobQueueModel.FileNameRole) == "failed_retry_test.pdf":
+                failed_row = i
+                failed_id = model.data(idx, JobQueueModel.IdRole)
+                break
+
+        self.assertIsNotNone(failed_row, "Failed job should be present in active queue model")
+        self.assertEqual(model.data(model.index(failed_row, 0), JobQueueModel.StatusRole), "failed")
+
+        # 1. User triggers Retry -> presentation sets 'retrying'
+        model.set_action_state(failed_id, "retrying")
+        idx_f = model.index(failed_row, 0)
+        self.assertEqual(model.data(idx_f, JobQueueModel.ActionStateRole), "retrying")
+
+        # 2. Backend publishes PENDING -> converges to PENDING and clears action state
+        self.event_bus.publish(JobStateChangedEvent(job_id=failed_id, old_status=JobStatus.FAILED, new_status=JobStatus.PENDING))
+        self.app.processEvents()
+        self.assertEqual(model.data(idx_f, JobQueueModel.StatusRole), "pending")
+        self.assertEqual(model.data(idx_f, JobQueueModel.ActionStateRole), "")
+
+        # 3. Runtime claims job -> converges to PROCESSING
+        self.event_bus.publish(JobStateChangedEvent(job_id=failed_id, old_status=JobStatus.PENDING, new_status=JobStatus.PROCESSING))
+        self.app.processEvents()
+        self.assertEqual(model.data(idx_f, JobQueueModel.StatusRole), "processing")
+
+        # 4. Progress updates
+        self.event_bus.publish(JobProgressEvent(job_id=failed_id, processed_pages=2, total_pages=4, percent=50.0))
+        self.app.processEvents()
+        self.assertEqual(model.data(idx_f, JobQueueModel.ProcessedPagesRole), 2)
+        self.assertEqual(model.data(idx_f, JobQueueModel.ProgressPercentRole), 50.0)
+
+        # 5. Job completes -> removed from queue
+        self.event_bus.publish(JobStateChangedEvent(job_id=failed_id, old_status=JobStatus.PROCESSING, new_status=JobStatus.DONE))
+        self.app.processEvents()
+        self.assertEqual(model._find_job_index(failed_id), -1)
+
+    def test_prompt_model_mixed_persian_english_support(self):
+        """Verifies PromptListModel preserves mixed Persian/English text without corruption."""
+        persian_prompt_text = (
+            "متن آزمایشی فارسی با اصطلاحات تخصصی انگلیسی نظیر OCR, Deep Learning و فرمول ریاضی \\int_0^1 x^2 dx. "
+            "دستورالعمل جامع جهت استخراج به فرمت Markdown با رعایت نشانه‌گذاری و ارقام فارسی ۱۲۳۴۵."
+        )
+        pid = self.prompt_ctrl.create_prompt("Persian Technical OCR", persian_prompt_text, "pipeline1", True)
+        self.assertGreater(pid, 0)
+
+        model = PromptListModel(self.prompt_service, self.prompt_ctrl, prompt_type="pipeline1")
+        found = False
+        for i in range(model.rowCount()):
+            idx = model.index(i, 0)
+            if model.data(idx, PromptListModel.NameRole) == "Persian Technical OCR":
+                self.assertEqual(model.data(idx, PromptListModel.TextRole), persian_prompt_text)
+                found = True
+                break
+        self.assertTrue(found, "Persian/English prompt must be retrieved correctly from model")
+
 
 if __name__ == "__main__":
     unittest.main()

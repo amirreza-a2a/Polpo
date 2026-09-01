@@ -14,7 +14,11 @@ Rectangle {
             case "done": return "#065F46";
             case "failed": return "#991B1B";
             case "cancelled": return "#4B5563";
+            case "cancelling": return "#7F1D1D";
             case "paused": return "#92400E";
+            case "retrying": return "#B45309";
+            case "resuming": return "#1D4ED8";
+            case "saving": return "#047857";
             default: return "#374151";
         }
     }
@@ -22,7 +26,15 @@ Rectangle {
     Text {
         id: label
         anchors.centerIn: parent
-        text: root.status.toUpperCase()
+        text: {
+            switch (root.status.toLowerCase()) {
+                case "cancelling": return "CANCELLING…";
+                case "retrying": return "RETRYING…";
+                case "resuming": return "RESUMING…";
+                case "saving": return "SAVING…";
+                default: return root.status.toUpperCase();
+            }
+        }
         color: "#F9FAFB"
         font.pixelSize: 11
         font.bold: true

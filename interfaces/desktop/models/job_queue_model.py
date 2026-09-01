@@ -25,6 +25,7 @@ class JobQueueModel(QAbstractListModel):
     ScheduledAtRole = Qt.ItemDataRole.UserRole + 7
     ActiveApiLabelRole = Qt.ItemDataRole.UserRole + 8
     ErrorMessageRole = Qt.ItemDataRole.UserRole + 9
+    ActionStateRole = Qt.ItemDataRole.UserRole + 10
 
     def __init__(
         self,
@@ -59,6 +60,7 @@ class JobQueueModel(QAbstractListModel):
             self.ScheduledAtRole: b"scheduledAt",
             self.ActiveApiLabelRole: b"activeApiLabel",
             self.ErrorMessageRole: b"errorMessage",
+            self.ActionStateRole: b"actionState",
         }
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
@@ -89,12 +91,14 @@ class JobQueueModel(QAbstractListModel):
             return job["active_api_label"]
         elif role == self.ErrorMessageRole:
             return job["error_message"]
+        elif role == self.ActionStateRole:
+            return job.get("action_state", "")
 
         return None
 
     @Slot()
     def reload_queue(self) -> None:
-        """Initial baseline load of active/pending/processing/paused jobs."""
+        """Initial baseline load of active/pending/processing/paused/failed jobs."""
         self.beginResetModel()
         self._jobs.clear()
         try:
@@ -103,6 +107,7 @@ class JobQueueModel(QAbstractListModel):
                 JobStatus.PENDING.value,
                 JobStatus.PROCESSING.value,
                 JobStatus.PAUSED.value,
+                JobStatus.FAILED.value,
             }
             for d in dtos:
                 if d.status in active_statuses:
@@ -116,7 +121,8 @@ class JobQueueModel(QAbstractListModel):
                         "progress_percent": float(pct),
                         "scheduled_at": "",
                         "active_api_label": "",
-                        "error_message": "",
+                        "error_message": getattr(d, "error_message", "") or "",
+                        "action_state": "",
                     })
         except Exception:
             pass
@@ -128,6 +134,15 @@ class JobQueueModel(QAbstractListModel):
                 return i
         return -1
 
+    @Slot(int, str)
+    def set_action_state(self, job_id: int, action_state: str) -> None:
+        """Sets a transient presentation-only action state (e.g. 'cancelling', 'retrying', 'resuming')."""
+        idx = self._find_job_index(job_id)
+        if idx >= 0:
+            self._jobs[idx]["action_state"] = action_state
+            model_idx = self.index(idx, 0)
+            self.dataChanged.emit(model_idx, model_idx, [self.ActionStateRole])
+
     @Slot(int, int, int, float)
     def _on_progress(self, job_id: int, processed: int, total: int, pct: float) -> None:
         idx = self._find_job_index(job_id)
@@ -135,8 +150,13 @@ class JobQueueModel(QAbstractListModel):
             self._jobs[idx]["processed_pages"] = processed
             self._jobs[idx]["total_pages"] = total
             self._jobs[idx]["progress_percent"] = pct
+            self._jobs[idx]["action_state"] = ""
             model_idx = self.index(idx, 0)
-            self.dataChanged.emit(model_idx, model_idx, [self.ProcessedPagesRole, self.TotalPagesRole, self.ProgressPercentRole])
+            self.dataChanged.emit(
+                model_idx,
+                model_idx,
+                [self.ProcessedPagesRole, self.TotalPagesRole, self.ProgressPercentRole, self.ActionStateRole],
+            )
 
     @Slot(int, str, str, str, int)
     def _on_api_switch(self, job_id: int, old_label: str, new_label: str, reason: str, page: int) -> None:
@@ -149,7 +169,7 @@ class JobQueueModel(QAbstractListModel):
     @Slot(int, str, str)
     def _on_state_changed(self, job_id: int, old_status: str, new_status: str) -> None:
         idx = self._find_job_index(job_id)
-        terminal_statuses = {"done", "failed", "cancelled"}
+        terminal_statuses = {"done", "cancelled"}
 
         if new_status in terminal_statuses:
             if idx >= 0:
@@ -159,10 +179,22 @@ class JobQueueModel(QAbstractListModel):
         else:
             if idx >= 0:
                 self._jobs[idx]["status"] = new_status
+                self._jobs[idx]["action_state"] = ""
+                # If moving to failed, fetch error message
+                if new_status == "failed":
+                    try:
+                        dto = self.query_service.get_job_detail(job_id)
+                        self._jobs[idx]["error_message"] = dto.error_message or ""
+                    except Exception:
+                        pass
                 model_idx = self.index(idx, 0)
-                self.dataChanged.emit(model_idx, model_idx, [self.StatusRole])
+                self.dataChanged.emit(
+                    model_idx,
+                    model_idx,
+                    [self.StatusRole, self.ActionStateRole, self.ErrorMessageRole],
+                )
             else:
-                # Newly active or submitted job -> fetch details and insert row
+                # Newly active or retried/resumed job -> fetch details and insert row
                 try:
                     dto = self.query_service.get_job_detail(job_id)
                     pct = (dto.processed_pages / dto.total_pages * 100.0) if dto.total_pages > 0 else 0.0
@@ -177,6 +209,7 @@ class JobQueueModel(QAbstractListModel):
                         "scheduled_at": "",
                         "active_api_label": dto.active_api_label or "",
                         "error_message": dto.error_message or "",
+                        "action_state": "",
                     })
                     self.endInsertRows()
                 except Exception:
@@ -187,5 +220,6 @@ class JobQueueModel(QAbstractListModel):
         idx = self._find_job_index(job_id)
         if idx >= 0:
             self._jobs[idx]["scheduled_at"] = sched_iso
+            self._jobs[idx]["action_state"] = ""
             model_idx = self.index(idx, 0)
-            self.dataChanged.emit(model_idx, model_idx, [self.ScheduledAtRole])
+            self.dataChanged.emit(model_idx, model_idx, [self.ScheduledAtRole, self.ActionStateRole])

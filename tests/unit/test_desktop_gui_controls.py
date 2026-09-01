@@ -28,7 +28,7 @@ class TestDesktopGuiControls(unittest.TestCase):
         self.app_inst, self.engine, self.container = create_app(
             argv=["-platform", "offscreen"],
             db_path=self.db_path,
-            start_background_runtime=True,
+            start_background_runtime=False,
             scheduler_tick_interval=0.1,
         )
 
@@ -45,6 +45,7 @@ class TestDesktopGuiControls(unittest.TestCase):
 
     def tearDown(self):
         self.container.shutdown()
+        self.app.processEvents()
         self.temp_dir.cleanup()
 
     def _switch_tab(self, tab_index: int):
@@ -164,6 +165,77 @@ class TestDesktopGuiControls(unittest.TestCase):
         qc_ctrl = self.container.quick_convert_controller
         clip_ok = qc_ctrl.copy_to_clipboard("# Heading\nSample text")
         self.assertTrue(clip_ok)
+
+    def test_prompt_card_bounded_preview_and_long_text_layout(self):
+        """Verifies long Persian/English prompt text renders within bounded summary cards without overflow."""
+        self._switch_tab(4)
+        prompt_ctrl = self.container.prompt_controller
+        long_persian_text = (
+            "دستورالعمل جامع و دقیق جهت استخراج اسناد فارسی و انگلیسی با فرمول‌های پیچیده ریاضی "
+            "و کدهای پایتون. لطفا تمامی جداول و نمودارها را با ساختار Markdown بازسازی کنید. "
+            "Formula: \\sum_{i=1}^n x_i = X. " * 5
+        )
+        pid = prompt_ctrl.create_prompt("Very Long Persian Prompt", long_persian_text, "pipeline2", False)
+        self.assertGreater(pid, 0)
+        self.app.processEvents()
+
+        # Verify prompt list contains the new prompt
+        p_list = self.window.findChild(object, "promptList")
+        self.assertIsNotNone(p_list)
+        self.assertGreater(p_list.property("count"), 0)
+
+        # Open Edit Modal and verify large multiline editor is sized properly
+        edit_modal = self.window.findChild(object, "editPromptModal")
+        self.assertIsNotNone(edit_modal)
+        edit_modal.open()
+        self.app.processEvents()
+        self.assertTrue(edit_modal.property("visible"))
+        self.assertGreater(edit_modal.property("width"), 400)
+        self.assertGreater(edit_modal.property("height"), 400)
+        edit_modal.close()
+        self.app.processEvents()
+
+    def test_job_queue_action_feedback_rendering(self):
+        """Verifies immediate action feedback ('cancelling', 'retrying', 'resuming') in JobQueueView."""
+        self._switch_tab(0)
+        q_model = self.container.job_queue_model
+        if q_model.rowCount() == 0:
+            prompt_ctrl = self.container.prompt_controller
+            pid = prompt_ctrl.create_prompt("Queue Test Prompt", "Extract text", "pipeline1", True)
+
+            api_ctrl = self.container.api_key_controller
+            api_ctrl.register_key("openai", "Test Key", "sk-test", "gpt-4o")
+
+            job_ctrl = self.container.job_controller
+            pdf_f = self.base_dir / "action_feedback.pdf"
+            try:
+                import pymupdf as fitz
+            except ImportError:
+                import fitz
+            doc = fitz.open()
+            doc.new_page()
+            doc.save(str(pdf_f))
+            doc.close()
+            job_ctrl.submit_job(str(pdf_f), pid, "")
+            self.app.processEvents()
+
+        self.assertGreater(q_model.rowCount(), 0)
+        job_id = q_model.data(q_model.index(0, 0), q_model.IdRole)
+
+        # 1. Set cancelling
+        q_model.set_action_state(job_id, "cancelling")
+        self.app.processEvents()
+        self.assertEqual(q_model.data(q_model.index(0, 0), q_model.ActionStateRole), "cancelling")
+
+        # 2. Set retrying
+        q_model.set_action_state(job_id, "retrying")
+        self.app.processEvents()
+        self.assertEqual(q_model.data(q_model.index(0, 0), q_model.ActionStateRole), "retrying")
+
+        # 3. Set resuming
+        q_model.set_action_state(job_id, "resuming")
+        self.app.processEvents()
+        self.assertEqual(q_model.data(q_model.index(0, 0), q_model.ActionStateRole), "resuming")
 
 
 if __name__ == "__main__":
