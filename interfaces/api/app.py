@@ -15,7 +15,9 @@ from interfaces.api.routes import (
     quick_convert as qc_routes,
     prompts as prompts_routes,
     apis as apis_routes,
+    admin as admin_routes,
 )
+
 from core.exceptions.domain_exceptions import (
     DomainError,
     EntityNotFoundError,
@@ -155,8 +157,10 @@ app.include_router(jobs_routes.router, prefix="/api/v1")
 app.include_router(qc_routes.router, prefix="/api/v1")
 app.include_router(prompts_routes.router, prefix="/api/v1")
 app.include_router(apis_routes.router, prefix="/api/v1")
+app.include_router(admin_routes.router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["Health"])
+
 async def health_check():
     return {"status": "ok", "app": "PolpoT REST API", "version": "1.0.0"}

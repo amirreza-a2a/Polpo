@@ -21,6 +21,12 @@ class ResumeJobRequest(BaseModel):
     api_chain_ids: Optional[List[int]] = None
 
 
+class SubmitPipeline2Request(BaseModel):
+    prompt_id: Optional[int] = None
+    api_chain_ids: Optional[List[int]] = None
+
+
+
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=JobResponseDTO)
 async def submit_job(
     file: UploadFile = File(...),
@@ -108,7 +114,34 @@ async def retry_job(
     return container.job_recovery_service.retry_job(job_id, user.id)
 
 
+@router.post("/{job_id}/pipeline2", status_code=status.HTTP_201_CREATED)
+async def submit_pipeline2_job(
+    job_id: int,
+    body: Optional[SubmitPipeline2Request] = None,
+    user: UserDTO = Depends(get_current_user),
+    container: AppContainer = Depends(get_container),
+):
+    """
+    ارسال کار تکمیل‌شده (Done) به مرحله بهینه‌سازی و بازنویسی متنی (Pipeline 2) برای کلاینت دسکتاپ.
+    """
+    prompt_id = body.prompt_id if body else None
+    api_chain_ids = body.api_chain_ids if body else None
+    p2_job_id = container.job_submission_service.submit_pipeline2_job(
+        source_job_id=job_id,
+        user_id=user.id,
+        prompt_id=prompt_id,
+        api_chain_ids=api_chain_ids,
+    )
+    return {
+        "pipeline2_job_id": p2_job_id,
+        "source_job_id": job_id,
+        "status": "pending",
+        "message": "Pipeline 2 job queued successfully.",
+    }
+
+
 @router.get("/{job_id}/artifacts/{artifact_type}")
+
 async def download_artifact(
     job_id: int,
     artifact_type: str = "output_markdown",

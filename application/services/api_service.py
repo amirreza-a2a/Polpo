@@ -4,7 +4,8 @@
 
 from typing import List, Optional
 from application.ports.unit_of_work import IUnitOfWorkFactory
-from application.dto.api_dto import ApiSlotDTO, RegisterApiCommand, DonateApiCommand
+from application.ports.provider_detector import IProviderDetector
+from application.dto.api_dto import ApiSlotDTO, RegisterApiCommand, DonateApiCommand, DetectApiResultDTO
 from core.exceptions.domain_exceptions import EntityNotFoundError
 
 
@@ -13,8 +14,29 @@ class ApiManagementService:
     سرویس مدیریت کلیدهای API خصوصی کاربران و اهداهای عمومی.
     """
 
-    def __init__(self, uow_factory: IUnitOfWorkFactory):
+    def __init__(
+        self,
+        uow_factory: IUnitOfWorkFactory,
+        provider_detector: Optional[IProviderDetector] = None,
+    ):
         self.uow_factory = uow_factory
+        self.provider_detector = provider_detector
+
+    def detect_provider_and_models(
+        self, api_key: str, base_url: Optional[str] = None
+    ) -> DetectApiResultDTO:
+        if not self.provider_detector:
+            return DetectApiResultDTO(provider=None, models=[])
+        provider, models = self.provider_detector.detect_provider_and_models(api_key, base_url)
+        default_model = self.provider_detector.get_default_model(provider) if provider else None
+        default_base_url = self.provider_detector.get_default_base_url(provider) if provider else None
+        return DetectApiResultDTO(
+            provider=provider,
+            models=models,
+            default_model=default_model,
+            default_base_url=default_base_url,
+        )
+
 
     def list_user_apis(self, user_id: int, include_public: bool = True) -> List[ApiSlotDTO]:
         with self.uow_factory.create() as uow:
@@ -71,7 +93,12 @@ class ApiManagementService:
             uow.commit()
             return donation_id
 
+    def list_donations(self) -> List[dict]:
+        with self.uow_factory.create() as uow:
+            return uow.donations.list_all()
+
     def list_public_apis(self) -> List[ApiSlotDTO]:
+
         with self.uow_factory.create() as uow:
             slots = uow.apis.list_public()
             return [

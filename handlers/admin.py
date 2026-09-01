@@ -8,7 +8,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from config import ADMIN_IDS
 from infrastructure.composition import get_app_container
 from application.dto.prompt_dto import CreatePromptCommand
-from infrastructure.ai.provider_detector import detect_provider_and_models, get_default_base_url
+
 
 # ─── states ──────────────────────────────────────────────
 ADD_PUB_KEY      = 20
@@ -127,7 +127,9 @@ async def receive_pub_api_key(update: Update, context: ContextTypes.DEFAULT_TYPE
     api_key = update.message.text.strip()
     context.user_data["adm_pub_key"] = api_key
     await update.message.reply_text("⏳ در حال تشخیص provider...")
-    provider, models = detect_provider_and_models(api_key)
+    container = get_app_container()
+    detect_res = container.api_service.detect_provider_and_models(api_key)
+    provider, models = detect_res.provider, detect_res.models
     if not provider:
         await update.message.reply_text("❌ کلید معتبر نیست. دوباره ارسال کنید:")
         return ADD_PUB_KEY
@@ -172,13 +174,16 @@ async def receive_pub_api_base_url_callback(update: Update, context: ContextType
     query    = update.callback_query
     provider = context.user_data.get("adm_pub_provider", "")
     await query.answer()
-    context.user_data["adm_pub_base_url"] = get_default_base_url(provider)
+    container = get_app_container()
+    default_base_url = container.api_service.provider_detector.get_default_base_url(provider) if container.api_service.provider_detector else None
+    context.user_data["adm_pub_base_url"] = default_base_url
     await query.edit_message_text(
         f"✅ Base URL: `{context.user_data['adm_pub_base_url'] or 'پیش‌فرض'}`\n\n"
         "📝 *مرحله ۴/۵* — یک نام (Label) برای این API وارد کنید:",
         parse_mode="Markdown",
     )
     return ADD_PUB_LABEL
+
 
 
 async def receive_pub_api_base_url_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -305,9 +310,11 @@ async def receive_edit_pub_base_url_callback(update: Update, context: ContextTyp
     query    = update.callback_query
     provider = context.user_data.get("edit_pub_provider", "")
     await query.answer()
-    base_url = get_default_base_url(provider)
+    container = get_app_container()
+    base_url = container.api_service.provider_detector.get_default_base_url(provider) if container.api_service.provider_detector else None
     await _save_edited_pub_api(query, context, base_url, edit_msg=True)
     return ConversationHandler.END
+
 
 
 async def receive_edit_pub_base_url_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -573,7 +580,8 @@ async def _adm_send_model_selection(msg_or_query, provider, models, step, edit=F
 
 
 async def _adm_send_base_url_prompt(msg_or_query, context, edit, provider, model, step, cb_prefix):
-    default_url  = get_default_base_url(provider)
+    container = get_app_container()
+    default_url = container.api_service.provider_detector.get_default_base_url(provider) if container.api_service.provider_detector else None
     default_text = f"`{default_url}`" if default_url else "توسط SDK مدیریت می‌شود"
     text = (
         f"🌐 *مرحله {step} — Base URL*\n\n"
@@ -581,6 +589,7 @@ async def _adm_send_base_url_prompt(msg_or_query, context, edit, provider, model
         f"پیش‌فرض `{provider}`: {default_text}\n\n"
         "برای endpoint سفارشی آدرس را تایپ کنید، در غیر این صورت:"
     )
+
     buttons = InlineKeyboardMarkup([[
         InlineKeyboardButton("⏭️ استفاده از پیش‌فرض",
                               callback_data=f"{cb_prefix}_base_url:__default__")

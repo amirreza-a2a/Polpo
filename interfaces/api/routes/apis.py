@@ -8,9 +8,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from interfaces.api.deps import get_current_user, get_container
 from infrastructure.composition import AppContainer
 from application.dto.user_dto import UserDTO
-from application.dto.api_dto import ApiSlotDTO, RegisterApiCommand, DonateApiCommand
+from application.dto.api_dto import ApiSlotDTO, RegisterApiCommand, DonateApiCommand, DetectApiResultDTO
 
 router = APIRouter(prefix="/apis", tags=["API Slots"])
+
+
+class DetectApiRequest(BaseModel):
+    api_key: str
+    base_url: Optional[str] = None
 
 
 class RegisterApiRequest(BaseModel):
@@ -28,7 +33,23 @@ class DonateApiRequest(BaseModel):
     models: List[str]
 
 
+@router.post("/detect", response_model=DetectApiResultDTO)
+async def detect_api_provider_and_models(
+    body: DetectApiRequest,
+    user: UserDTO = Depends(get_current_user),
+    container: AppContainer = Depends(get_container),
+):
+    """
+    تشخیص خودکار ارائه‌دهنده و مدل‌های در دسترس برای کلاینت دسکتاپ بر اساس کلید ورودی.
+    """
+    return container.api_service.detect_provider_and_models(
+        api_key=body.api_key,
+        base_url=body.base_url,
+    )
+
+
 @router.get("", response_model=List[ApiSlotDTO])
+
 async def list_user_apis(
     include_public: bool = True,
     user: UserDTO = Depends(get_current_user),

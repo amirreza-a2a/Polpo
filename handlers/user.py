@@ -10,9 +10,7 @@ from config import DAILY_PAGE_LIMIT, BACKUP_CHANNEL_ID
 from infrastructure.composition import get_app_container
 from application.dto.api_dto import RegisterApiCommand, DonateApiCommand
 from application.dto.user_dto import UpdatePreferencesCommand
-from infrastructure.ai.provider_detector import (
-    detect_provider_and_models, get_default_base_url,
-)
+
 
 
 # ─── states ──────────────────────────────────────────────
@@ -433,7 +431,9 @@ async def receive_api_key(update, context):
     api_key = update.message.text.strip()
     context.user_data["new_api_key"] = api_key
     await update.message.reply_text("⏳ در حال تشخیص provider...")
-    provider, models = detect_provider_and_models(api_key)
+    container = get_app_container()
+    detect_res = container.api_service.detect_provider_and_models(api_key)
+    provider, models = detect_res.provider, detect_res.models
     if not provider:
         await update.message.reply_text("❌ API Key معتبر نیست. دوباره ارسال کنید:")
         return WAITING_API_KEY
@@ -469,12 +469,15 @@ async def receive_api_base_url_callback(update, context):
     query    = update.callback_query
     provider = context.user_data.get("new_api_provider", "")
     await query.answer()
-    context.user_data["new_api_base_url"] = get_default_base_url(provider)
+    container = get_app_container()
+    default_base_url = container.api_service.provider_detector.get_default_base_url(provider) if container.api_service.provider_detector else None
+    context.user_data["new_api_base_url"] = default_base_url
     await query.edit_message_text(
         f"✅ Base URL: `{context.user_data['new_api_base_url'] or 'پیش‌فرض'}`\n\n"
         "📝 *مرحله ۴/۴* — یک نام وارد کنید:", parse_mode="Markdown",
     )
     return WAITING_API_LABEL
+
 
 
 async def receive_api_base_url_text(update, context):
@@ -527,7 +530,9 @@ async def start_donate(update, context):
 async def receive_donate_key(update, context):
     api_key = update.message.text.strip()
     await update.message.reply_text("⏳ در حال بررسی...")
-    provider, models = detect_provider_and_models(api_key)
+    container = get_app_container()
+    detect_res = container.api_service.detect_provider_and_models(api_key)
+    provider, models = detect_res.provider, detect_res.models
     if not provider:
         await update.message.reply_text("❌ API Key معتبر نیست:")
         return WAITING_DONATE_KEY
@@ -564,10 +569,13 @@ async def receive_donate_base_url_callback(update, context):
     query    = update.callback_query
     provider = context.user_data.get("donate_provider", "")
     await query.answer()
-    context.user_data["donate_base_url"] = get_default_base_url(provider)
+    container = get_app_container()
+    default_base_url = container.api_service.provider_detector.get_default_base_url(provider) if container.api_service.provider_detector else None
+    context.user_data["donate_base_url"] = default_base_url
     await query.edit_message_text("📨 در حال ارسال درخواست اهدا...", parse_mode="Markdown")
     await _finalize_donation(update, context)
     return ConversationHandler.END
+
 
 
 async def receive_donate_base_url_text(update, context):

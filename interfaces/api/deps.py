@@ -51,3 +51,17 @@ async def get_current_user(
         detail="Missing Authorization Bearer token or X-API-Key header.",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+async def get_current_admin_user(
+    current_user: UserDTO = Depends(get_current_user),
+) -> UserDTO:
+    """
+    اعتبارسنجی سطح دسترسی مدیر برای عملیات سیستمی و پنل ادمین.
+    """
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required for this endpoint.",
+        )
+    return current_user

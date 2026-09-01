@@ -53,7 +53,8 @@ class AppContainer:
         self.doc_processor = PyMuPDFDocumentProcessor()
         self.rate_limiter = RateLimiterAdapter()
         self.notifier = notifier or InMemoryEventNotifier()
-
+        from infrastructure.ai.provider_detector import AIProviderDetector
+        self.provider_detector = AIProviderDetector()
 
         # 3. Factory ایجاد آداپتور هوش مصنوعی برای هر اسلات
         def resolve_ai_adapter(slot: ApiSlot) -> AIProviderPort:
@@ -75,9 +76,10 @@ class AppContainer:
         # 5. سرویس‌های لایه کاربرد
         self.user_service = UserManagementService(self.uow_factory)
         self.prompt_service = PromptService(self.uow_factory)
-        self.api_service = ApiManagementService(self.uow_factory)
+        self.api_service = ApiManagementService(self.uow_factory, self.provider_detector)
         self.artifact_service = ArtifactService(self.storage, self.uow_factory)
         self.auth_service = AuthService(self.uow_factory, self.token_service)
+
 
         self.quick_convert_service = QuickConvertService(
             uow_factory=self.uow_factory,

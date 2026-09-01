@@ -5,8 +5,10 @@
 
 import logging
 from typing import List, Optional, Tuple
+from application.ports.provider_detector import IProviderDetector
 
 logger = logging.getLogger("polpot.ai.detector")
+
 
 _DEFAULT_BASE_URL = {
     "google": None,
@@ -94,3 +96,21 @@ def detect_provider_and_models(api_key: str, base_url: Optional[str] = None) -> 
             logger.debug(f"OpenRouter discovery attempt failed: {e}")
 
     return None, []
+
+
+
+class AIProviderDetector(IProviderDetector):
+    """
+    پیاده‌سازی انطباقی پورت IProviderDetector در لایه زیرساخت.
+    """
+
+    def detect_provider_and_models(
+        self, api_key: str, base_url: Optional[str] = None
+    ) -> Tuple[Optional[str], List[str]]:
+        return detect_provider_and_models(api_key, base_url)
+
+    def get_default_base_url(self, provider: str) -> Optional[str]:
+        return get_default_base_url(provider)
+
+    def get_default_model(self, provider: str) -> str:
+        return get_default_model(provider)

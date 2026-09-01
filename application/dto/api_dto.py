@@ -34,3 +34,11 @@ class DonateApiCommand:
     api_key: str
     label: str
     models: List[str]
+
+
+@dataclass
+class DetectApiResultDTO:
+    provider: Optional[str]
+    models: List[str]
+    default_model: Optional[str] = None
+    default_base_url: Optional[str] = None

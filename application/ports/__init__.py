@@ -18,6 +18,7 @@ from application.ports.rate_limiter import IRateLimiter
 from application.ports.document_processor import IDocumentProcessor
 from application.ports.notifier import IProgressNotifier
 from application.ports.token_service import ITokenService
+from application.ports.provider_detector import IProviderDetector
 
 __all__ = [
     "AIProviderPort",
@@ -35,4 +36,5 @@ __all__ = [
     "IDocumentProcessor",
     "IProgressNotifier",
     "ITokenService",
+    "IProviderDetector",
 ]

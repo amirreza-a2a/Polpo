@@ -18,8 +18,9 @@ class UserDTO:
     use_public_fallback: bool
     auto_retry: bool
     auto_pipeline2: bool
-    default_prompt_id: Optional[int]
-    default_pipeline2_prompt_id: Optional[int]
+    default_prompt_id: Optional[int] = None
+    default_pipeline2_prompt_id: Optional[int] = None
+
 
 
 @dataclass
