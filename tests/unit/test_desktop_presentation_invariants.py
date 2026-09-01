@@ -221,6 +221,76 @@ class TestDesktopPresentationInvariants(unittest.TestCase):
         container.shutdown()
         temp_dir.cleanup()
 
+    def test_invariant_9_desktop_ai_adapter_resolution_and_runtime_construction(self):
+        """Verifies the canonical DesktopAppContainer AI adapter resolution path for real slots."""
+        from unittest.mock import patch, MagicMock
+        from core.entities.api_slot import ApiSlot
+        from core.entities.credential_ref import CredentialRef
+        from core.ai.types import AIResponse
+        from infrastructure.ai.google_adapter import GoogleAdapter
+        from infrastructure.ai.openai_adapter import OpenAIAdapter
+
+        temp_dir = tempfile.TemporaryDirectory()
+        base = Path(temp_dir.name)
+        db_path = base / "adapter_test.db"
+
+        app, engine, container = create_app(
+            argv=["-platform", "offscreen"],
+            db_path=db_path,
+            start_background_runtime=False,
+        )
+
+        # 1. Register credentials in encrypted fallback store / resolver
+        container.credential_resolver.store_api_key(
+            CredentialRef(identifier="cred_g", provider="google", slot_type="byok"),
+            "secret-google-api-key",
+        )
+        container.credential_resolver.store_api_key(
+            CredentialRef(identifier="cred_o", provider="openai", slot_type="byok"),
+            "secret-openai-api-key",
+        )
+
+        google_slot = ApiSlot(
+            id=1,
+            provider="google",
+            label="Main Google",
+            selected_model="gemini-2.0-flash",
+            credential_ref=CredentialRef(identifier="cred_g", provider="google", slot_type="byok"),
+        )
+        openai_slot = ApiSlot(
+            id=2,
+            provider="openai",
+            label="Main OpenAI",
+            selected_model="gpt-4o",
+            credential_ref=CredentialRef(identifier="cred_o", provider="openai", slot_type="byok"),
+        )
+
+        # 2. Verify resolve_ai_adapter does not raise TypeError on default_model
+        g_adapter = container.ai_adapter_factory(google_slot)
+        self.assertIsInstance(g_adapter, GoogleAdapter)
+        self.assertEqual(g_adapter.api_key, "secret-google-api-key")
+        self.assertEqual(g_adapter.default_model, "gemini-2.0-flash")
+
+        o_adapter = container.ai_adapter_factory(openai_slot)
+        self.assertIsInstance(o_adapter, OpenAIAdapter)
+        self.assertEqual(o_adapter.api_key, "secret-openai-api-key")
+        self.assertEqual(o_adapter.default_model, "gpt-4o")
+
+        # 3. Verify executor succeeds in creating adapter and reaching generate_vision
+        with patch.object(GoogleAdapter, "generate_vision", return_value=AIResponse(content="# Page Markdown")) as mock_gen:
+            content, active_slot = container.ai_executor.execute_vision_with_fallback(
+                chain=[google_slot],
+                image_bytes=b"fake_jpeg",
+                prompt="Transcribe page",
+                at_page=1,
+            )
+            self.assertEqual(content, "# Page Markdown")
+            self.assertEqual(active_slot.id, 1)
+            mock_gen.assert_called_once()
+
+        container.shutdown()
+        temp_dir.cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

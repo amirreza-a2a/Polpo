@@ -246,6 +246,34 @@ class TestOpenAIAdapter(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 429)
         self.assertEqual(ctx.exception.provider, "openai")
 
+    def test_create_ai_adapter_keyword_compatibility(self):
+        """Verifies create_ai_adapter works seamlessly with both default_model and model keywords."""
+        # 1. Google with default_model
+        g_adapter = create_ai_adapter(
+            provider="google",
+            api_key="fake-google-key",
+            default_model="gemini-2.0-flash",
+        )
+        self.assertIsInstance(g_adapter, GoogleAdapter)
+        self.assertEqual(g_adapter.default_model, "gemini-2.0-flash")
+
+        # 2. OpenAI with default_model
+        o_adapter = create_ai_adapter(
+            provider="openai",
+            api_key="fake-openai-key",
+            default_model="gpt-4o",
+        )
+        self.assertIsInstance(o_adapter, OpenAIAdapter)
+        self.assertEqual(o_adapter.default_model, "gpt-4o")
+
+        # 3. Model keyword fallback
+        g_adapter_legacy = create_ai_adapter(
+            provider="google",
+            api_key="fake-google-key",
+            model="gemini-1.5-pro",
+        )
+        self.assertEqual(g_adapter_legacy.default_model, "gemini-1.5-pro")
+
 
 class TestAIExecutionPolicy(unittest.TestCase):
     """
