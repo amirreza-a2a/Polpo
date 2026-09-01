@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
-from interfaces.desktop.qt_compat import QCoreApplication
+from interfaces.desktop.qt_compat import QGuiApplication
 from interfaces.desktop.controllers import (
     JobController,
     ApiKeyController,
@@ -64,9 +64,9 @@ class MockAIExecutor:
 class TestDesktopControllers(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.app = QCoreApplication.instance()
+        cls.app = QGuiApplication.instance()
         if cls.app is None:
-            cls.app = QCoreApplication([])
+            cls.app = QGuiApplication(["-platform", "offscreen"])
 
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -210,16 +210,60 @@ class TestDesktopControllers(unittest.TestCase):
         self.assertEqual(self.settings_ctrl.maxConcurrentJobs, 4)
         self.assertEqual(self.settings_ctrl.missedSchedulePolicy, "run_immediately")
 
-    def test_quick_convert_controller_image_conversion(self):
+    def test_quick_convert_controller_async_image_conversion_and_clipboard(self):
+        import time
         # Register an API slot for quick convert
         self.api_ctrl.register_key("openai", "QC Key", "sk-proj-qc123", "gpt-4o")
 
         img_path = Path(self.temp_dir.name) / "test.jpg"
         img_path.write_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF\x00fake_image_bytes")
 
-        res = self.qc_ctrl.convert_image(str(img_path), "Transcribe formula")
-        self.assertIn("markdown_content", res)
-        self.assertEqual(res["markdown_content"], "# Extracted Markdown Header")
+        received_content = []
+        received_provider = []
+        self.qc_ctrl.conversion_completed.connect(lambda c, p: (received_content.append(c), received_provider.append(p)))
+
+        # Pass file:// URL to verify cross-platform path resolution
+        file_url = f"file://{img_path}"
+        self.qc_ctrl.convert_image(file_url, "Transcribe formula")
+
+        # Wait for async background worker to complete
+        for _ in range(50):
+            self.app.processEvents()
+            if received_content:
+                break
+            time.sleep(0.02)
+
+        self.assertEqual(len(received_content), 1)
+        self.assertEqual(received_content[0], "# Extracted Markdown Header")
+        self.assertFalse(self.qc_ctrl.isBusy)
+
+        # Test clipboard copy
+        clip_ok = self.qc_ctrl.copy_to_clipboard(received_content[0])
+        self.assertTrue(clip_ok)
+
+    def test_job_controller_cross_platform_paths_and_run_now(self):
+        pdf_path = Path(self.temp_dir.name) / "url_path.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 sample content")
+
+        future_iso = (datetime.now(timezone.utc) + timedelta(hours=5)).isoformat()
+        file_url = f"file://{pdf_path}"
+
+        job_id = self.job_ctrl.submit_job(file_url, 0, future_iso, True)
+        self.assertGreater(job_id, 0)
+
+        detail = self.job_ctrl.get_job_detail(job_id)
+        self.assertEqual(detail["id"], job_id)
+        self.assertTrue(detail["auto_pipeline2"])
+
+        # Test run_now
+        run_ok = self.job_ctrl.run_now(job_id)
+        self.assertTrue(run_ok)
+
+    def test_api_key_controller_supported_providers(self):
+        provs = self.api_ctrl.get_supported_providers()
+        self.assertIn("google", provs)
+        self.assertIn("openai", provs)
+        self.assertIn("anthropic", provs)
 
 
 if __name__ == "__main__":

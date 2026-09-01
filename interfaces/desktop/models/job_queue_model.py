@@ -43,10 +43,10 @@ class JobQueueModel(QAbstractListModel):
         self.reload_queue()
 
     def _connect_signals(self) -> None:
-        self.bridge.job_progress_received.connect(self._on_progress)
-        self.bridge.api_switch_received.connect(self._on_api_switch)
-        self.bridge.job_state_changed_received.connect(self._on_state_changed)
-        self.bridge.schedule_updated_received.connect(self._on_schedule_updated)
+        self.bridge.job_progress_received.connect(self._on_progress, type=Qt.ConnectionType.QueuedConnection)
+        self.bridge.api_switch_received.connect(self._on_api_switch, type=Qt.ConnectionType.QueuedConnection)
+        self.bridge.job_state_changed_received.connect(self._on_state_changed, type=Qt.ConnectionType.QueuedConnection)
+        self.bridge.schedule_updated_received.connect(self._on_schedule_updated, type=Qt.ConnectionType.QueuedConnection)
 
     def roleNames(self) -> Dict[int, bytes]:
         return {

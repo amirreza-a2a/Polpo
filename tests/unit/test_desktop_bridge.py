@@ -5,7 +5,7 @@
 import unittest
 import threading
 from datetime import datetime, timezone
-from interfaces.desktop.qt_compat import QCoreApplication, QThread
+from interfaces.desktop.qt_compat import QGuiApplication, Qt
 from interfaces.desktop.bridge import QtSignalEventBridge
 from infrastructure.events.event_bus import InMemoryEventBus
 from application.events import (
@@ -24,10 +24,9 @@ from core.entities.job import JobStatus
 class TestQtSignalEventBridge(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # Ensure QCoreApplication exists for Qt Signal-Slot processing
-        cls.app = QCoreApplication.instance()
+        cls.app = QGuiApplication.instance()
         if cls.app is None:
-            cls.app = QCoreApplication([])
+            cls.app = QGuiApplication(["-platform", "offscreen"])
 
     def setUp(self):
         self.event_bus = InMemoryEventBus()

@@ -111,6 +111,18 @@ def create_app(
         controller=prompt_controller,
     )
 
+    # Attach presentation objects to container for clean access
+    container.bridge = bridge
+    container.job_controller = job_controller
+    container.api_key_controller = api_key_controller
+    container.prompt_controller = prompt_controller
+    container.settings_controller = settings_controller
+    container.quick_convert_controller = quick_convert_controller
+    container.job_queue_model = job_queue_model
+    container.job_history_model = job_history_model
+    container.api_slot_model = api_slot_model
+    container.prompt_list_model = prompt_list_model
+
     # 6. QML Engine & Root Context Exposure
     engine = QQmlApplicationEngine()
     ctx = engine.rootContext()

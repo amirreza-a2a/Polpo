@@ -19,6 +19,17 @@ from application.services.job_query import JobQueryService
 from application.sanitizer import sanitize_error_message
 
 
+def _to_local_path(file_path: str) -> Path:
+    """Safely normalizes local file path or file:// URI across Windows, macOS, and Linux."""
+    if file_path.startswith("file:"):
+        local_str = QUrl(file_path).toLocalFile()
+        if local_str:
+            return Path(local_str)
+        cleaned = file_path[7:] if file_path.startswith("file://") else file_path[5:]
+        return Path(cleaned)
+    return Path(file_path)
+
+
 class JobController(QObject):
     """
     Presentation controller for document conversions, cancellation, scheduling, and artifact access.
@@ -46,15 +57,22 @@ class JobController(QObject):
         self.artifact_service = artifact_service
         self.query_service = query_service
 
+    @Slot(str, int, str, bool, result=int)
     @Slot(str, int, str, result=int)
     @Slot(str, int, result=int)
     @Slot(str, result=int)
-    def submit_job(self, file_path: str, prompt_id: int = 0, scheduled_at_iso: str = "") -> int:
+    def submit_job(
+        self,
+        file_path: str,
+        prompt_id: int = 0,
+        scheduled_at_iso: str = "",
+        auto_pipeline2: bool = False,
+    ) -> int:
         """
         Submits a local document file for conversion, optionally with a custom prompt ID and scheduled UTC time.
         """
         try:
-            path = Path(file_path.replace("file://", ""))
+            path = _to_local_path(file_path)
             if not path.exists() or not path.is_file():
                 self.error_occurred.emit(f"File not found: '{file_path}'")
                 return 0
@@ -63,7 +81,7 @@ class JobController(QObject):
             sched_dt: Optional[datetime] = None
             if scheduled_at_iso and scheduled_at_iso.strip():
                 try:
-                    sched_dt = datetime.fromisoformat(scheduled_at_iso)
+                    sched_dt = datetime.fromisoformat(scheduled_at_iso.strip())
                     if sched_dt.tzinfo is None:
                         sched_dt = sched_dt.replace(tzinfo=timezone.utc)
                 except ValueError as e:
@@ -76,6 +94,7 @@ class JobController(QObject):
                 filename=path.name,
                 file_bytes=file_bytes,
                 prompt_id=p_id,
+                auto_pipeline2=auto_pipeline2,
                 scheduled_at=sched_dt,
             )
             dto = self.submission_service.submit_job(cmd)
@@ -88,7 +107,7 @@ class JobController(QObject):
 
     @Slot(int, result=bool)
     def cancel_job(self, job_id: int) -> bool:
-        """Requests cooperative cancellation of a pending or processing job."""
+        """Requests cooperative cancellation of a pending, scheduled, or processing job."""
         try:
             return self.execution_service.cancel_job(job_id)
         except Exception as err:
@@ -97,35 +116,43 @@ class JobController(QObject):
 
     @Slot(int, result=bool)
     def retry_job(self, job_id: int) -> bool:
-        """Retries a failed job if retry limit has not been exceeded."""
+        """Resets a failed job to PENDING state and triggers execution."""
         try:
-            dto = self.recovery_service.retry_job(job_id)
-            return dto is not None
+            return self.execution_service.retry_job(job_id)
         except Exception as err:
             self.error_occurred.emit(sanitize_error_message(str(err)))
             return False
 
     @Slot(int, result=bool)
     def resume_job(self, job_id: int) -> bool:
-        """Resumes a paused or cancelled job."""
+        """Resumes a paused job from its last processed checkpoint."""
         try:
-            dto = self.recovery_service.resume_job(job_id)
-            return dto is not None
+            return self.execution_service.resume_job(job_id)
         except Exception as err:
             self.error_occurred.emit(sanitize_error_message(str(err)))
             return False
 
     @Slot(int, str, result=bool)
-    @Slot(int, result=bool)
-    def reschedule_job(self, job_id: int, new_scheduled_at_iso: str = "") -> bool:
-        """Reschedules a job to a new UTC datetime, or immediately if empty."""
+    def reschedule_job(self, job_id: int, new_scheduled_at_iso: str) -> bool:
+        """Updates the scheduled execution time for a pending or paused job."""
         try:
-            new_dt: Optional[datetime] = None
+            sched_dt: Optional[datetime] = None
             if new_scheduled_at_iso and new_scheduled_at_iso.strip():
-                new_dt = datetime.fromisoformat(new_scheduled_at_iso)
-                if new_dt.tzinfo is None:
-                    new_dt = new_dt.replace(tzinfo=timezone.utc)
-            dto = self.schedule_service.reschedule_job(job_id, new_scheduled_at=new_dt)
+                sched_dt = datetime.fromisoformat(new_scheduled_at_iso.strip())
+                if sched_dt.tzinfo is None:
+                    sched_dt = sched_dt.replace(tzinfo=timezone.utc)
+
+            dto = self.schedule_service.reschedule_job(job_id, sched_dt)
+            return dto is not None
+        except Exception as err:
+            self.error_occurred.emit(sanitize_error_message(str(err)))
+            return False
+
+    @Slot(int, result=bool)
+    def run_now(self, job_id: int) -> bool:
+        """Triggers immediate execution for a scheduled or paused job."""
+        try:
+            dto = self.schedule_service.reschedule_job(job_id, new_scheduled_at=None)
             return dto is not None
         except Exception as err:
             self.error_occurred.emit(sanitize_error_message(str(err)))
@@ -133,18 +160,24 @@ class JobController(QObject):
 
     @Slot(int, str, str, result=bool)
     @Slot(int, str, result=bool)
-    def acknowledge_missed_schedule(self, job_id: int, action: str, new_scheduled_at_iso: str = "") -> bool:
-        """
-        Resolves a missed schedule prompt with 'run_now', 'reschedule', or 'cancel'.
-        """
+    def acknowledge_missed_schedule(
+        self,
+        job_id: int,
+        action: str,
+        new_scheduled_at_iso: str = "",
+    ) -> bool:
+        """Resolves a missed schedule via 'run_now', 'mark_paused', 'cancel', or 'reschedule'."""
         try:
             new_dt: Optional[datetime] = None
-            if new_scheduled_at_iso and new_scheduled_at_iso.strip():
-                new_dt = datetime.fromisoformat(new_scheduled_at_iso)
+            if action == "reschedule" and new_scheduled_at_iso.strip():
+                new_dt = datetime.fromisoformat(new_scheduled_at_iso.strip())
                 if new_dt.tzinfo is None:
                     new_dt = new_dt.replace(tzinfo=timezone.utc)
+
             dto = self.schedule_service.acknowledge_missed_schedule(
-                job_id=job_id, action=action, new_scheduled_at=new_dt
+                job_id=job_id,
+                action=action,
+                new_scheduled_at=new_dt,
             )
             return dto is not None
         except Exception as err:
@@ -183,7 +216,7 @@ class JobController(QObject):
             if not dto or not dto.output_path:
                 self.error_occurred.emit(f"No output artifact available for job {job_id}")
                 return False
-            path = Path(dto.output_path.replace("file://", ""))
+            path = _to_local_path(dto.output_path)
             target_dir = path.parent if path.is_file() else path
             return QDesktopServices.openUrl(QUrl.fromLocalFile(str(target_dir)))
         except Exception as err:
@@ -198,7 +231,7 @@ class JobController(QObject):
             if not dto or not dto.output_path:
                 self.error_occurred.emit(f"No output artifact available for job {job_id}")
                 return False
-            path = Path(dto.output_path.replace("file://", ""))
+            path = _to_local_path(dto.output_path)
             return QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
         except Exception as err:
             self.error_occurred.emit(sanitize_error_message(str(err)))

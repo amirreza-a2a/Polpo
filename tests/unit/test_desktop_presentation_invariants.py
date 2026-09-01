@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from interfaces.desktop.qt_compat import QCoreApplication
+from interfaces.desktop.qt_compat import QGuiApplication
 from interfaces.desktop.app import create_app
 from interfaces.desktop.controllers import (
     JobController,
@@ -28,9 +28,9 @@ from interfaces.desktop.models import (
 class TestDesktopPresentationInvariants(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.app = QCoreApplication.instance()
+        cls.app = QGuiApplication.instance()
         if cls.app is None:
-            cls.app = QCoreApplication([])
+            cls.app = QGuiApplication(["-platform", "offscreen"])
 
     def test_invariant_1_core_and_application_contain_no_qt_imports(self):
         """AST analysis verifying zero Qt, PySide6, or PyQt6 imports in core/ or application/."""
@@ -131,6 +131,94 @@ class TestDesktopPresentationInvariants(unittest.TestCase):
         self.assertFalse(container.scheduler.is_running)
         self.assertFalse(container.runtime.is_running)
 
+        temp_dir.cleanup()
+
+    def test_invariant_6_canonical_desktop_bootstrap_does_not_import_pymysql(self):
+        """Verifies in a clean process that the canonical Desktop bootstrap path has 0 dependencies on pymysql."""
+        import sys
+        import subprocess
+
+        cmd = [
+            sys.executable,
+            "-c",
+            "import sys; from interfaces.desktop.app import create_app; assert 'pymysql' not in sys.modules",
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, f"Desktop bootstrap failed without pymysql: {proc.stderr}")
+
+    def test_invariant_7_no_placeholder_comments_in_qml_views(self):
+        """Scans all QML views to verify that no placeholder comments or stub handlers exist."""
+        qml_dir = Path(__file__).parent.parent.parent / "interfaces" / "desktop" / "qml"
+        forbidden_snippets = [
+            "// TODO",
+            "// Reschedule slot",
+            "// Triggers file submission flow",
+            "// File picker invocation",
+            "// New prompt dialog",
+        ]
+
+        for qml_file in qml_dir.rglob("*.qml"):
+            content = qml_file.read_text(encoding="utf-8")
+            for forbidden in forbidden_snippets:
+                self.assertNotIn(
+                    forbidden.lower(),
+                    content.lower(),
+                    f"Found placeholder comment '{forbidden}' in {qml_file}",
+                )
+
+    def test_invariant_8_offscreen_ui_smoke_and_responsive_workflow(self):
+        """End-to-end offscreen UI smoke test verifying QML load, controller workflows, and shutdown."""
+        import time
+        temp_dir = tempfile.TemporaryDirectory()
+        base = Path(temp_dir.name)
+        db_path = base / "smoke.db"
+
+        app, engine, container = create_app(
+            argv=["-platform", "offscreen"],
+            db_path=db_path,
+            start_background_runtime=True,
+            scheduler_tick_interval=0.1,
+        )
+
+        qml_path = Path(__file__).parent.parent.parent / "interfaces" / "desktop" / "qml" / "Main.qml"
+        engine.load(str(qml_path))
+
+        root_objects = engine.rootObjects()
+        self.assertEqual(len(root_objects), 1)
+        self.assertEqual(root_objects[0].property("title"), "PolpoT — Desktop Document Intelligence")
+
+        # 1. Exercise API key controller from container
+        api_ctrl = container.api_key_controller
+        reg_ok = api_ctrl.register_key("google", "Smoke Key", "test-key-val", "gemini-2.0-flash")
+        self.assertTrue(reg_ok)
+
+        # 2. Exercise Prompt controller
+        prompt_ctrl = container.prompt_controller
+        pid = prompt_ctrl.create_prompt("Smoke Prompt", "Extract everything", "pipeline1", True)
+        self.assertGreater(pid, 0)
+
+        # 3. Exercise Job controller
+        job_ctrl = container.job_controller
+        pdf_f = base / "smoke.pdf"
+        try:
+            import pymupdf as fitz
+        except ImportError:
+            import fitz
+        doc = fitz.open()
+        doc.new_page()
+        doc.save(str(pdf_f))
+        doc.close()
+
+        jid = job_ctrl.submit_job(f"file://{pdf_f}", pid, "")
+        self.assertGreater(jid, 0)
+
+        # 4. Exercise Settings controller
+        settings_ctrl = container.settings_controller
+        save_ok = settings_ctrl.save_settings("dark", 3, "run_immediately", 45, True, True)
+        self.assertTrue(save_ok)
+
+        # Clean teardown
+        container.shutdown()
         temp_dir.cleanup()
 
 

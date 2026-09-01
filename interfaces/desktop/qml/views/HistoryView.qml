@@ -25,7 +25,7 @@ Item {
             Item { width: 1; height: 1; anchors.fill: parent }
 
             Text {
-                text: "Total: " + jobHistoryModel.totalJobs + " jobs"
+                text: "Total: " + (typeof jobHistoryModel !== "undefined" && jobHistoryModel ? jobHistoryModel.totalJobs : 0) + " jobs"
                 color: "#9CA3AF"
                 font.pixelSize: 13
                 anchors.verticalCenter: parent.verticalCenter
@@ -114,12 +114,12 @@ Item {
 
             Button {
                 text: "◀ Previous"
-                enabled: jobHistoryModel.currentPage > 1
-                onClicked: jobHistoryModel.prev_page()
+                enabled: typeof jobHistoryModel !== "undefined" && jobHistoryModel ? (jobHistoryModel.currentPage > 1) : false
+                onClicked: if (typeof jobHistoryModel !== "undefined" && jobHistoryModel) jobHistoryModel.prev_page()
             }
 
             Text {
-                text: "Page " + jobHistoryModel.currentPage + " of " + jobHistoryModel.totalPages
+                text: "Page " + (typeof jobHistoryModel !== "undefined" && jobHistoryModel ? jobHistoryModel.currentPage : 1) + " of " + (typeof jobHistoryModel !== "undefined" && jobHistoryModel ? jobHistoryModel.totalPages : 1)
                 color: "#D1D5DB"
                 font.pixelSize: 13
                 anchors.verticalCenter: parent.verticalCenter
@@ -127,8 +127,8 @@ Item {
 
             Button {
                 text: "Next ▶"
-                enabled: jobHistoryModel.currentPage < jobHistoryModel.totalPages
-                onClicked: jobHistoryModel.next_page()
+                enabled: typeof jobHistoryModel !== "undefined" && jobHistoryModel ? (jobHistoryModel.currentPage < jobHistoryModel.totalPages) : false
+                onClicked: if (typeof jobHistoryModel !== "undefined" && jobHistoryModel) jobHistoryModel.next_page()
             }
         }
     }

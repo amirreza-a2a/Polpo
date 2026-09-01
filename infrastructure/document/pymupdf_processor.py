@@ -5,7 +5,10 @@
 import io
 import re
 from typing import List, Tuple
-import fitz  # PyMuPDF
+try:
+    import pymupdf as fitz
+except ImportError:
+    import fitz
 from PIL import Image
 from application.ports.document_processor import IDocumentProcessor
 

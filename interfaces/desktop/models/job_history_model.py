@@ -40,7 +40,7 @@ class JobHistoryModel(QAbstractListModel):
         self._per_page: int = 10
 
         if self.bridge is not None:
-            self.bridge.job_state_changed_received.connect(self._on_state_changed)
+            self.bridge.job_state_changed_received.connect(self._on_state_changed, type=Qt.ConnectionType.QueuedConnection)
 
         self.load_page(1)
 

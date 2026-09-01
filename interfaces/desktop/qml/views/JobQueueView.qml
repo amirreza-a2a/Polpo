@@ -1,9 +1,22 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import "../components"
 
 Item {
     id: root
+    property string selectedFilePath: ""
+    property int targetJobId: 0
+
+    FileDialog {
+        id: pdfPicker
+        title: "Select PDF Document for Conversion"
+        nameFilters: ["PDF Files (*.pdf)", "All Files (*)"]
+        onAccepted: {
+            root.selectedFilePath = selectedFile.toString();
+            submitModal.open();
+        }
+    }
 
     Column {
         anchors.fill: parent
@@ -22,13 +35,12 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
             }
 
-            Item { width: 1; height: 1; anchors.fill: parent } // Spacer
+            Item { width: 1; height: 1; anchors.fill: parent }
 
             Button {
                 text: "+ Submit Document"
-                onClicked: {
-                    // Triggers file submission flow
-                }
+                highlighted: true
+                onClicked: pdfPicker.open()
             }
         }
 
@@ -38,19 +50,19 @@ Item {
             height: parent.height - 60
             clip: true
             spacing: 12
-            model: jobQueueModel
+            model: typeof jobQueueModel !== "undefined" ? jobQueueModel : null
 
             delegate: Card {
                 width: queueList.width
-                height: 90
+                height: 96
 
                 Row {
                     anchors.fill: parent
-                    anchors.margins: 16
+                    anchors.margins: 14
                     spacing: 16
 
                     Column {
-                        width: parent.width - 240
+                        width: parent.width - 270
                         spacing: 6
                         anchors.verticalCenter: parent.verticalCenter
 
@@ -62,7 +74,7 @@ Item {
                                 font.pixelSize: 15
                                 font.bold: true
                                 elide: Text.ElideRight
-                                width: 250
+                                width: 240
                             }
                             StatusBadge {
                                 status: model.status
@@ -80,10 +92,27 @@ Item {
                             value: model.progressPercent
                         }
 
-                        Text {
-                            text: "Page " + model.processedPages + " of " + model.totalPages + " (" + Math.round(model.progressPercent) + "%)"
-                            color: "#9CA3AF"
-                            font.pixelSize: 12
+                        Row {
+                            spacing: 16
+                            Text {
+                                text: "Page " + model.processedPages + " of " + model.totalPages + " (" + Math.round(model.progressPercent) + "%)"
+                                color: "#9CA3AF"
+                                font.pixelSize: 12
+                            }
+                            Text {
+                                text: model.scheduledAt ? ("Scheduled: " + model.scheduledAt) : ""
+                                color: "#F59E0B"
+                                font.pixelSize: 11
+                                visible: model.scheduledAt !== ""
+                            }
+                            Text {
+                                text: model.errorMessage ? ("Error: " + model.errorMessage) : ""
+                                color: "#EF4444"
+                                font.pixelSize: 11
+                                elide: Text.ElideRight
+                                width: 200
+                                visible: model.errorMessage !== ""
+                            }
                         }
                     }
 
@@ -92,15 +121,35 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
 
                         Button {
-                            text: "Cancel"
-                            onClicked: jobController.cancel_job(model.id)
+                            text: "Resume"
+                            visible: model.status === "paused"
+                            onClicked: jobController.resume_job(model.id)
+                        }
+
+                        Button {
+                            text: "Run Now"
+                            visible: model.status === "paused" || model.scheduledAt !== ""
+                            onClicked: jobController.run_now(model.id)
+                        }
+
+                        Button {
+                            text: "Retry"
+                            visible: model.status === "failed"
+                            onClicked: jobController.retry_job(model.id)
                         }
 
                         Button {
                             text: "Reschedule"
+                            visible: model.status === "pending" || model.status === "paused"
                             onClicked: {
-                                // Reschedule slot
+                                root.targetJobId = model.id;
+                                rescheduleModal.open();
                             }
+                        }
+
+                        Button {
+                            text: "Cancel"
+                            onClicked: jobController.cancel_job(model.id)
                         }
                     }
                 }
@@ -108,10 +157,175 @@ Item {
 
             Text {
                 anchors.centerIn: parent
-                text: "No active jobs in queue. Submit a document to begin."
+                text: "No active jobs in queue. Click '+ Submit Document' to convert a PDF."
                 color: "#6B7280"
                 font.pixelSize: 14
                 visible: queueList.count === 0
+            }
+        }
+    }
+
+    ModalDialog {
+        id: submitModal
+        title: "Submit Document for Conversion"
+        width: 480
+        height: 380
+
+        Column {
+            anchors.fill: parent
+            anchors.margins: 20
+            spacing: 14
+
+            Text {
+                text: "Submit Document"
+                color: "#F9FAFB"
+                font.pixelSize: 18
+                font.bold: true
+            }
+
+            Text {
+                text: "Selected: " + root.selectedFilePath
+                color: "#9CA3AF"
+                font.pixelSize: 12
+                elide: Text.ElideMiddle
+                width: parent.width
+            }
+
+            Row {
+                spacing: 12
+                Text {
+                    text: "Prompt Template:"
+                    color: "#D1D5DB"
+                    font.pixelSize: 13
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 120
+                }
+                ComboBox {
+                    id: promptCombo
+                    width: 280
+                    model: typeof promptListModel !== "undefined" ? promptListModel : null
+                    textRole: "name"
+                    valueRole: "id"
+                }
+            }
+
+            Row {
+                spacing: 12
+                Text {
+                    text: "Scheduled Time:"
+                    color: "#D1D5DB"
+                    font.pixelSize: 13
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 120
+                }
+                TextField {
+                    id: scheduleInput
+                    width: 280
+                    placeholderText: "Immediate (or ISO UTC date)"
+                }
+            }
+
+            CheckBox {
+                id: p2Check
+                text: "Enable Pipeline 2 Auto-Refinement"
+                checked: typeof settingsController !== "undefined" && settingsController ? settingsController.autoPipeline2 : false
+            }
+
+            Row {
+                spacing: 12
+                anchors.horizontalCenter: parent.horizontalCenter
+
+                Button {
+                    text: "Cancel"
+                    onClicked: submitModal.close()
+                }
+
+                Button {
+                    text: "Start Conversion"
+                    highlighted: true
+                    onClicked: {
+                        var pid = promptCombo.currentValue ? promptCombo.currentValue : 0;
+                        jobController.submit_job(
+                            root.selectedFilePath,
+                            pid,
+                            scheduleInput.text,
+                            p2Check.checked
+                        );
+                        scheduleInput.text = "";
+                        submitModal.close();
+                    }
+                }
+            }
+        }
+    }
+
+    ModalDialog {
+        id: rescheduleModal
+        title: "Reschedule Job"
+        width: 440
+        height: 280
+
+        Column {
+            anchors.fill: parent
+            anchors.margins: 20
+            spacing: 14
+
+            Text {
+                text: "Reschedule Conversion Job #" + root.targetJobId
+                color: "#F9FAFB"
+                font.pixelSize: 16
+                font.bold: true
+            }
+
+            TextField {
+                id: newSchedTimeInput
+                width: parent.width
+                placeholderText: "New Scheduled ISO UTC (e.g. 2026-09-02T10:00:00Z)"
+            }
+
+            Row {
+                spacing: 8
+                Button {
+                    text: "+1 Hour"
+                    onClicked: {
+                        var d = new Date(Date.now() + 3600 * 1000);
+                        newSchedTimeInput.text = d.toISOString();
+                    }
+                }
+                Button {
+                    text: "+4 Hours"
+                    onClicked: {
+                        var d = new Date(Date.now() + 4 * 3600 * 1000);
+                        newSchedTimeInput.text = d.toISOString();
+                    }
+                }
+                Button {
+                    text: "+1 Day"
+                    onClicked: {
+                        var d = new Date(Date.now() + 24 * 3600 * 1000);
+                        newSchedTimeInput.text = d.toISOString();
+                    }
+                }
+            }
+
+            Row {
+                spacing: 12
+                anchors.horizontalCenter: parent.horizontalCenter
+
+                Button {
+                    text: "Cancel"
+                    onClicked: rescheduleModal.close()
+                }
+
+                Button {
+                    text: "Apply Schedule"
+                    highlighted: true
+                    onClicked: {
+                        jobController.reschedule_job(root.targetJobId, newSchedTimeInput.text);
+                        newSchedTimeInput.text = "";
+                        rescheduleModal.close();
+                    }
+                }
             }
         }
     }

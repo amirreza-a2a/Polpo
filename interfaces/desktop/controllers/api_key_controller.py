@@ -125,3 +125,8 @@ class ApiKeyController(QObject):
         except Exception as err:
             self.error_occurred.emit(sanitize_error_message(str(err)))
             return []
+
+    @Slot(result="QVariantList")
+    def get_supported_providers(self) -> List[str]:
+        """Returns list of all supported LLM providers for the UI dropdown."""
+        return ["google", "openai", "anthropic", "openrouter", "ollama"]

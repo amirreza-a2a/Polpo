@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from datetime import datetime, timezone
 
-from interfaces.desktop.qt_compat import QCoreApplication, QModelIndex
+from interfaces.desktop.qt_compat import QGuiApplication, QModelIndex
 from interfaces.desktop.bridge import QtSignalEventBridge
 from interfaces.desktop.models import (
     JobQueueModel,
@@ -42,9 +42,9 @@ from core.entities.settings import AppSettings
 class TestDesktopModels(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.app = QCoreApplication.instance()
+        cls.app = QGuiApplication.instance()
         if cls.app is None:
-            cls.app = QCoreApplication([])
+            cls.app = QGuiApplication(["-platform", "offscreen"])
 
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
