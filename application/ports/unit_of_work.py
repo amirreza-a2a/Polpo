@@ -9,6 +9,7 @@ from application.ports.repositories import (
     IPipeline2JobRepository,
     IPromptRepository,
     IApiRepository,
+    IVisualRegionRepository,
 )
 
 
@@ -22,6 +23,7 @@ class IUnitOfWork(ABC):
     pipeline2_jobs: IPipeline2JobRepository
     prompts: IPromptRepository
     apis: IApiRepository
+    visual_regions: IVisualRegionRepository
 
     @abstractmethod
     def __enter__(self) -> "IUnitOfWork":

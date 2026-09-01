@@ -19,6 +19,8 @@ from application.events import (
 from application.sanitizer import sanitize_error_message
 from core.entities.job import Job, JobStatus, Pipeline2Job
 from core.entities.artifact import ArtifactHandle, ArtifactType, StorageBackendType
+from core.entities.visual_region import VisualRegion, RegionOrigin, ReviewStatus, SyncStatus
+from core.entities.bounding_box_parser import BoundingBoxParser
 from core.policies.job_state_policy import JobStateTransitionPolicy
 from core.exceptions.domain_exceptions import ArtifactNotFoundError, EntityNotFoundError, DomainError
 
@@ -208,21 +210,54 @@ class JobExecutionService:
                             job.current_api_index = idx
                             break
 
-                # Extract and crop images with deterministic page-isolated naming
+                # 1. Parse and persist initial AI visual region provenance
+                parsed_box_matches = BoundingBoxParser.parse_matches(raw_page_md)
+                created_regions: List[VisualRegion] = []
+                for idx, match_item in enumerate(parsed_box_matches, start=1):
+                    region = VisualRegion.create_ai_detected(
+                        job_id=job.id,
+                        page_number=page_num,
+                        display_order=idx,
+                        detected_bbox=match_item.box,
+                    )
+                    created_regions.append(region)
+
+                if created_regions:
+                    with self.uow_factory.create() as uow:
+                        saved_regions = uow.visual_regions.save_all(created_regions)
+                        uow.commit()
+                        created_regions = saved_regions
+
+                # 2. Extract and crop images with deterministic page-isolated naming
                 final_page_md, cropped_images = self.doc_processor.extract_and_crop_images(
                     markdown_text=raw_page_md,
                     page_jpeg_bytes=page_jpeg_bytes,
                     job_id=job.id,
                     page_number=page_num,
                 )
-                for crop_name, crop_bytes in cropped_images:
-                    self.storage.store(
+
+                # Deterministic association by display_order (protects against skipped/filtered crops)
+                regions_by_order = {r.display_order: r for r in created_regions}
+
+                for crop in cropped_images:
+                    crop_name, crop_bytes = crop[0], crop[1]
+                    order = getattr(crop, "display_order", None)
+                    handle = self.storage.store(
                         job_id=job.id,
                         artifact_type=ArtifactType.CROPPED_IMAGE,
                         filename=crop_name,
                         data=crop_bytes,
                         mime_type="image/jpeg",
                     )
+                    if order is not None and order in regions_by_order:
+                        target_region = regions_by_order[order]
+                        target_region.active_artifact_uri = handle.uri
+                        target_region.sync_status = SyncStatus.SYNCED
+
+                if created_regions:
+                    with self.uow_factory.create() as uow:
+                        uow.visual_regions.save_all(created_regions)
+                        uow.commit()
 
                 page_entry = f"<!-- Page {page_num} -->\n{final_page_md}\n"
                 accumulated_markdown.append(page_entry)

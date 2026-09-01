@@ -3,7 +3,29 @@
 # ============================================================
 
 from abc import ABC, abstractmethod
-from typing import List, Tuple
+from dataclasses import dataclass
+from typing import List, Sequence, Tuple, Union
+
+
+@dataclass(frozen=True)
+class ExtractedCrop:
+    """
+    Represents an extracted visual region crop.
+    Carries explicit display_order to enable deterministic region association.
+    Supports 2-element tuple unpacking (filename, data) for full backwards compatibility.
+    """
+    filename: str
+    data: bytes
+    display_order: int = 1
+
+    def __iter__(self):
+        return iter((self.filename, self.data))
+
+    def __getitem__(self, index):
+        return (self.filename, self.data)[index]
+
+    def __len__(self):
+        return 2
 
 
 class IDocumentProcessor(ABC):

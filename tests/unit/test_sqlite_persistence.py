@@ -117,10 +117,11 @@ class TestSQLitePersistence(unittest.TestCase):
         conn = self.db_manager.create_connection()
         try:
             cur = conn.cursor()
-            cur.execute("SELECT version, name FROM schema_version")
+            cur.execute("SELECT version, name FROM schema_version ORDER BY version ASC")
             rows = cur.fetchall()
-            self.assertEqual(len(rows), 1)
+            self.assertEqual(len(rows), 2)
             self.assertEqual(rows[0]["version"], 1)
+            self.assertEqual(rows[1]["version"], 2)
 
             # Verify all expected tables exist
             cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -132,6 +133,7 @@ class TestSQLitePersistence(unittest.TestCase):
                 "api_slots",
                 "jobs",
                 "pipeline2_jobs",
+                "visual_regions",
             }
             self.assertTrue(expected_tables.issubset(tables))
         finally:

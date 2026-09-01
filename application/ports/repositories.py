@@ -9,6 +9,7 @@ from core.entities.job import Job, Pipeline2Job, JobStatus
 from core.entities.settings import AppSettings
 from core.entities.prompt import Prompt, PromptType
 from core.entities.api_slot import ApiSlot
+from application.ports.visual_region_repository import IVisualRegionRepository
 
 
 class IJobRepository(ABC):

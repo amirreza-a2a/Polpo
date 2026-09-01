@@ -12,12 +12,20 @@ from core.entities.prompt import Prompt, PromptType
 from core.entities.api_slot import ApiSlot
 from core.entities.credential_ref import CredentialRef
 from core.entities.job import Job, Pipeline2Job, JobStatus
+from core.entities.bounding_box import BoundingBox
+from core.entities.visual_region import (
+    VisualRegion,
+    RegionOrigin,
+    ReviewStatus,
+    SyncStatus,
+)
 from application.ports.repositories import (
     ISettingsRepository,
     IPromptRepository,
     IApiRepository,
     IJobRepository,
     IPipeline2JobRepository,
+    IVisualRegionRepository,
 )
 
 
@@ -932,3 +940,185 @@ class SQLitePipeline2JobRepository(IPipeline2JobRepository):
 
     def update_output_path(self, p2_job_id: int, output_path: str) -> None:
         self.update_paths(p2_job_id, output_path=output_path)
+
+
+# ============================================================
+#  SQLiteVisualRegionRepository
+# ============================================================
+
+class SQLiteVisualRegionRepository(IVisualRegionRepository):
+    """
+    SQLite repository for visual document regions and provenance tracking.
+    """
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def _row_to_entity(self, row: sqlite3.Row) -> VisualRegion:
+        detected_bbox = None
+        if row["detected_ymin"] is not None:
+            detected_bbox = BoundingBox(
+                ymin=row["detected_ymin"],
+                xmin=row["detected_xmin"],
+                ymax=row["detected_ymax"],
+                xmax=row["detected_xmax"],
+            )
+
+        reviewed_bbox = None
+        if row["reviewed_ymin"] is not None:
+            reviewed_bbox = BoundingBox(
+                ymin=row["reviewed_ymin"],
+                xmin=row["reviewed_xmin"],
+                ymax=row["reviewed_ymax"],
+                xmax=row["reviewed_xmax"],
+            )
+
+        return VisualRegion(
+            id=row["id"],
+            region_id=row["region_id"],
+            job_id=row["job_id"],
+            page_number=row["page_number"],
+            display_order=row["display_order"],
+            origin=RegionOrigin(row["origin"]),
+            detected_bbox=detected_bbox,
+            reviewed_bbox=reviewed_bbox,
+            review_status=ReviewStatus(row["review_status"]),
+            sync_status=SyncStatus(row["sync_status"]),
+            active_artifact_version=row["active_artifact_version"],
+            active_artifact_uri=row["active_artifact_uri"],
+            created_at=_parse_iso_dt(row["created_at"]),
+            updated_at=_parse_iso_dt(row["updated_at"]),
+        )
+
+    def get_by_id(self, id: int) -> Optional[VisualRegion]:
+        cur = self.conn.cursor()
+        cur.execute("SELECT * FROM visual_regions WHERE id = ?", (id,))
+        row = cur.fetchone()
+        return self._row_to_entity(row) if row else None
+
+    def get_by_region_id(self, region_id: str) -> Optional[VisualRegion]:
+        cur = self.conn.cursor()
+        cur.execute("SELECT * FROM visual_regions WHERE region_id = ?", (region_id,))
+        row = cur.fetchone()
+        return self._row_to_entity(row) if row else None
+
+    def get_by_job_id(self, job_id: int) -> List[VisualRegion]:
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT * FROM visual_regions WHERE job_id = ? ORDER BY page_number ASC, display_order ASC, id ASC",
+            (job_id,),
+        )
+        return [self._row_to_entity(row) for row in cur.fetchall()]
+
+    def get_by_job_and_page(self, job_id: int, page_number: int) -> List[VisualRegion]:
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT * FROM visual_regions WHERE job_id = ? AND page_number = ? ORDER BY display_order ASC, id ASC",
+            (job_id, page_number),
+        )
+        return [self._row_to_entity(row) for row in cur.fetchall()]
+
+    def save(self, region: VisualRegion) -> VisualRegion:
+        _ensure_transaction(self.conn)
+        now_iso = _format_iso_dt(datetime.now(timezone.utc))
+        cur = self.conn.cursor()
+
+        det_ymin = region.detected_bbox.ymin if region.detected_bbox else None
+        det_xmin = region.detected_bbox.xmin if region.detected_bbox else None
+        det_ymax = region.detected_bbox.ymax if region.detected_bbox else None
+        det_xmax = region.detected_bbox.xmax if region.detected_bbox else None
+
+        rev_ymin = region.reviewed_bbox.ymin if region.reviewed_bbox else None
+        rev_xmin = region.reviewed_bbox.xmin if region.reviewed_bbox else None
+        rev_ymax = region.reviewed_bbox.ymax if region.reviewed_bbox else None
+        rev_xmax = region.reviewed_bbox.xmax if region.reviewed_bbox else None
+
+        if region.id is None:
+            created_iso = _format_iso_dt(region.created_at) or now_iso
+            cur.execute(
+                """
+                INSERT INTO visual_regions (
+                    job_id, region_id, page_number, display_order, origin,
+                    detected_ymin, detected_xmin, detected_ymax, detected_xmax,
+                    reviewed_ymin, reviewed_xmin, reviewed_ymax, reviewed_xmax,
+                    review_status, sync_status, active_artifact_version, active_artifact_uri,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    region.job_id,
+                    region.region_id,
+                    region.page_number,
+                    region.display_order,
+                    region.origin.value,
+                    det_ymin,
+                    det_xmin,
+                    det_ymax,
+                    det_xmax,
+                    rev_ymin,
+                    rev_xmin,
+                    rev_ymax,
+                    rev_xmax,
+                    region.review_status.value,
+                    region.sync_status.value,
+                    region.active_artifact_version,
+                    region.active_artifact_uri,
+                    created_iso,
+                    now_iso,
+                ),
+            )
+            new_id = cur.lastrowid
+            region.id = new_id
+            region.updated_at = _parse_iso_dt(now_iso)
+        else:
+            cur.execute(
+                """
+                UPDATE visual_regions SET
+                    job_id = ?, region_id = ?, page_number = ?, display_order = ?, origin = ?,
+                    detected_ymin = ?, detected_xmin = ?, detected_ymax = ?, detected_xmax = ?,
+                    reviewed_ymin = ?, reviewed_xmin = ?, reviewed_ymax = ?, reviewed_xmax = ?,
+                    review_status = ?, sync_status = ?, active_artifact_version = ?, active_artifact_uri = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    region.job_id,
+                    region.region_id,
+                    region.page_number,
+                    region.display_order,
+                    region.origin.value,
+                    det_ymin,
+                    det_xmin,
+                    det_ymax,
+                    det_xmax,
+                    rev_ymin,
+                    rev_xmin,
+                    rev_ymax,
+                    rev_xmax,
+                    region.review_status.value,
+                    region.sync_status.value,
+                    region.active_artifact_version,
+                    region.active_artifact_uri,
+                    now_iso,
+                    region.id,
+                ),
+            )
+            region.updated_at = _parse_iso_dt(now_iso)
+
+        return region
+
+    def save_all(self, regions: List[VisualRegion]) -> List[VisualRegion]:
+        _ensure_transaction(self.conn)
+        return [self.save(r) for r in regions]
+
+    def delete_by_job_id(self, job_id: int) -> int:
+        _ensure_transaction(self.conn)
+        cur = self.conn.cursor()
+        cur.execute("DELETE FROM visual_regions WHERE job_id = ?", (job_id,))
+        return cur.rowcount
+
+    def delete_by_region_id(self, region_id: str) -> bool:
+        _ensure_transaction(self.conn)
+        cur = self.conn.cursor()
+        cur.execute("DELETE FROM visual_regions WHERE region_id = ?", (region_id,))
+        return cur.rowcount > 0

@@ -41,6 +41,7 @@ from application.ports.repositories import (
     IPromptRepository,
     IApiRepository,
     ISettingsRepository,
+    IVisualRegionRepository,
 )
 from application.ports.unit_of_work import IUnitOfWork
 from application.services.settings_service import LocalSettingsService
@@ -148,7 +149,7 @@ class TestCanonicalUnitOfWorkAndRepositories(unittest.TestCase):
 
     def test_canonical_unit_of_work_members(self):
         annotations = get_type_hints(IUnitOfWork)
-        expected_canonical = {"settings", "jobs", "pipeline2_jobs", "prompts", "apis"}
+        expected_canonical = {"settings", "jobs", "pipeline2_jobs", "prompts", "apis", "visual_regions"}
         self.assertEqual(set(annotations.keys()), expected_canonical)
         self.assertNotIn("users", annotations)
         self.assertNotIn("donations", annotations)
@@ -160,6 +161,7 @@ class TestCanonicalUnitOfWorkAndRepositories(unittest.TestCase):
             IPromptRepository,
             IApiRepository,
             ISettingsRepository,
+            IVisualRegionRepository,
         ]
         for repo_cls in canonical_repo_classes:
             for name, method in inspect.getmembers(repo_cls, predicate=inspect.isfunction):

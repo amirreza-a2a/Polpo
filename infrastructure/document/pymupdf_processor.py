@@ -10,7 +10,7 @@ try:
 except ImportError:
     import fitz
 
-from application.ports.document_processor import IDocumentProcessor
+from application.ports.document_processor import IDocumentProcessor, ExtractedCrop
 from core.entities.bounding_box import BoundingBox, CropPolicy
 from infrastructure.document.bounding_box_parser import BoundingBoxParser
 from infrastructure.document.coordinate_mapper import CoordinateMapper
@@ -76,7 +76,7 @@ class PyMuPDFDocumentProcessor(IDocumentProcessor):
         except Exception:
             return markdown_text, []
 
-        cropped_list: List[Tuple[str, bytes]] = []
+        cropped_list: List[ExtractedCrop] = []
         replacements: List[Tuple[int, int, str]] = []
 
         for idx, match_item in enumerate(parsed_matches, start=1):
@@ -98,7 +98,7 @@ class PyMuPDFDocumentProcessor(IDocumentProcessor):
                     quality=self.crop_policy.jpeg_quality,
                 )
                 filename = f"crop_{job_id}_p{page_number}_{idx}.jpg"
-                cropped_list.append((filename, crop_bytes))
+                cropped_list.append(ExtractedCrop(filename=filename, data=crop_bytes, display_order=idx))
                 replacements.append((match_item.start, match_item.end, f"![[{filename}]]"))
             except Exception:
                 continue
