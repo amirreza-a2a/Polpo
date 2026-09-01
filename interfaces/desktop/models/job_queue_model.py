@@ -108,6 +108,7 @@ class JobQueueModel(QAbstractListModel):
                 JobStatus.PROCESSING.value,
                 JobStatus.PAUSED.value,
                 JobStatus.FAILED.value,
+                JobStatus.CANCELLED.value,
             }
             for d in dtos:
                 if d.status in active_statuses:
@@ -136,7 +137,7 @@ class JobQueueModel(QAbstractListModel):
 
     @Slot(int, str)
     def set_action_state(self, job_id: int, action_state: str) -> None:
-        """Sets a transient presentation-only action state (e.g. 'cancelling', 'retrying', 'resuming')."""
+        """Sets a transient presentation-only action state (e.g. 'cancelling', 'retrying', 'resuming', 'pausing', 'running_now')."""
         idx = self._find_job_index(job_id)
         if idx >= 0:
             self._jobs[idx]["action_state"] = action_state
@@ -169,7 +170,7 @@ class JobQueueModel(QAbstractListModel):
     @Slot(int, str, str)
     def _on_state_changed(self, job_id: int, old_status: str, new_status: str) -> None:
         idx = self._find_job_index(job_id)
-        terminal_statuses = {"done", "cancelled"}
+        terminal_statuses = {"done"}
 
         if new_status in terminal_statuses:
             if idx >= 0:

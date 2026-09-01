@@ -1,8 +1,5 @@
-# ============================================================
-#  application/services/job_execution.py
-# ============================================================
-
 import logging
+import threading
 from datetime import datetime
 from typing import Any, List, Optional
 
@@ -31,7 +28,7 @@ logger = logging.getLogger("polpot.execution")
 class JobExecutionService:
     """
     Application orchestrator for executing document processing jobs.
-    Executes a single pre-claimed job, enforces cooperative cancellation checkpoints,
+    Executes a single pre-claimed job, enforces cooperative pause and cancellation checkpoints,
     and publishes typed transport-neutral application events.
     """
 
@@ -48,6 +45,8 @@ class JobExecutionService:
         self.storage = storage
         self.doc_processor = doc_processor
         self.ai_executor = ai_executor
+        self._lock = threading.Lock()
+        self._pause_requested_jobs: set[int] = set()
 
         pub_candidate = event_publisher if event_publisher is not None else notifier
         if pub_candidate is not None:
@@ -82,6 +81,10 @@ class JobExecutionService:
         self._publish_state_changed(job.id, JobStatus.PENDING, JobStatus.PROCESSING)
         return self.execute_claimed_job(job.id)
 
+    def claim_and_execute_next(self) -> Optional[Job]:
+        """Atomically claims and executes the next pending job."""
+        return self.execute_next_job()
+
     def execute_claimed_job(self, job_id: int) -> Optional[Job]:
         """
         Canonical execution entry point for pre-claimed jobs.
@@ -97,170 +100,212 @@ class JobExecutionService:
 
         logger.info(f"[Job {job.id}] Executing pipeline. Total pages: {job.total_pages}")
 
-        # 1. Retrieve source document from immutable artifact storage
         try:
-            source_handle = ArtifactHandle(
-                storage_backend=StorageBackendType.LOCAL_FS,
-                uri=job.file_path,
-                artifact_type=ArtifactType.SOURCE_PDF,
-                job_id=job.id,
-                filename=job.file_name,
-            )
-            pdf_bytes = self.storage.retrieve(source_handle)
-        except (ArtifactNotFoundError, IOError, OSError) as e:
-            error_msg = sanitize_error_message(f"Source artifact missing: {e}")
-            logger.error(f"[Job {job.id}] {error_msg}")
-            with self.uow_factory.create() as uow:
-                uow.jobs.update_status(job.id, JobStatus.FAILED, error_message=error_msg)
-                uow.commit()
-            self._publish_state_changed(job.id, JobStatus.PROCESSING, JobStatus.FAILED)
-            self._publish_failed(job.id, error_msg, is_retryable=False)
-            return job
-
-        # 2. Page processing loop
-        accumulated_markdown: List[str] = []
-        start_page = job.processed_pages + 1
-
-        for page_num in range(start_page, job.total_pages + 1):
-            # Cancellation Checkpoint 1 (before render)
-            if self._is_cancellation_requested(job.id):
-                return self._handle_cancellation(job)
-
-            # Render page to JPEG
+            # 1. Retrieve source document from immutable artifact storage
             try:
-                page_jpeg_bytes = self.doc_processor.render_page_to_jpeg(pdf_bytes, page_num)
-                self.storage.store(
+                source_handle = ArtifactHandle(
+                    storage_backend=StorageBackendType.LOCAL_FS,
+                    uri=job.file_path,
+                    artifact_type=ArtifactType.SOURCE_PDF,
                     job_id=job.id,
-                    artifact_type=ArtifactType.PAGE_IMAGE,
-                    filename=f"page_{page_num}.jpg",
-                    data=page_jpeg_bytes,
-                    mime_type="image/jpeg",
+                    filename=job.file_name,
                 )
-            except (IOError, OSError, IndexError) as e:
-                error_msg = sanitize_error_message(f"Page {page_num} render failed: {e}")
+                pdf_bytes = self.storage.retrieve(source_handle)
+            except (ArtifactNotFoundError, IOError, OSError) as e:
+                error_msg = sanitize_error_message(f"Source artifact missing: {e}")
                 logger.error(f"[Job {job.id}] {error_msg}")
-                return self._fail_job(job, error_msg)
-
-            # Cancellation Checkpoint 2 (before AI request)
-            if self._is_cancellation_requested(job.id):
-                return self._handle_cancellation(job)
-
-            # Callback for recording API switch events
-            def on_switch_callback(old_label: str, new_label: str, reason: str, page: int):
-                event = {
-                    "from_api": old_label,
-                    "to_api": new_label,
-                    "page": page,
-                    "reason": reason,
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                }
-                job.api_switch_log.append(event)
                 with self.uow_factory.create() as uow:
-                    uow.jobs.update_progress(job.id, job.processed_pages, job.api_switch_log)
+                    uow.jobs.update_status(job.id, JobStatus.FAILED, error_message=error_msg)
                     uow.commit()
-                self._publish_api_switch(job, old_label, new_label, reason, page)
-
-            # Send to AI executor with fallback chain
-            active_chain = job.api_chain[job.current_api_index:]
-            raw_page_md, used_slot = self.ai_executor.execute_vision_with_fallback(
-                chain=active_chain,
-                image_bytes=page_jpeg_bytes,
-                prompt=job.prompt_text or "Convert page to markdown",
-                at_page=page_num,
-                mime_type="image/jpeg",
-                on_switch=on_switch_callback,
-            )
-
-            # Cancellation Checkpoint 3 (after AI request)
-            if self._is_cancellation_requested(job.id):
-                return self._handle_cancellation(job)
-
-            if raw_page_md is None:
-                return self._pause_job(job, f"All APIs exhausted at page {page_num}.")
-
-            # Update active slot index on job
-            if used_slot:
-                for idx, slot in enumerate(job.api_chain):
-                    if slot.id == used_slot.id and slot.slot_type == used_slot.slot_type:
-                        job.current_api_index = idx
-                        break
-
-            # Extract and crop images
-            final_page_md, cropped_images = self.doc_processor.extract_and_crop_images(
-                markdown_text=raw_page_md,
-                page_jpeg_bytes=page_jpeg_bytes,
-                job_id=job.id,
-            )
-            for crop_name, crop_bytes in cropped_images:
-                self.storage.store(
-                    job_id=job.id,
-                    artifact_type=ArtifactType.CROPPED_IMAGE,
-                    filename=crop_name,
-                    data=crop_bytes,
-                    mime_type="image/jpeg",
-                )
-
-            accumulated_markdown.append(f"<!-- Page {page_num} -->\n{final_page_md}\n")
-            job.processed_pages = page_num
-
-            # Save progress in database
-            with self.uow_factory.create() as uow:
-                uow.jobs.update_progress(job.id, job.processed_pages, job.api_switch_log)
-                if used_slot and hasattr(uow.apis, "report_pages_used"):
-                    uow.apis.report_pages_used(used_slot.id, used_slot.slot_type, 1)
-                uow.commit()
-
-            self._publish_progress(job)
-
-        # Cancellation Checkpoint 4 (before final artifact commit)
-        if self._is_cancellation_requested(job.id):
-            return self._handle_cancellation(job)
-
-        # 3. Finalize job and store output Markdown artifact
-        full_document = "\n\n".join(accumulated_markdown)
-        output_handle = self.storage.store(
-            job_id=job.id,
-            artifact_type=ArtifactType.OUTPUT_MARKDOWN,
-            filename=f"output_{job.id}.md",
-            data=full_document.encode("utf-8"),
-            mime_type="text/markdown",
-        )
-
-        with self.uow_factory.create() as uow:
-            # Check for cancellation race inside final commit transaction
-            current_job = uow.jobs.get_by_id(job.id)
-            if current_job and (getattr(current_job, "cancel_requested", False) is True or current_job.status == JobStatus.CANCELLED):
-                JobStateTransitionPolicy.validate_transition(job.status, JobStatus.CANCELLED)
-                uow.jobs.update_status(job.id, JobStatus.CANCELLED)
-                uow.commit()
-                job.status = JobStatus.CANCELLED
-                self._publish_state_changed(job.id, JobStatus.PROCESSING, JobStatus.CANCELLED)
-                self._publish_cancelled(job.id)
+                self._publish_state_changed(job.id, JobStatus.PROCESSING, JobStatus.FAILED)
+                self._publish_failed(job.id, error_msg, is_retryable=False)
                 return job
 
-            JobStateTransitionPolicy.validate_transition(job.status, JobStatus.DONE)
-            job.status = JobStatus.DONE
-            job.output_path = output_handle.uri
-            uow.jobs.update_progress(job.id, job.processed_pages, job.api_switch_log, output_path=output_handle.uri)
-            uow.jobs.update_status(job.id, JobStatus.DONE)
+            # 2. Page processing loop with deterministic checkpoint restoration
+            accumulated_markdown: List[str] = []
+            start_page = job.processed_pages + 1
 
-            if job.auto_pipeline2:
-                p2_job = Pipeline2Job(
-                    id=None,
-                    source_job_id=job.id,
-                    prompt_id=job.pipeline2_prompt_id,
-                    status=JobStatus.PENDING,
-                    input_path=output_handle.uri,
-                    api_chain=job.api_chain,
-                    current_api_index=0,
+            # Restore previously processed page markdown snippets if resuming/retrying from checkpoint
+            for p in range(1, start_page):
+                try:
+                    p_handle = ArtifactHandle(
+                        storage_backend=StorageBackendType.LOCAL_FS,
+                        uri=f"job_{job.id}/page_{p}.md",
+                        artifact_type=ArtifactType.OUTPUT_MARKDOWN,
+                        job_id=job.id,
+                        filename=f"page_{p}.md",
+                    )
+                    p_bytes = self.storage.retrieve(p_handle)
+                    accumulated_markdown.append(p_bytes.decode("utf-8"))
+                except Exception:
+                    pass
+
+            for page_num in range(start_page, job.total_pages + 1):
+                # Checkpoint 1 (before render): Check cancellation and pause
+                if self._is_cancellation_requested(job.id):
+                    return self._handle_cancellation(job)
+                if self._is_pause_requested(job.id):
+                    return self._handle_pause(job)
+
+                # Render page to JPEG
+                try:
+                    page_jpeg_bytes = self.doc_processor.render_page_to_jpeg(pdf_bytes, page_num)
+                    self.storage.store(
+                        job_id=job.id,
+                        artifact_type=ArtifactType.PAGE_IMAGE,
+                        filename=f"page_{page_num}.jpg",
+                        data=page_jpeg_bytes,
+                        mime_type="image/jpeg",
+                    )
+                except (IOError, OSError, IndexError) as e:
+                    error_msg = sanitize_error_message(f"Page {page_num} render failed: {e}")
+                    logger.error(f"[Job {job.id}] {error_msg}")
+                    return self._fail_job(job, error_msg)
+
+                # Checkpoint 2 (before AI request): Check cancellation and pause
+                if self._is_cancellation_requested(job.id):
+                    return self._handle_cancellation(job)
+                if self._is_pause_requested(job.id):
+                    return self._handle_pause(job)
+
+                # Callback for recording API switch events
+                def on_switch_callback(old_label: str, new_label: str, reason: str, page: int):
+                    event = {
+                        "from_api": old_label,
+                        "to_api": new_label,
+                        "page": page,
+                        "reason": reason,
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+                    job.api_switch_log.append(event)
+                    with self.uow_factory.create() as uow:
+                        uow.jobs.update_progress(job.id, job.processed_pages, job.api_switch_log)
+                        uow.commit()
+                    self._publish_api_switch(job, old_label, new_label, reason, page)
+
+                # Send to AI executor with fallback chain
+                active_chain = job.api_chain[job.current_api_index:]
+                raw_page_md, used_slot = self.ai_executor.execute_vision_with_fallback(
+                    chain=active_chain,
+                    image_bytes=page_jpeg_bytes,
+                    prompt=job.prompt_text or "Convert page to markdown",
+                    at_page=page_num,
+                    mime_type="image/jpeg",
+                    on_switch=on_switch_callback,
                 )
-                uow.pipeline2_jobs.save(p2_job)
 
-            uow.commit()
+                # Checkpoint 3 (after AI request): Check cancellation
+                if self._is_cancellation_requested(job.id):
+                    return self._handle_cancellation(job)
 
-        self._publish_state_changed(job.id, JobStatus.PROCESSING, JobStatus.DONE)
-        self._publish_completed(job.id, output_handle.uri)
-        return job
+                if raw_page_md is None:
+                    return self._pause_job(job, f"All APIs exhausted at page {page_num}.")
+
+                # Update active slot index on job
+                if used_slot:
+                    for idx, slot in enumerate(job.api_chain):
+                        if slot.id == used_slot.id and slot.slot_type == used_slot.slot_type:
+                            job.current_api_index = idx
+                            break
+
+                # Extract and crop images
+                final_page_md, cropped_images = self.doc_processor.extract_and_crop_images(
+                    markdown_text=raw_page_md,
+                    page_jpeg_bytes=page_jpeg_bytes,
+                    job_id=job.id,
+                )
+                for crop_name, crop_bytes in cropped_images:
+                    self.storage.store(
+                        job_id=job.id,
+                        artifact_type=ArtifactType.CROPPED_IMAGE,
+                        filename=crop_name,
+                        data=crop_bytes,
+                        mime_type="image/jpeg",
+                    )
+
+                page_entry = f"<!-- Page {page_num} -->\n{final_page_md}\n"
+                accumulated_markdown.append(page_entry)
+                job.processed_pages = page_num
+
+                # Persist page-level markdown snippet for deterministic checkpoint restoration
+                try:
+                    self.storage.store(
+                        job_id=job.id,
+                        artifact_type=ArtifactType.OUTPUT_MARKDOWN,
+                        filename=f"page_{page_num}.md",
+                        data=page_entry.encode("utf-8"),
+                        mime_type="text/markdown",
+                    )
+                except Exception:
+                    pass
+
+                # Save progress in database
+                with self.uow_factory.create() as uow:
+                    uow.jobs.update_progress(job.id, job.processed_pages, job.api_switch_log)
+                    if used_slot and hasattr(uow.apis, "report_pages_used"):
+                        uow.apis.report_pages_used(used_slot.id, used_slot.slot_type, 1)
+                    uow.commit()
+
+                self._publish_progress(job)
+
+                # Checkpoint 3b (after page progress commit): Check pause
+                if self._is_pause_requested(job.id):
+                    return self._handle_pause(job)
+
+            # Checkpoint 4 (before final artifact commit): Check cancellation and pause
+            if self._is_cancellation_requested(job.id):
+                return self._handle_cancellation(job)
+            if self._is_pause_requested(job.id):
+                return self._handle_pause(job)
+
+            # 3. Finalize job and store output Markdown artifact
+            full_document = "\n\n".join(accumulated_markdown)
+            output_handle = self.storage.store(
+                job_id=job.id,
+                artifact_type=ArtifactType.OUTPUT_MARKDOWN,
+                filename=f"output_{job.id}.md",
+                data=full_document.encode("utf-8"),
+                mime_type="text/markdown",
+            )
+
+            with self.uow_factory.create() as uow:
+                # Check for cancellation or pause race inside final commit transaction
+                current_job = uow.jobs.get_by_id(job.id)
+                if current_job and (getattr(current_job, "cancel_requested", False) is True or current_job.status == JobStatus.CANCELLED):
+                    JobStateTransitionPolicy.validate_transition(job.status, JobStatus.CANCELLED)
+                    uow.jobs.update_status(job.id, JobStatus.CANCELLED)
+                    uow.commit()
+                    job.status = JobStatus.CANCELLED
+                    self._publish_state_changed(job.id, JobStatus.PROCESSING, JobStatus.CANCELLED)
+                    self._publish_cancelled(job.id)
+                    return job
+
+                JobStateTransitionPolicy.validate_transition(job.status, JobStatus.DONE)
+                job.status = JobStatus.DONE
+                job.output_path = output_handle.uri
+                uow.jobs.update_progress(job.id, job.processed_pages, job.api_switch_log, output_path=output_handle.uri)
+                uow.jobs.update_status(job.id, JobStatus.DONE)
+
+                if job.auto_pipeline2:
+                    p2_job = Pipeline2Job(
+                        id=None,
+                        source_job_id=job.id,
+                        prompt_id=job.pipeline2_prompt_id,
+                        status=JobStatus.PENDING,
+                        input_path=output_handle.uri,
+                        api_chain=job.api_chain,
+                        current_api_index=0,
+                    )
+                    uow.pipeline2_jobs.save(p2_job)
+
+                uow.commit()
+
+            self._publish_state_changed(job.id, JobStatus.PROCESSING, JobStatus.DONE)
+            self._publish_completed(job.id, output_handle.uri)
+            return job
+        finally:
+            with self._lock:
+                self._pause_requested_jobs.discard(job.id)
 
     def execute_next_pipeline2_job(self) -> Optional[Pipeline2Job]:
         """Executes the next pending Pipeline 2 text refinement job."""
@@ -320,6 +365,54 @@ class JobExecutionService:
         self._publish_completed(p2_job.source_job_id, output_handle.uri)
         return p2_job
 
+    def pause_job(self, job_id: int) -> bool:
+        """
+        Canonical pause entry point for desktop controllers and application services.
+        Transitions PENDING jobs immediately to PAUSED, or flags pause_requested for PROCESSING jobs.
+        Preserves existing scheduled_at and checkpoint metadata.
+        """
+        with self.uow_factory.create() as uow:
+            job = uow.jobs.get_by_id(job_id)
+            if not job:
+                raise EntityNotFoundError("Job", job_id)
+
+            if job.status == JobStatus.PENDING:
+                JobStateTransitionPolicy.validate_transition(job.status, JobStatus.PAUSED)
+                uow.jobs.update_status(job_id, JobStatus.PAUSED)
+                uow.commit()
+                self._publish_state_changed(job_id, JobStatus.PENDING, JobStatus.PAUSED)
+                return True
+
+            elif job.status == JobStatus.PROCESSING:
+                with self._lock:
+                    self._pause_requested_jobs.add(job_id)
+                return True
+
+            elif job.status == JobStatus.PAUSED:
+                return True
+
+            else:
+                raise DomainError(f"Job {job_id} is in status '{job.status.value}' and cannot be paused.")
+
+    def _is_pause_requested(self, job_id: int) -> bool:
+        with self._lock:
+            return job_id in self._pause_requested_jobs
+
+    def _handle_pause(self, job: Job, reason: Optional[str] = None) -> Job:
+        with self._lock:
+            self._pause_requested_jobs.discard(job.id)
+
+        with self.uow_factory.create() as uow:
+            JobStateTransitionPolicy.validate_transition(job.status, JobStatus.PAUSED)
+            job.status = JobStatus.PAUSED
+            if reason:
+                job.error_message = sanitize_error_message(reason)
+            uow.jobs.update_status(job.id, JobStatus.PAUSED, error_message=job.error_message)
+            uow.commit()
+
+        self._publish_state_changed(job.id, JobStatus.PROCESSING, JobStatus.PAUSED)
+        return job
+
     def cancel_job(self, job_id: int) -> bool:
         """
         Canonical cancellation entry point for desktop controllers and application services.
@@ -356,6 +449,9 @@ class JobExecutionService:
             return bool(job and getattr(job, "cancel_requested", False) is True)
 
     def _handle_cancellation(self, job: Job) -> Job:
+        with self._lock:
+            self._pause_requested_jobs.discard(job.id)
+
         with self.uow_factory.create() as uow:
             JobStateTransitionPolicy.validate_transition(job.status, JobStatus.CANCELLED)
             job.status = JobStatus.CANCELLED

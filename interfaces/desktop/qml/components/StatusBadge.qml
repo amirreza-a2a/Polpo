@@ -16,9 +16,11 @@ Rectangle {
             case "cancelled": return "#4B5563";
             case "cancelling": return "#7F1D1D";
             case "paused": return "#92400E";
+            case "pausing": return "#D97706";
             case "retrying": return "#B45309";
             case "resuming": return "#1D4ED8";
             case "saving": return "#047857";
+            case "running_now": return "#059669";
             default: return "#374151";
         }
     }
@@ -29,9 +31,11 @@ Rectangle {
         text: {
             switch (root.status.toLowerCase()) {
                 case "cancelling": return "CANCELLING…";
+                case "pausing": return "PAUSING…";
                 case "retrying": return "RETRYING…";
                 case "resuming": return "RESUMING…";
                 case "saving": return "SAVING…";
+                case "running_now": return "STARTING…";
                 default: return root.status.toUpperCase();
             }
         }

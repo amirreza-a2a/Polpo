@@ -106,6 +106,15 @@ class JobController(QObject):
             return 0
 
     @Slot(int, result=bool)
+    def pause_job(self, job_id: int) -> bool:
+        """Requests cooperative pause of a pending, scheduled, or processing job."""
+        try:
+            return self.execution_service.pause_job(job_id)
+        except Exception as err:
+            self.error_occurred.emit(sanitize_error_message(str(err)))
+            return False
+
+    @Slot(int, result=bool)
     def cancel_job(self, job_id: int) -> bool:
         """Requests cooperative cancellation of a pending, scheduled, or processing job."""
         try:

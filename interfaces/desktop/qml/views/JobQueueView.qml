@@ -132,6 +132,7 @@ Item {
                             Text {
                                 text: {
                                     switch (model.actionState) {
+                                        case "pausing": return "Pausing…";
                                         case "cancelling": return "Cancelling…";
                                         case "retrying": return "Retrying…";
                                         case "resuming": return "Resuming…";
@@ -141,6 +142,18 @@ Item {
                                 }
                                 color: "#9CA3AF"
                                 font.pixelSize: 12
+                            }
+                        }
+
+                        Button {
+                            text: "Pause"
+                            visible: (model.status === "processing" || model.status === "pending") && model.actionState === ""
+                            enabled: model.actionState === ""
+                            onClicked: {
+                                if (typeof jobQueueModel !== "undefined" && jobQueueModel) {
+                                    jobQueueModel.set_action_state(model.id, "pausing");
+                                }
+                                jobController.pause_job(model.id);
                             }
                         }
 
@@ -170,7 +183,7 @@ Item {
 
                         Button {
                             text: "Retry"
-                            visible: model.status === "failed" && model.actionState === ""
+                            visible: (model.status === "failed" || model.status === "cancelled") && model.actionState === ""
                             enabled: model.actionState === ""
                             onClicked: {
                                 if (typeof jobQueueModel !== "undefined" && jobQueueModel) {
@@ -192,7 +205,7 @@ Item {
 
                         Button {
                             text: "Cancel"
-                            visible: model.actionState === ""
+                            visible: (model.status === "pending" || model.status === "processing" || model.status === "paused") && model.actionState === ""
                             enabled: model.actionState === ""
                             onClicked: {
                                 if (typeof jobQueueModel !== "undefined" && jobQueueModel) {

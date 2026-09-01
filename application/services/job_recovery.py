@@ -157,7 +157,8 @@ class JobRecoveryService:
 
     def resume_job(self, job_id: int, user_id: int = 1, new_chain_ids: Optional[List[int]] = None) -> JobResponseDTO:
         """
-        Resumes a PAUSED, FAILED, or CANCELLED job, re-queuing it as PENDING.
+        Resumes a PAUSED job from its persisted checkpoint, re-queuing it as PENDING.
+        Preserves existing scheduled_at and checkpoint metadata.
         """
         with self.uow_factory.create() as uow:
             job = uow.jobs.get_by_id(job_id)
@@ -203,12 +204,16 @@ class JobRecoveryService:
 
     def retry_job(self, job_id: int, user_id: int = 1) -> JobResponseDTO:
         """
-        Retries a failed job if retry limit has not been exceeded.
+        Retries a FAILED or CANCELLED job if retry limit has not been exceeded.
+        Preserves the latest persisted checkpoint (processed_pages).
         """
         with self.uow_factory.create() as uow:
             job = uow.jobs.get_by_id(job_id)
             if not job:
                 raise EntityNotFoundError("Job", job_id)
+
+            if job.status not in (JobStatus.FAILED, JobStatus.CANCELLED):
+                raise DomainError(f"Job is in status '{job.status.value}' and cannot be retried.")
 
             if not RetryPolicy.is_eligible_for_retry(job.retry_count):
                 raise DomainError(f"Maximum retry attempts ({RetryPolicy.MAX_AUTO_RETRIES}) reached.")

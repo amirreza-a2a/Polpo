@@ -110,6 +110,17 @@ class DesktopJobRuntime:
         self._wake_event.set()
         logger.info("DesktopJobRuntime resumed.")
 
+    def pause_active_jobs(self) -> None:
+        """Requests cooperative pause for all currently executing jobs."""
+        with self._lock:
+            job_ids = list(self._active_jobs.keys())
+
+        for jid in job_ids:
+            try:
+                self.job_execution_service.pause_job(jid)
+            except Exception as e:
+                logger.warning("Failed to request pause for active job %d: %s", jid, e)
+
     def cancel_active_jobs(self) -> None:
         """Requests cooperative cancellation for all currently executing jobs."""
         with self._lock:
