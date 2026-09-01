@@ -5,21 +5,25 @@
 import logging
 from datetime import datetime
 from typing import Any, List, Optional
+
 from application.ports.unit_of_work import IUnitOfWorkFactory
 from application.ports.storage import IArtifactStorage
 from application.ports.document_processor import IDocumentProcessor
-from application.ports.notifier import IApplicationEventPublisher, IProgressNotifier
+from application.ports.notifier import IApplicationEventPublisher
 from application.ports.ai_executor import IAIExecutionService
 from application.events import (
     JobProgressEvent,
     ApiSwitchEvent,
     JobCompletedEvent,
     JobFailedEvent,
+    JobCancelledEvent,
+    JobStateChangedEvent,
 )
+from application.sanitizer import sanitize_error_message
 from core.entities.job import Job, JobStatus, Pipeline2Job
 from core.entities.artifact import ArtifactHandle, ArtifactType, StorageBackendType
 from core.policies.job_state_policy import JobStateTransitionPolicy
-from core.exceptions.domain_exceptions import ArtifactNotFoundError
+from core.exceptions.domain_exceptions import ArtifactNotFoundError, EntityNotFoundError, DomainError
 
 logger = logging.getLogger("polpot.execution")
 
@@ -27,7 +31,8 @@ logger = logging.getLogger("polpot.execution")
 class JobExecutionService:
     """
     Application orchestrator for executing document processing jobs.
-    Coordinates page rendering, AI OCR vision execution, image cropping, and Markdown artifact generation.
+    Executes a single pre-claimed job, enforces cooperative cancellation checkpoints,
+    and publishes typed transport-neutral application events.
     """
 
     def __init__(
@@ -55,20 +60,44 @@ class JobExecutionService:
             self.publisher = None
 
     def execute_next_job(self) -> Optional[Job]:
-        # 1. Fetch next pending job from queue
+        """
+        Legacy compatibility helper. Atomically claims the next pending job
+        and delegates to execute_claimed_job. Canonical desktop runtime uses
+        execute_claimed_job() directly.
+        """
         with self.uow_factory.create() as uow:
-            job = uow.jobs.get_next_pending()
-            if not job:
-                return None
-
-            JobStateTransitionPolicy.validate_transition(job.status, JobStatus.PROCESSING)
-            job.status = JobStatus.PROCESSING
-            uow.jobs.update_status(job.id, JobStatus.PROCESSING)
+            job = None
+            if hasattr(uow.jobs, "claim_next_pending"):
+                job = uow.jobs.claim_next_pending()
+            elif hasattr(uow.jobs, "get_next_pending"):
+                job = uow.jobs.get_next_pending()
+                if job and isinstance(getattr(job, "status", None), JobStatus):
+                    job.status = JobStatus.PROCESSING
+                    uow.jobs.update_status(job.id, JobStatus.PROCESSING)
             uow.commit()
 
-        logger.info(f"[Job {job.id}] Started execution. Total pages: {job.total_pages}")
+        if not job:
+            return None
 
-        # 2. Retrieve source file from artifact storage
+        self._publish_state_changed(job.id, JobStatus.PENDING, JobStatus.PROCESSING)
+        return self.execute_claimed_job(job.id)
+
+    def execute_claimed_job(self, job_id: int) -> Optional[Job]:
+        """
+        Canonical execution entry point for pre-claimed jobs.
+        Does NOT perform an independent claim; operates strictly on the pre-claimed job_id.
+        """
+        with self.uow_factory.create() as uow:
+            job = uow.jobs.get_by_id(job_id)
+            if not job:
+                raise EntityNotFoundError("Job", job_id)
+
+            if isinstance(getattr(job, "status", None), JobStatus) and job.status != JobStatus.PROCESSING:
+                raise DomainError(f"Cannot execute job {job_id} in status '{job.status.value}'. Expected PROCESSING.")
+
+        logger.info(f"[Job {job.id}] Executing pipeline. Total pages: {job.total_pages}")
+
+        # 1. Retrieve source document from immutable artifact storage
         try:
             source_handle = ArtifactHandle(
                 storage_backend=StorageBackendType.LOCAL_FS,
@@ -79,18 +108,24 @@ class JobExecutionService:
             )
             pdf_bytes = self.storage.retrieve(source_handle)
         except (ArtifactNotFoundError, IOError, OSError) as e:
-            logger.error(f"[Job {job.id}] Failed to load source artifact: {e}")
+            error_msg = sanitize_error_message(f"Source artifact missing: {e}")
+            logger.error(f"[Job {job.id}] {error_msg}")
             with self.uow_factory.create() as uow:
-                uow.jobs.update_status(job.id, JobStatus.FAILED, error_message=f"Source artifact missing: {e}")
+                uow.jobs.update_status(job.id, JobStatus.FAILED, error_message=error_msg)
                 uow.commit()
-            self._publish_failed(job.id, f"Source artifact missing: {e}")
+            self._publish_state_changed(job.id, JobStatus.PROCESSING, JobStatus.FAILED)
+            self._publish_failed(job.id, error_msg, is_retryable=False)
             return job
 
-        # 3. Page processing loop
+        # 2. Page processing loop
         accumulated_markdown: List[str] = []
         start_page = job.processed_pages + 1
 
         for page_num in range(start_page, job.total_pages + 1):
+            # Cancellation Checkpoint 1 (before render)
+            if self._is_cancellation_requested(job.id):
+                return self._handle_cancellation(job)
+
             # Render page to JPEG
             try:
                 page_jpeg_bytes = self.doc_processor.render_page_to_jpeg(pdf_bytes, page_num)
@@ -102,9 +137,13 @@ class JobExecutionService:
                     mime_type="image/jpeg",
                 )
             except (IOError, OSError, IndexError) as e:
-                logger.error(f"[Job {job.id}] Rendering failed at page {page_num}: {e}")
-                self._fail_job(job, f"Page {page_num} render failed: {e}")
-                return job
+                error_msg = sanitize_error_message(f"Page {page_num} render failed: {e}")
+                logger.error(f"[Job {job.id}] {error_msg}")
+                return self._fail_job(job, error_msg)
+
+            # Cancellation Checkpoint 2 (before AI request)
+            if self._is_cancellation_requested(job.id):
+                return self._handle_cancellation(job)
 
             # Callback for recording API switch events
             def on_switch_callback(old_label: str, new_label: str, reason: str, page: int):
@@ -121,7 +160,7 @@ class JobExecutionService:
                     uow.commit()
                 self._publish_api_switch(job, old_label, new_label, reason, page)
 
-            # Send to AI executor with fallback chain starting at active slot
+            # Send to AI executor with fallback chain
             active_chain = job.api_chain[job.current_api_index:]
             raw_page_md, used_slot = self.ai_executor.execute_vision_with_fallback(
                 chain=active_chain,
@@ -132,9 +171,12 @@ class JobExecutionService:
                 on_switch=on_switch_callback,
             )
 
+            # Cancellation Checkpoint 3 (after AI request)
+            if self._is_cancellation_requested(job.id):
+                return self._handle_cancellation(job)
+
             if raw_page_md is None:
-                self._pause_job(job, f"All APIs exhausted at page {page_num}.")
-                return job
+                return self._pause_job(job, f"All APIs exhausted at page {page_num}.")
 
             # Update active slot index on job
             if used_slot:
@@ -164,13 +206,17 @@ class JobExecutionService:
             # Save progress in database
             with self.uow_factory.create() as uow:
                 uow.jobs.update_progress(job.id, job.processed_pages, job.api_switch_log)
-                if used_slot:
+                if used_slot and hasattr(uow.apis, "report_pages_used"):
                     uow.apis.report_pages_used(used_slot.id, used_slot.slot_type, 1)
                 uow.commit()
 
             self._publish_progress(job)
 
-        # 4. Finalize job and store integrated Markdown artifact
+        # Cancellation Checkpoint 4 (before final artifact commit)
+        if self._is_cancellation_requested(job.id):
+            return self._handle_cancellation(job)
+
+        # 3. Finalize job and store output Markdown artifact
         full_document = "\n\n".join(accumulated_markdown)
         output_handle = self.storage.store(
             job_id=job.id,
@@ -181,6 +227,17 @@ class JobExecutionService:
         )
 
         with self.uow_factory.create() as uow:
+            # Check for cancellation race inside final commit transaction
+            current_job = uow.jobs.get_by_id(job.id)
+            if current_job and (getattr(current_job, "cancel_requested", False) is True or current_job.status == JobStatus.CANCELLED):
+                JobStateTransitionPolicy.validate_transition(job.status, JobStatus.CANCELLED)
+                uow.jobs.update_status(job.id, JobStatus.CANCELLED)
+                uow.commit()
+                job.status = JobStatus.CANCELLED
+                self._publish_state_changed(job.id, JobStatus.PROCESSING, JobStatus.CANCELLED)
+                self._publish_cancelled(job.id)
+                return job
+
             JobStateTransitionPolicy.validate_transition(job.status, JobStatus.DONE)
             job.status = JobStatus.DONE
             job.output_path = output_handle.uri
@@ -201,28 +258,12 @@ class JobExecutionService:
 
             uow.commit()
 
+        self._publish_state_changed(job.id, JobStatus.PROCESSING, JobStatus.DONE)
         self._publish_completed(job.id, output_handle.uri)
         return job
 
-    def _pause_job(self, job: Job, error_msg: str) -> None:
-        with self.uow_factory.create() as uow:
-            JobStateTransitionPolicy.validate_transition(job.status, JobStatus.PAUSED)
-            job.status = JobStatus.PAUSED
-            job.error_message = error_msg
-            uow.jobs.update_status(job.id, JobStatus.PAUSED, error_message=error_msg)
-            uow.commit()
-        self._publish_failed(job.id, error_msg)
-
-    def _fail_job(self, job: Job, error_msg: str) -> None:
-        with self.uow_factory.create() as uow:
-            JobStateTransitionPolicy.validate_transition(job.status, JobStatus.FAILED)
-            job.status = JobStatus.FAILED
-            job.error_message = error_msg
-            uow.jobs.update_status(job.id, JobStatus.FAILED, error_message=error_msg)
-            uow.commit()
-        self._publish_failed(job.id, error_msg)
-
     def execute_next_pipeline2_job(self) -> Optional[Pipeline2Job]:
+        """Executes the next pending Pipeline 2 text refinement job."""
         with self.uow_factory.create() as uow:
             p2_job = uow.pipeline2_jobs.get_next_pending()
             if not p2_job:
@@ -236,7 +277,6 @@ class JobExecutionService:
         logger.info(f"[Pipeline2 Job {p2_job.id}] Started execution.")
 
         try:
-            # Load input text from source markdown artifact
             source_handle = ArtifactHandle(
                 storage_backend=StorageBackendType.LOCAL_FS,
                 uri=p2_job.input_path,
@@ -252,7 +292,6 @@ class JobExecutionService:
                 uow.commit()
             return p2_job
 
-        # Invoke AI executor for text refinement
         result, used_slot = self.ai_executor.execute_text_with_fallback(
             chain=p2_job.api_chain,
             prompt=p2_job.prompt_text or "Refine and structure markdown content",
@@ -265,7 +304,6 @@ class JobExecutionService:
                 uow.commit()
             return p2_job
 
-        # Store refined output
         output_handle = self.storage.store(
             job_id=p2_job.source_job_id,
             artifact_type=ArtifactType.PIPELINE2_MARKDOWN,
@@ -281,6 +319,84 @@ class JobExecutionService:
 
         self._publish_completed(p2_job.source_job_id, output_handle.uri)
         return p2_job
+
+    def cancel_job(self, job_id: int) -> bool:
+        """
+        Canonical cancellation entry point for desktop controllers and application services.
+        Transitions PENDING jobs immediately to CANCELLED, or flags cancel_requested for PROCESSING jobs.
+        """
+        with self.uow_factory.create() as uow:
+            job = uow.jobs.get_by_id(job_id)
+            if not job:
+                raise EntityNotFoundError("Job", job_id)
+
+            if job.status == JobStatus.PENDING:
+                JobStateTransitionPolicy.validate_transition(job.status, JobStatus.CANCELLED)
+                uow.jobs.update_status(job_id, JobStatus.CANCELLED)
+                uow.commit()
+                self._publish_state_changed(job_id, JobStatus.PENDING, JobStatus.CANCELLED)
+                self._publish_cancelled(job_id)
+                return True
+
+            elif job.status == JobStatus.PROCESSING:
+                if hasattr(uow.jobs, "request_cancellation"):
+                    uow.jobs.request_cancellation(job_id)
+                else:
+                    job.cancel_requested = True
+                    uow.jobs.save(job)
+                uow.commit()
+                return True
+
+            else:
+                raise DomainError(f"Job {job_id} is in status '{job.status.value}' and cannot be cancelled.")
+
+    def _is_cancellation_requested(self, job_id: int) -> bool:
+        with self.uow_factory.create() as uow:
+            job = uow.jobs.get_by_id(job_id)
+            return bool(job and getattr(job, "cancel_requested", False) is True)
+
+    def _handle_cancellation(self, job: Job) -> Job:
+        with self.uow_factory.create() as uow:
+            JobStateTransitionPolicy.validate_transition(job.status, JobStatus.CANCELLED)
+            job.status = JobStatus.CANCELLED
+            uow.jobs.update_status(job.id, JobStatus.CANCELLED)
+            uow.commit()
+
+        self._publish_state_changed(job.id, JobStatus.PROCESSING, JobStatus.CANCELLED)
+        self._publish_cancelled(job.id)
+        return job
+
+    def _pause_job(self, job: Job, error_msg: str) -> Job:
+        sanitized = sanitize_error_message(error_msg)
+        with self.uow_factory.create() as uow:
+            JobStateTransitionPolicy.validate_transition(job.status, JobStatus.PAUSED)
+            job.status = JobStatus.PAUSED
+            job.error_message = sanitized
+            uow.jobs.update_status(job.id, JobStatus.PAUSED, error_message=sanitized)
+            uow.commit()
+
+        self._publish_state_changed(job.id, JobStatus.PROCESSING, JobStatus.PAUSED)
+        self._publish_failed(job.id, sanitized, is_retryable=True)
+        return job
+
+    def _fail_job(self, job: Job, error_msg: str) -> Job:
+        sanitized = sanitize_error_message(error_msg)
+        with self.uow_factory.create() as uow:
+            JobStateTransitionPolicy.validate_transition(job.status, JobStatus.FAILED)
+            job.status = JobStatus.FAILED
+            job.error_message = sanitized
+            uow.jobs.update_status(job.id, JobStatus.FAILED, error_message=sanitized)
+            uow.commit()
+
+        self._publish_state_changed(job.id, JobStatus.PROCESSING, JobStatus.FAILED)
+        self._publish_failed(job.id, sanitized, is_retryable=False)
+        return job
+
+    def _publish_state_changed(self, job_id: int, old_st: Optional[JobStatus], new_st: JobStatus) -> None:
+        if not self.publisher:
+            return
+        if old_st is not None:
+            self.publisher.publish(JobStateChangedEvent(job_id=job_id, old_status=old_st, new_status=new_st))
 
     def _publish_progress(self, job: Job) -> None:
         if not self.publisher:
@@ -317,3 +433,8 @@ class JobExecutionService:
         if not self.publisher:
             return
         self.publisher.publish(JobFailedEvent(job_id=job_id, error_message=error_msg, is_retryable=is_retryable))
+
+    def _publish_cancelled(self, job_id: int) -> None:
+        if not self.publisher:
+            return
+        self.publisher.publish(JobCancelledEvent(job_id=job_id))

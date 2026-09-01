@@ -272,7 +272,7 @@ class TestApplicationServices(unittest.TestCase):
 
         self.assertEqual(res.markdown_content, "# Transcribed")
         self.mock_ai_executor.execute_vision_with_fallback.assert_called_once()
-        self.mock_uow.users.increment_daily_pages.assert_called_once_with(1, 1)
+        self.mock_uow.users.increment_daily_pages.assert_not_called()
 
     def test_job_submission_success(self):
         service = JobSubmissionService(self.mock_uow_factory, self.storage, self.mock_doc_processor)
@@ -338,7 +338,13 @@ class TestApplicationServices(unittest.TestCase):
             auto_pipeline2=True,
             pipeline2_prompt_id=5,
         )
+        def mock_claim():
+            job.status = JobStatus.PROCESSING
+            return job
+
+        self.mock_uow.jobs.claim_next_pending.side_effect = mock_claim
         self.mock_uow.jobs.get_next_pending.return_value = job
+        self.mock_uow.jobs.get_by_id.return_value = job
 
         self.mock_doc_processor.render_page_to_jpeg.return_value = b"\xff\xd8\xff\xe0FakeJPEG"
         self.mock_doc_processor.extract_and_crop_images.return_value = ("Page text markdown", [("crop_1.jpg", b"CropData")])

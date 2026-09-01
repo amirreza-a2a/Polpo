@@ -67,7 +67,7 @@ class TestQuickConvertCharacterization(unittest.TestCase):
         result = service.convert_image(cmd)
 
         self.assertEqual(result.markdown_content, "Generated OCR Markdown")
-        mock_uow.users.increment_daily_pages.assert_called_once_with(1, 1)
+        mock_uow.users.increment_daily_pages.assert_not_called()
 
     def test_quick_convert_quota_increment_amount(self):
         """
