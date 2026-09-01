@@ -100,6 +100,13 @@ class TestGoogleAdapter(unittest.TestCase):
         adapter = GoogleAdapter(api_key="test_key")
         self.assertIsInstance(adapter, AIProviderPort)
 
+    def test_google_genai_sdk_importable(self):
+        """Regression: verifies the exact import path used by GoogleAdapter at runtime."""
+        from google import genai
+        self.assertTrue(hasattr(genai, "Client"), "google.genai must expose Client class")
+        client_cls = genai.Client
+        self.assertTrue(callable(client_cls))
+
     @patch("google.genai.Client")
     def test_google_adapter_vision_dispatch(self, mock_client_cls):
         mock_client = MagicMock()
