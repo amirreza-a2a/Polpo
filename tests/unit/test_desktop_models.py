@@ -212,45 +212,37 @@ class TestDesktopModels(unittest.TestCase):
         self.assertEqual(model.data(idx0, JobQueueModel.StatusRole), "processing")
 
     def test_job_queue_model_retry_and_resume_lifecycle_convergence(self):
-        """Verifies complete FAILED -> RETRYING -> PENDING -> PROCESSING -> DONE lifecycle convergence."""
+        """Verifies complete FAILED (in History) -> Retry (enters Queue as PENDING) -> PROCESSING -> DONE lifecycle convergence."""
         with self.uow_factory.create() as uow:
-            uow.jobs.save(Job(id=None, file_name="failed_retry_test.pdf", file_path="/f.pdf", total_pages=4, status=JobStatus.FAILED, error_message="Network timeout"))
+            saved = uow.jobs.save(Job(id=None, file_name="failed_retry_test.pdf", file_path="/f.pdf", total_pages=4, status=JobStatus.FAILED, error_message="Network timeout"))
             uow.commit()
+            failed_id = saved.id
 
         model = JobQueueModel(self.query_service, self.bridge)
-        failed_row = None
-        failed_id = None
-        for i in range(model.rowCount()):
-            idx = model.index(i, 0)
-            if model.data(idx, JobQueueModel.FileNameRole) == "failed_retry_test.pdf":
-                failed_row = i
-                failed_id = model.data(idx, JobQueueModel.IdRole)
-                break
+        # FAILED job must NOT be in active queue initially
+        self.assertEqual(model._find_job_index(failed_id), -1)
 
-        self.assertIsNotNone(failed_row, "Failed job should be present in active queue model")
-        self.assertEqual(model.data(model.index(failed_row, 0), JobQueueModel.StatusRole), "failed")
-
-        # 1. User triggers Retry -> presentation sets 'retrying'
-        model.set_action_state(failed_id, "retrying")
-        idx_f = model.index(failed_row, 0)
-        self.assertEqual(model.data(idx_f, JobQueueModel.ActionStateRole), "retrying")
-
-        # 2. Backend publishes PENDING -> converges to PENDING and clears action state
+        # 1. User triggers Retry from History -> Backend publishes FAILED -> PENDING
         self.event_bus.publish(JobStateChangedEvent(job_id=failed_id, old_status=JobStatus.FAILED, new_status=JobStatus.PENDING))
         self.app.processEvents()
-        self.assertEqual(model.data(idx_f, JobQueueModel.StatusRole), "pending")
-        self.assertEqual(model.data(idx_f, JobQueueModel.ActionStateRole), "")
 
-        # 3. Runtime claims job -> converges to PROCESSING
+        # Job enters active queue as PENDING
+        idx_f = model._find_job_index(failed_id)
+        self.assertGreaterEqual(idx_f, 0, "Retried job must enter active queue model as PENDING")
+        model_idx = model.index(idx_f, 0)
+        self.assertEqual(model.data(model_idx, JobQueueModel.StatusRole), "pending")
+        self.assertEqual(model.data(model_idx, JobQueueModel.ActionStateRole), "")
+
+        # 2. Runtime claims job -> converges to PROCESSING
         self.event_bus.publish(JobStateChangedEvent(job_id=failed_id, old_status=JobStatus.PENDING, new_status=JobStatus.PROCESSING))
         self.app.processEvents()
-        self.assertEqual(model.data(idx_f, JobQueueModel.StatusRole), "processing")
+        self.assertEqual(model.data(model_idx, JobQueueModel.StatusRole), "processing")
 
         # 4. Progress updates
         self.event_bus.publish(JobProgressEvent(job_id=failed_id, processed_pages=2, total_pages=4, percent=50.0))
         self.app.processEvents()
-        self.assertEqual(model.data(idx_f, JobQueueModel.ProcessedPagesRole), 2)
-        self.assertEqual(model.data(idx_f, JobQueueModel.ProgressPercentRole), 50.0)
+        self.assertEqual(model.data(model.index(idx_f, 0), JobQueueModel.ProcessedPagesRole), 2)
+        self.assertEqual(model.data(model.index(idx_f, 0), JobQueueModel.ProgressPercentRole), 50.0)
 
         # 5. Job completes -> removed from queue
         self.event_bus.publish(JobStateChangedEvent(job_id=failed_id, old_status=JobStatus.PROCESSING, new_status=JobStatus.DONE))

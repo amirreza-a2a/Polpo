@@ -90,7 +90,7 @@ Item {
 
                         Button {
                             text: "Retry"
-                            visible: model.status === "failed"
+                            visible: model.status === "failed" || model.status === "cancelled"
                             onClicked: jobController.retry_job(model.id)
                         }
                     }

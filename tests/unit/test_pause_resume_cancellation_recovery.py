@@ -350,9 +350,9 @@ class TestPauseResumeCancellationRecovery(unittest.TestCase):
         ok = self.execution_service.cancel_job(job.id)
         self.assertTrue(ok)
 
-    # 13. Duplicate Retry clicks are ignored while retrying
+    # 13. Duplicate Action clicks are ignored while action is active
     def test_duplicate_retry_clicks_ignored_while_retrying(self):
-        job = self._create_and_ingest_job(status=JobStatus.FAILED)
+        job = self._create_and_ingest_job(status=JobStatus.PAUSED)
         self.queue_model.reload_queue()
         self.queue_model.set_action_state(job.id, "retrying")
         self.assertEqual(self.queue_model.data(self.queue_model.index(0, 0), JobQueueModel.ActionStateRole), "retrying")
@@ -458,9 +458,8 @@ class TestPauseResumeCancellationRecovery(unittest.TestCase):
         self.execution_service.cancel_job(job.id)
         self.assertEqual(len(events), 1)
 
-        # Subsequent cancel attempt raises DomainError or does not republish terminal event
-        with self.assertRaises(Exception):
-            self.execution_service.cancel_job(job.id)
+        # Subsequent cancel attempt returns True or does not republish duplicate events
+        self.assertTrue(self.execution_service.cancel_job(job.id))
         self.assertEqual(len(events), 1)
 
     # 18. Clean Architecture boundaries remain intact
@@ -469,8 +468,111 @@ class TestPauseResumeCancellationRecovery(unittest.TestCase):
         self.assertTrue(JobStateTransitionPolicy.can_transition(JobStatus.PENDING, JobStatus.PAUSED))
         self.assertTrue(JobStateTransitionPolicy.can_transition(JobStatus.PROCESSING, JobStatus.PAUSED))
         self.assertTrue(JobStateTransitionPolicy.can_transition(JobStatus.PAUSED, JobStatus.PENDING))
+        self.assertTrue(JobStateTransitionPolicy.can_transition(JobStatus.PAUSED, JobStatus.CANCELLED))
         self.assertTrue(JobStateTransitionPolicy.can_transition(JobStatus.CANCELLED, JobStatus.PENDING))
         self.assertFalse(JobStateTransitionPolicy.can_transition(JobStatus.DONE, JobStatus.CANCELLED))
+
+    # 19. Phase 8F.4 P0: PAUSED -> CANCELLED succeeds and preserves checkpoint
+    def test_paused_to_cancelled_persistence_and_checkpoint_preservation(self):
+        job = self._create_and_ingest_job(status=JobStatus.PAUSED, total_pages=5)
+        with self.uow_factory.create() as uow:
+            uow.jobs.update_progress(job.id, 2, [])
+            uow.commit()
+
+        # Store page artifact for page 1 & 2
+        self.storage.store(
+            job_id=job.id,
+            artifact_type=ArtifactType.OUTPUT_MARKDOWN,
+            filename="page_1.md",
+            data=b"# Page 1 text",
+            mime_type="text/markdown",
+        )
+
+        state_events = []
+        cancel_events = []
+        self.event_bus.subscribe(JobStateChangedEvent, lambda e: state_events.append(e))
+        self.event_bus.subscribe(JobCancelledEvent, lambda e: cancel_events.append(e))
+
+        # Cancel while in PAUSED status (no active worker running)
+        ok = self.execution_service.cancel_job(job.id)
+        self.assertTrue(ok)
+
+        with self.uow_factory.create() as uow:
+            db_job = uow.jobs.get_by_id(job.id)
+            self.assertEqual(db_job.status, JobStatus.CANCELLED)
+            self.assertEqual(db_job.processed_pages, 2)
+
+        # Verify events
+        self.assertEqual(len(state_events), 1)
+        self.assertEqual(state_events[0].old_status, JobStatus.PAUSED)
+        self.assertEqual(state_events[0].new_status, JobStatus.CANCELLED)
+        self.assertEqual(len(cancel_events), 1)
+        self.assertEqual(cancel_events[0].job_id, job.id)
+
+        # Verify page artifact is intact
+        page1_handle = ArtifactHandle(
+            storage_backend=StorageBackendType.LOCAL_FS,
+            uri="",
+            artifact_type=ArtifactType.OUTPUT_MARKDOWN,
+            job_id=job.id,
+            filename="page_1.md",
+        )
+        self.assertTrue(self.storage.exists(page1_handle))
+
+    # 20. Phase 8F.4 P1: Active Queue isolation and terminal state removal
+    def test_queue_model_active_queue_isolation_and_terminal_removal(self):
+        # Create 6 jobs with different statuses
+        j_pending = self._create_and_ingest_job(status=JobStatus.PENDING)
+        j_processing = self._create_and_ingest_job(status=JobStatus.PROCESSING)
+        j_paused = self._create_and_ingest_job(status=JobStatus.PAUSED)
+        j_done = self._create_and_ingest_job(status=JobStatus.DONE)
+        j_failed = self._create_and_ingest_job(status=JobStatus.FAILED)
+        j_cancelled = self._create_and_ingest_job(status=JobStatus.CANCELLED)
+
+        # Baseline load
+        self.queue_model.reload_queue()
+        self.app.processEvents()
+
+        # Only PENDING, PROCESSING, PAUSED must be in JobQueueModel
+        self.assertEqual(self.queue_model.rowCount(), 3)
+        job_ids_in_queue = [
+            self.queue_model.data(self.queue_model.index(r, 0), JobQueueModel.IdRole)
+            for r in range(self.queue_model.rowCount())
+        ]
+        self.assertIn(j_pending.id, job_ids_in_queue)
+        self.assertIn(j_processing.id, job_ids_in_queue)
+        self.assertIn(j_paused.id, job_ids_in_queue)
+        self.assertNotIn(j_done.id, job_ids_in_queue)
+        self.assertNotIn(j_failed.id, job_ids_in_queue)
+        self.assertNotIn(j_cancelled.id, job_ids_in_queue)
+
+        # Event-driven removal: PROCESSING -> FAILED removes row
+        self.event_bus.publish(
+            JobStateChangedEvent(job_id=j_processing.id, old_status=JobStatus.PROCESSING, new_status=JobStatus.FAILED)
+        )
+        self.app.processEvents()
+        self.assertEqual(self.queue_model.rowCount(), 2)
+
+        # Event-driven removal: PENDING -> CANCELLED removes row
+        self.event_bus.publish(
+            JobStateChangedEvent(job_id=j_pending.id, old_status=JobStatus.PENDING, new_status=JobStatus.CANCELLED)
+        )
+        self.app.processEvents()
+        self.assertEqual(self.queue_model.rowCount(), 1)
+
+        # Event-driven insertion: FAILED -> PENDING re-adds row
+        self.event_bus.publish(
+            JobStateChangedEvent(job_id=j_failed.id, old_status=JobStatus.FAILED, new_status=JobStatus.PENDING)
+        )
+        self.app.processEvents()
+        self.assertEqual(self.queue_model.rowCount(), 2)
+
+        # Event-driven insertion: CANCELLED -> PENDING re-adds row
+        self.event_bus.publish(
+            JobStateChangedEvent(job_id=j_cancelled.id, old_status=JobStatus.CANCELLED, new_status=JobStatus.PENDING)
+        )
+        self.app.processEvents()
+        self.assertEqual(self.queue_model.rowCount(), 3)
 
 
 if __name__ == "__main__":

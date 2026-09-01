@@ -423,11 +423,12 @@ class JobExecutionService:
             if not job:
                 raise EntityNotFoundError("Job", job_id)
 
-            if job.status == JobStatus.PENDING:
-                JobStateTransitionPolicy.validate_transition(job.status, JobStatus.CANCELLED)
+            if job.status in (JobStatus.PENDING, JobStatus.PAUSED):
+                old_status = job.status
+                JobStateTransitionPolicy.validate_transition(old_status, JobStatus.CANCELLED)
                 uow.jobs.update_status(job_id, JobStatus.CANCELLED)
                 uow.commit()
-                self._publish_state_changed(job_id, JobStatus.PENDING, JobStatus.CANCELLED)
+                self._publish_state_changed(job_id, old_status, JobStatus.CANCELLED)
                 self._publish_cancelled(job_id)
                 return True
 
@@ -438,6 +439,9 @@ class JobExecutionService:
                     job.cancel_requested = True
                     uow.jobs.save(job)
                 uow.commit()
+                return True
+
+            elif job.status == JobStatus.CANCELLED:
                 return True
 
             else:

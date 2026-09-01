@@ -107,8 +107,6 @@ class JobQueueModel(QAbstractListModel):
                 JobStatus.PENDING.value,
                 JobStatus.PROCESSING.value,
                 JobStatus.PAUSED.value,
-                JobStatus.FAILED.value,
-                JobStatus.CANCELLED.value,
             }
             for d in dtos:
                 if d.status in active_statuses:
@@ -170,7 +168,7 @@ class JobQueueModel(QAbstractListModel):
     @Slot(int, str, str)
     def _on_state_changed(self, job_id: int, old_status: str, new_status: str) -> None:
         idx = self._find_job_index(job_id)
-        terminal_statuses = {"done"}
+        terminal_statuses = {"done", "failed", "cancelled"}
 
         if new_status in terminal_statuses:
             if idx >= 0:
@@ -181,13 +179,6 @@ class JobQueueModel(QAbstractListModel):
             if idx >= 0:
                 self._jobs[idx]["status"] = new_status
                 self._jobs[idx]["action_state"] = ""
-                # If moving to failed, fetch error message
-                if new_status == "failed":
-                    try:
-                        dto = self.query_service.get_job_detail(job_id)
-                        self._jobs[idx]["error_message"] = dto.error_message or ""
-                    except Exception:
-                        pass
                 model_idx = self.index(idx, 0)
                 self.dataChanged.emit(
                     model_idx,
@@ -203,7 +194,7 @@ class JobQueueModel(QAbstractListModel):
                     self._jobs.insert(0, {
                         "id": dto.id,
                         "file_name": dto.file_name,
-                        "status": dto.status,
+                        "status": new_status,
                         "processed_pages": dto.processed_pages,
                         "total_pages": dto.total_pages,
                         "progress_percent": float(pct),

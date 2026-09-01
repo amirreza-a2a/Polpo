@@ -153,7 +153,10 @@ Item {
                                 if (typeof jobQueueModel !== "undefined" && jobQueueModel) {
                                     jobQueueModel.set_action_state(model.id, "pausing");
                                 }
-                                jobController.pause_job(model.id);
+                                var ok = jobController.pause_job(model.id);
+                                if (!ok && typeof jobQueueModel !== "undefined" && jobQueueModel) {
+                                    jobQueueModel.set_action_state(model.id, "");
+                                }
                             }
                         }
 
@@ -165,7 +168,10 @@ Item {
                                 if (typeof jobQueueModel !== "undefined" && jobQueueModel) {
                                     jobQueueModel.set_action_state(model.id, "resuming");
                                 }
-                                jobController.resume_job(model.id);
+                                var ok = jobController.resume_job(model.id);
+                                if (!ok && typeof jobQueueModel !== "undefined" && jobQueueModel) {
+                                    jobQueueModel.set_action_state(model.id, "");
+                                }
                             }
                         }
 
@@ -177,7 +183,10 @@ Item {
                                 if (typeof jobQueueModel !== "undefined" && jobQueueModel) {
                                     jobQueueModel.set_action_state(model.id, "running_now");
                                 }
-                                jobController.run_now(model.id);
+                                var ok = jobController.run_now(model.id);
+                                if (!ok && typeof jobQueueModel !== "undefined" && jobQueueModel) {
+                                    jobQueueModel.set_action_state(model.id, "");
+                                }
                             }
                         }
 
@@ -189,7 +198,10 @@ Item {
                                 if (typeof jobQueueModel !== "undefined" && jobQueueModel) {
                                     jobQueueModel.set_action_state(model.id, "retrying");
                                 }
-                                jobController.retry_job(model.id);
+                                var ok = jobController.retry_job(model.id);
+                                if (!ok && typeof jobQueueModel !== "undefined" && jobQueueModel) {
+                                    jobQueueModel.set_action_state(model.id, "");
+                                }
                             }
                         }
 
@@ -211,7 +223,10 @@ Item {
                                 if (typeof jobQueueModel !== "undefined" && jobQueueModel) {
                                     jobQueueModel.set_action_state(model.id, "cancelling");
                                 }
-                                jobController.cancel_job(model.id);
+                                var ok = jobController.cancel_job(model.id);
+                                if (!ok && typeof jobQueueModel !== "undefined" && jobQueueModel) {
+                                    jobQueueModel.set_action_state(model.id, "");
+                                }
                             }
                         }
                     }
