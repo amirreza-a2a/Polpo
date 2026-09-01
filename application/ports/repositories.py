@@ -55,6 +55,14 @@ class IJobRepository(ABC):
         """Reconciles in-flight jobs that were interrupted by an unexpected crash."""
         raise NotImplementedError
 
+    def get_missed_schedules(self, as_of: Optional[datetime] = None) -> List[Job]:
+        """Lists pending jobs whose scheduled_at timestamp is earlier than as_of."""
+        raise NotImplementedError
+
+    def reschedule_job(self, job_id: int, new_scheduled_at: Optional[datetime]) -> None:
+        """Updates the scheduled_at timestamp for a pending or paused job."""
+        raise NotImplementedError
+
     # Compatibility methods for the frozen Telegram transport
     def list_by_user(self, user_id: int, limit: int = 50, offset: int = 0) -> List[Job]:
         return self.list(limit=limit, offset=offset)

@@ -18,7 +18,7 @@ class JobStateTransitionPolicy:
     """
 
     ALLOWED_TRANSITIONS: dict[JobStatus, Set[JobStatus]] = {
-        JobStatus.PENDING: {JobStatus.PROCESSING, JobStatus.FAILED, JobStatus.CANCELLED},
+        JobStatus.PENDING: {JobStatus.PROCESSING, JobStatus.PAUSED, JobStatus.FAILED, JobStatus.CANCELLED},
         JobStatus.PROCESSING: {JobStatus.DONE, JobStatus.PAUSED, JobStatus.FAILED, JobStatus.CANCELLED},
         JobStatus.PAUSED: {JobStatus.PENDING, JobStatus.FAILED, JobStatus.CANCELLED},
         JobStatus.FAILED: {JobStatus.PENDING, JobStatus.CANCELLED},

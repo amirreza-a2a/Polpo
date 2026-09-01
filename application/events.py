@@ -51,5 +51,21 @@ class JobCancelledEvent:
 class JobStateChangedEvent:
     """Event emitted when a job transitions between lifecycle states."""
     job_id: int
-    old_status: JobStatus
+    old_status: Optional[JobStatus]
     new_status: JobStatus
+
+
+@dataclass(frozen=True)
+class MissedScheduleDetectedEvent:
+    """Event emitted when a job's scheduled execution time passed while the application was closed."""
+    job_id: int
+    file_name: str
+    scheduled_at: Optional[str | object]
+    policy: str
+
+
+@dataclass(frozen=True)
+class ScheduleUpdatedEvent:
+    """Event emitted when a job's scheduled execution time is set, updated, or cleared."""
+    job_id: int
+    scheduled_at: Optional[str | object]

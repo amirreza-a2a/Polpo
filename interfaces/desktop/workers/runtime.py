@@ -25,8 +25,8 @@ class DesktopJobRuntime:
     Enforces logical worker capacity bounds (1..8) dynamically from AppSettings,
     coordinates deterministic claim-to-dispatch event ordering using start gates,
     handles claim-then-dispatch races with immediate state compensation,
-    isolates and sanitizes unhandled worker crashes, and supports deterministic
-    shutdown with enforced timeout.
+    isolates and sanitizes unhandled worker crashes, supports immediate wakeups
+    via threading.Event, and supports deterministic shutdown with enforced timeout.
     """
 
     MAX_BACKING_WORKERS: int = 8
@@ -50,6 +50,7 @@ class DesktopJobRuntime:
         self._active_jobs: Dict[int, Future] = {}
         self._running = False
         self._paused = False
+        self._wake_event = threading.Event()
 
         backing_capacity = max(1, min(self.MAX_BACKING_WORKERS, max_workers))
         self._executor = ThreadPoolExecutor(max_workers=backing_capacity, thread_name_prefix="PolpoJobWorker")
@@ -71,12 +72,17 @@ class DesktopJobRuntime:
         with self._lock:
             return len(self._active_jobs)
 
+    def wake(self) -> None:
+        """Signals the dispatcher loop to evaluate pending work immediately."""
+        self._wake_event.set()
+
     def start(self) -> None:
         """Starts background polling and worker dispatching loop."""
         with self._lock:
             if self._running:
                 return
             self._running = True
+            self._wake_event.clear()
 
         self._dispatch_thread = threading.Thread(
             target=self._dispatch_loop,
@@ -90,12 +96,14 @@ class DesktopJobRuntime:
         """Pauses dispatching of new pending jobs. Active workers finish current jobs."""
         with self._lock:
             self._paused = True
+        self._wake_event.set()
         logger.info("DesktopJobRuntime paused.")
 
     def resume(self) -> None:
         """Resumes dispatching of pending jobs."""
         with self._lock:
             self._paused = False
+        self._wake_event.set()
         logger.info("DesktopJobRuntime resumed.")
 
     def cancel_active_jobs(self) -> None:
@@ -118,6 +126,7 @@ class DesktopJobRuntime:
         with self._lock:
             self._running = False
             self._paused = True
+        self._wake_event.set()
 
         if self._dispatch_thread and self._dispatch_thread.is_alive():
             self._dispatch_thread.join(timeout=1.0)
@@ -160,7 +169,9 @@ class DesktopJobRuntime:
                 except Exception as e:
                     logger.exception("Error in DesktopJobRuntime dispatch loop: %s", e)
 
-            time.sleep(self.poll_interval)
+            # Wait for wake event or poll_interval timeout
+            self._wake_event.wait(timeout=self.poll_interval)
+            self._wake_event.clear()
 
     def _dispatch_pending_if_capacity_available(self) -> None:
         limit = self.max_concurrent_jobs

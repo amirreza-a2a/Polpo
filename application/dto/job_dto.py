@@ -17,6 +17,7 @@ class SubmitJobCommand:
     api_chain_ids: Optional[List[int]] = None
     auto_pipeline2: bool = False
     pipeline2_prompt_id: Optional[int] = None
+    scheduled_at: Optional[datetime] = None
 
 
 @dataclass

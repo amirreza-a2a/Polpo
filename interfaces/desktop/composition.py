@@ -25,6 +25,7 @@ from infrastructure.ai.provider_detector import AIProviderDetector
 from application.services.job_submission import JobSubmissionService
 from application.services.job_execution import JobExecutionService
 from application.services.job_recovery import JobRecoveryService
+from application.services.schedule_service import ScheduleService
 from application.services.job_query import JobQueryService
 from application.services.quick_convert import QuickConvertService
 from application.services.api_key_service import ApiKeyService
@@ -32,14 +33,15 @@ from application.services.settings_service import LocalSettingsService
 from application.services.prompt_service import PromptService
 from application.services.artifact_service import ArtifactService
 from interfaces.desktop.workers.runtime import DesktopJobRuntime
+from interfaces.desktop.workers.scheduler import DesktopJobScheduler
 
 
 class DesktopAppContainer:
     """
     Canonical Desktop Composition Root.
     Assembles local-first SQLite persistence, OS Keyring security, PyMuPDF document
-    processing, memory rate limiting, AI execution, and application services into
-    a single cohesive dependency graph.
+    processing, memory rate limiting, AI execution, persistent scheduling, and application
+    services into a single cohesive dependency graph.
     """
 
     def __init__(
@@ -50,6 +52,7 @@ class DesktopAppContainer:
         passphrase: Optional[str] = None,
         keyring_service_name: str = "polpot_desktop",
         default_rpms: Optional[Dict[str, int]] = None,
+        scheduler_tick_interval: float = 5.0,
     ):
         self._initialized: bool = False
 
@@ -134,7 +137,7 @@ class DesktopAppContainer:
             event_publisher=self.event_bus,
         )
 
-        # 6. Desktop Concurrent Runtime
+        # 6. Desktop Concurrent Runtime & Persistent Scheduler
         self.runtime = DesktopJobRuntime(
             uow_factory=self.uow_factory,
             job_execution_service=self.job_execution_service,
@@ -142,20 +145,36 @@ class DesktopAppContainer:
             event_publisher=self.event_bus,
         )
 
+        self.schedule_service = ScheduleService(
+            uow_factory=self.uow_factory,
+            event_publisher=self.event_bus,
+            runtime_wake_fn=self.runtime.wake,
+        )
+
+        self.scheduler = DesktopJobScheduler(
+            uow_factory=self.uow_factory,
+            runtime=self.runtime,
+            settings_service=self.settings_service,
+            event_publisher=self.event_bus,
+            tick_interval=scheduler_tick_interval,
+        )
+
     def initialize(self) -> None:
         """
         Executes deterministic startup sequence:
         1. Applies SQLite schema migrations.
         2. Reconciles stale processing jobs to PAUSED.
+        3. Reconciles missed schedules according to AppSettings policy.
         Sets initialized state flag.
         """
         self.migration_runner.run_migrations()
         self.job_recovery_service.reconcile_stale_jobs()
+        self.job_recovery_service.reconcile_missed_schedules()
         self._initialized = True
 
     def start_runtime(self) -> None:
         """
-        Starts the background worker dispatching runtime.
+        Starts the background worker dispatching runtime and persistent scheduler.
         Refuses to start if container has not completed initialization/recovery.
         """
         if not self._initialized:
@@ -163,6 +182,7 @@ class DesktopAppContainer:
                 "DesktopAppContainer must be initialized via initialize() before starting the runtime."
             )
         self.runtime.start()
+        self.scheduler.start()
 
     def start(self) -> None:
         """Convenience lifecycle method to initialize container and start runtime in order."""
@@ -171,5 +191,6 @@ class DesktopAppContainer:
         self.start_runtime()
 
     def shutdown(self) -> None:
-        """Shuts down the desktop runtime and releases resources."""
+        """Shuts down the desktop scheduler and runtime and releases resources."""
+        self.scheduler.shutdown()
         self.runtime.shutdown()

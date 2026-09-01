@@ -751,6 +751,32 @@ class SQLiteJobRepository(IJobRepository):
         )
         return cur.rowcount
 
+    def get_missed_schedules(self, as_of: Optional[datetime] = None) -> List[Job]:
+        as_of_iso = _format_iso_dt(as_of or datetime.now(timezone.utc))
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            SELECT * FROM jobs
+            WHERE status = 'pending'
+              AND cancel_requested = 0
+              AND scheduled_at IS NOT NULL
+              AND scheduled_at < ?
+            ORDER BY scheduled_at ASC, id ASC
+            """,
+            (as_of_iso,),
+        )
+        return [self._row_to_entity(r) for r in cur.fetchall()]
+
+    def reschedule_job(self, job_id: int, new_scheduled_at: Optional[datetime]) -> None:
+        _ensure_transaction(self.conn)
+        sched_iso = _format_iso_dt(new_scheduled_at) if new_scheduled_at else None
+        now_iso = _format_iso_dt(datetime.now(timezone.utc))
+        cur = self.conn.cursor()
+        cur.execute(
+            "UPDATE jobs SET scheduled_at = ?, updated_at = ? WHERE id = ?",
+            (sched_iso, now_iso, job_id),
+        )
+
     # Legacy Compatibility Methods
     def list_by_user(self, user_id: int, limit: int = 50, offset: int = 0) -> List[Job]:
         return self.list(limit=limit, offset=offset)
