@@ -3,17 +3,32 @@
 # ============================================================
 
 from abc import ABC, abstractmethod
-from typing import Optional
 from core.entities.credential_ref import CredentialRef
 
 
 class ICredentialResolver(ABC):
     """
-    درگاه حل و واکشی کلید/رمز عبور ارائه‌دهنده بر اساس CredentialRef.
-    این درگاه دسترسی به کلیدهای خام را صرفاً در مرز زیرساخت مجاز می‌سازد.
+    Port for resolving, storing, and deleting provider credentials based on CredentialRef.
+    Raw secrets are handled strictly behind this boundary in infrastructure.
     """
 
     @abstractmethod
     def resolve_api_key(self, credential_ref: CredentialRef) -> str:
-        """تبدیل شناسه هویتی به کلید API واقعی."""
+        """
+        Resolves a CredentialRef to the raw plaintext API key string.
+        """
+        pass
+
+    @abstractmethod
+    def store_api_key(self, credential_ref: CredentialRef, api_key: str) -> None:
+        """
+        Securely stores a raw API key under the reference identifier.
+        """
+        pass
+
+    @abstractmethod
+    def delete_api_key(self, credential_ref: CredentialRef) -> bool:
+        """
+        Deletes the stored API key associated with the reference.
+        """
         pass

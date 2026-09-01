@@ -38,3 +38,9 @@ class AuthenticationError(DomainError):
     """خطای عدم احراز هویت یا نامعتبر بودن توکن/کلید دسترسی."""
     def __init__(self, message: str = "Authentication failed or token expired."):
         super().__init__(message)
+
+
+class CredentialConsistencyError(DomainError):
+    """Raised when credential storage and database metadata fail to reconcile consistently."""
+    def __init__(self, message: str):
+        super().__init__(message)
