@@ -1,79 +1,135 @@
-# راهنمای راه‌اندازی روی cPanel
+# PolpoT — Desktop Document Intelligence
 
-## ۱. ساخت دیتابیس MySQL
+PolpoT is a **desktop-first, local-first, serverless embedded application** for intelligent document transcription, OCR, image extraction, and AI-powered Markdown conversion.
+
+---
+
+## 1. Architectural Principles
+
+* **Desktop-First & Local-First:** Built with **PySide6 / QML** and embedded Python application services.
+* **Zero Server Dependency:** Runs entirely on the user's machine without FastAPI, uvicorn, remote backend servers, JWT authentication, or loopback HTTP listeners.
+* **Direct Outbound AI Communications:** Outbound HTTPS requests directly connect to configured AI providers (Google Gemini, OpenAI, OpenRouter, compatible custom endpoints) using user-owned API keys (BYOK).
+* **Secure Credential Storage:** API keys are secured via the **OS Keyring** (Windows Credential Manager / macOS Keychain / Linux Secret Service) with an authenticated Fernet PBKDF2 encrypted file vault fallback (`EncryptedFileCredentialStore`). Raw secrets never touch the database.
+* **Persistent SQLite WAL Persistence:** Local history, queue states, settings, and scheduling survive restarts and app crashes via SQLite with Write-Ahead Logging (WAL) and atomic transactions.
+* **Cooperative Background Concurrency:** Long-running document conversions, PDF rendering (PyMuPDF), and AI API calls run on background threads via `QThreadPool` / `DesktopJobRuntime` with cooperative pause, resume, and cancellation.
+
+```text
+PySide6 / QML Views
+        ↓
+Desktop Controllers & ViewModels
+        ↓
+Application Services (Submission, Execution, Recovery, Settings, Prompts)
+        ↓
+Application Ports (UnitOfWork, CredentialResolver, Storage, AIProvider)
+        ↓
+Infrastructure Adapters
+        ↓
+Local SQLite (WAL) / OS Keyring / Local Artifact Storage / AI Provider SDKs
+```
+
+---
+
+## 2. Installation & Setup
+
+### Prerequisites
+* Python 3.10+
+* Virtual Environment
+
+### Install Dependencies
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+---
+
+## 3. Running PolpoT Desktop
+
+To launch the desktop application:
+
+```bash
+python -m interfaces.desktop.app
+```
+
+---
+
+## 4. Running the Test Suite
+
+Run the full automated test suite:
+
+```bash
+pytest -q
+```
+
+---
+
+## 5. Repository Structure
+
+```text
+PolpoT/
+├── core/                           ← Pure Python domain entities & policies
+│   ├── entities/                   ← Job, ApiSlot, AppSettings, Prompt, Artifact
+│   └── policies/                   ← JobStateTransitionPolicy, RetryPolicy
+├── application/                    ← Use cases, DTOs, events, and ports
+│   ├── dto/                        ← Typed command and query DTOs
+│   ├── events/                     ← Transport-neutral application events
+│   ├── ports/                      ← Abstract interfaces (UoW, CredentialResolver, etc.)
+│   └── services/                   ← JobExecution, Recovery, Submission, ApiKey, Settings
+├── infrastructure/                 ← Concrete infrastructure implementations
+│   ├── persistence/sqlite/         ← SQLite connection, WAL migrations, repositories
+│   ├── security/                   ← KeyringCredentialResolver, EncryptedFileCredentialStore
+│   ├── ai/                         ← Google & OpenAI adapters, RateLimitedAIExecutor
+│   ├── storage/                    ← LocalStorageAdapter (Artifact and PDF ingestion)
+│   ├── document/                   ← PyMuPDFDocumentProcessor (fitz)
+│   └── events/                     ← InMemoryEventBus
+├── interfaces/
+│   └── desktop/                    ← Canonical Desktop Presentation Layer
+│       ├── app.py                  ← Desktop application entrypoint (create_app)
+│       ├── composition.py          ← DesktopAppContainer (Composition Root)
+│       ├── bridge.py               ← QtSignalEventBridge (EventBus → Qt Signals)
+│       ├── controllers/            ← JobController, ApiKeyController, SettingsController, etc.
+│       ├── models/                 ← JobQueueModel, JobHistoryModel, ApiSlotModel, etc.
+│       ├── workers/                ← DesktopJobRuntime, JobWorkerRunnable, Scheduler
+│       └── qml/                    ← QML user interface views and components
+└── tests/                          ← Unit, invariant, security, and lifecycle tests
+```
+
+---
+
+## 6. Frozen Legacy Telegram Transport (Compatibility Subsystem)
+
+> [!NOTE]
+> Telegram is a **frozen legacy transport adapter** retained for backward compatibility. Desktop code has zero dependencies on Telegram transport modules or legacy MySQL infrastructure.
+
+<details>
+<summary>Legacy cPanel / MySQL Deployment Instructions (Click to expand)</summary>
+
+### ۱. ساخت دیتابیس MySQL
 1. وارد cPanel شوید
 2. MySQL Databases → ساخت دیتابیس جدید
 3. یک کاربر MySQL بسازید و به دیتابیس دسترسی کامل بدهید
 4. اطلاعات را در `config.py` وارد کنید
 
-## ۲. آپلود فایل‌ها
-```
-آپلود پوشه pdf_bot به خارج از public_html
-مثلاً: /home/username/pdf_bot/
-```
-
-## ۳. نصب Python App در cPanel
+### ۲. نصب Python App در cPanel
 1. Software → Setup Python App
 2. Python Version: 3.10+
 3. Application Root: pdf_bot
 4. Application Startup File: main.py
 
-## ۴. نصب کتابخانه‌ها
-```bash
-pip install -r requirements.txt
-```
-
-## ۵. راه‌اندازی دیتابیس
+### ۳. راه‌اندازی دیتابیس
 ```bash
 python database/connection.py
 ```
 
-## ۶. تنظیم Cron Job برای Worker
+### ۴. تنظیم Cron Job برای Worker
 در cPanel → Cron Jobs:
 ```
 * * * * * /usr/bin/python3 /home/username/pdf_bot/services/worker.py >> /home/username/pdf_bot/worker.log 2>&1
 ```
 
-## ۷. اجرای بات
+### ۵. اجرای بات
 ```bash
 python main.py
 ```
-
-## ساختار فایل‌ها
-```
-pdf_bot/
-├── main.py                 ← اجرای اصلی بات
-├── config.py               ← تنظیمات (پر کنید)
-├── requirements.txt
-├── worker.lock             ← خودکار ساخته می‌شود
-├── rate_limits.json        ← خودکار ساخته می‌شود
-├── database/
-│   ├── connection.py
-│   └── models.py
-├── handlers/
-│   ├── common.py
-│   ├── pdf.py
-│   ├── user.py
-│   └── admin.py
-├── services/
-│   ├── worker.py           ← اجرا توسط Cron
-│   ├── api_manager.py
-│   ├── pdf_processor.py
-│   └── backup.py
-├── utils/
-│   ├── rate_limiter.py
-│   └── file_manager.py
-├── temp_files/             ← خودکار ساخته می‌شود
-└── output_files/           ← خودکار ساخته می‌شود
-```
-
-## تنظیمات config.py
-```python
-BOT_TOKEN          = "توکن بات از BotFather"
-ADMIN_IDS          = [آیدی عددی شما]
-BACKUP_CHANNEL_ID  = آیدی چنل بکاپ (عدد منفی)
-DB_HOST            = "localhost"
-DB_NAME            = "نام دیتابیس"
-DB_USER            = "کاربر دیتابیس"
-DB_PASS            = "رمز دیتابیس"
-```
+</details>
