@@ -68,6 +68,10 @@ class DesktopJobRuntime:
         return 2
 
     @property
+    def is_running(self) -> bool:
+        return self._running
+
+    @property
     def active_worker_count(self) -> int:
         with self._lock:
             return len(self._active_jobs)
