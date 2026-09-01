@@ -252,6 +252,8 @@ class JobExecutionService:
                     if order is not None and order in regions_by_order:
                         target_region = regions_by_order[order]
                         target_region.active_artifact_uri = handle.uri
+                        target_region.active_artifact_version = 1
+                        target_region.artifact_version_watermark = 1
                         target_region.sync_status = SyncStatus.SYNCED
 
                 if created_regions:
@@ -319,7 +321,9 @@ class JobExecutionService:
                 JobStateTransitionPolicy.validate_transition(job.status, JobStatus.DONE)
                 job.status = JobStatus.DONE
                 job.output_path = output_handle.uri
+                job.output_artifact_version_watermark = 1
                 uow.jobs.update_progress(job.id, job.processed_pages, job.api_switch_log, output_path=output_handle.uri)
+                uow.jobs.save(job)
                 uow.jobs.update_status(job.id, JobStatus.DONE)
 
                 if job.auto_pipeline2:

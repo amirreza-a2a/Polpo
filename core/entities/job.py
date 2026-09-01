@@ -49,6 +49,7 @@ class Job:
     current_api_index: int = 0
     api_switch_log: List[Dict[str, Any]] = field(default_factory=list)
     output_path: Optional[str] = None
+    output_artifact_version_watermark: int = 0
     error_message: Optional[str] = None
     retry_count: int = 0
     auto_pipeline2: bool = False

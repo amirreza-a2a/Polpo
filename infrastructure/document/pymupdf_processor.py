@@ -120,3 +120,37 @@ class PyMuPDFDocumentProcessor(IDocumentProcessor):
         text = separator_pattern.sub("", text)
         text = re.sub(r"\n{3,}", "\n\n", text)
         return text.strip()
+
+    def crop_region_image(
+        self,
+        page_jpeg_bytes: bytes,
+        box: BoundingBox,
+        policy: Optional[CropPolicy] = None,
+    ) -> Optional[bytes]:
+        """Crops a specific visual region geometry from a page raster."""
+        if not page_jpeg_bytes or not box:
+            return None
+
+        pol = policy or self.crop_policy
+        try:
+            width, height = ImageCropper.get_image_dimensions(page_jpeg_bytes)
+        except Exception:
+            return None
+
+        pixel_rect = CoordinateMapper.map_to_pixels(
+            box=box,
+            image_width=width,
+            image_height=height,
+            policy=pol,
+        )
+        if pixel_rect is None:
+            return None
+
+        try:
+            return ImageCropper.crop_jpeg(
+                image_bytes=page_jpeg_bytes,
+                rect=pixel_rect,
+                quality=pol.jpeg_quality,
+            )
+        except Exception:
+            return None

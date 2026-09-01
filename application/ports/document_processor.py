@@ -4,7 +4,9 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, Sequence, Tuple, Union
+from typing import List, Optional, Sequence, Tuple, Union
+
+from core.entities.bounding_box import BoundingBox, CropPolicy
 
 
 @dataclass(frozen=True)
@@ -62,4 +64,14 @@ class IDocumentProcessor(ABC):
     @abstractmethod
     def unify_markdown(self, raw_text: str) -> str:
         """یکپارچه‌سازی و حذف سرتیترهای صفحات و جداکننده‌ها از مارک‌داون."""
+        pass
+
+    @abstractmethod
+    def crop_region_image(
+        self,
+        page_jpeg_bytes: bytes,
+        box: "BoundingBox",
+        policy: Optional["CropPolicy"] = None,
+    ) -> Optional[bytes]:
+        """Crops a specific visual region geometry from a page raster."""
         pass

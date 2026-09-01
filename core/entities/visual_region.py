@@ -52,7 +52,8 @@ class VisualRegion:
     reviewed_bbox: Optional[BoundingBox] = None
     review_status: ReviewStatus = ReviewStatus.UNREVIEWED
     sync_status: SyncStatus = SyncStatus.PENDING_INITIAL_CROP
-    active_artifact_version: int = 1
+    active_artifact_version: int = 0
+    artifact_version_watermark: int = 0
     active_artifact_uri: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -76,6 +77,10 @@ class VisualRegion:
 
         if not isinstance(self.display_order, int) or self.display_order <= 0:
             raise DomainError(f"VisualRegion requires a positive integer display_order, got {self.display_order}.")
+
+        # Ensure watermark invariant: watermark is always >= active_artifact_version
+        if self.artifact_version_watermark < self.active_artifact_version:
+            self.artifact_version_watermark = self.active_artifact_version
 
         # Provenance invariants
         if self.origin == RegionOrigin.AI_DETECTED:
@@ -115,7 +120,8 @@ class VisualRegion:
             reviewed_bbox=None,
             review_status=ReviewStatus.UNREVIEWED,
             sync_status=SyncStatus.PENDING_INITIAL_CROP,
-            active_artifact_version=1,
+            active_artifact_version=0,
+            artifact_version_watermark=0,
             active_artifact_uri=None,
         )
 
@@ -141,7 +147,8 @@ class VisualRegion:
             reviewed_bbox=reviewed_bbox,
             review_status=ReviewStatus.MANUAL,
             sync_status=SyncStatus.PENDING_INITIAL_CROP,
-            active_artifact_version=1,
+            active_artifact_version=0,
+            artifact_version_watermark=0,
             active_artifact_uri=None,
         )
 
@@ -189,5 +196,19 @@ class VisualRegion:
     def reject(self) -> None:
         """Marks region as deleted/rejected."""
         self.review_status = ReviewStatus.REJECTED
+        self.sync_status = SyncStatus.DIRTY_RECROP_REQUIRED
+        self.updated_at = datetime.now(timezone.utc)
+
+    def restore(self) -> None:
+        """Restores a rejected region back to unreviewed, manual, or modified state, marking it dirty for re-inclusion."""
+        if not self.is_deleted:
+            return
+        if self.origin == RegionOrigin.AI_DETECTED:
+            if self.reviewed_bbox is not None and self.reviewed_bbox != self.detected_bbox:
+                self.review_status = ReviewStatus.MODIFIED
+            else:
+                self.review_status = ReviewStatus.UNREVIEWED
+        else:
+            self.review_status = ReviewStatus.MANUAL
         self.sync_status = SyncStatus.DIRTY_RECROP_REQUIRED
         self.updated_at = datetime.now(timezone.utc)

@@ -58,7 +58,8 @@ class TestVisualRegionDomainModel(unittest.TestCase):
         self.assertIsNone(region.reviewed_bbox)
         self.assertEqual(region.review_status, ReviewStatus.UNREVIEWED)
         self.assertEqual(region.sync_status, SyncStatus.PENDING_INITIAL_CROP)
-        self.assertEqual(region.active_artifact_version, 1)
+        self.assertEqual(region.active_artifact_version, 0)
+        self.assertEqual(region.artifact_version_watermark, 0)
         self.assertIsNone(region.active_artifact_uri)
         self.assertEqual(region.effective_bbox, bbox)
         self.assertFalse(region.is_modified)
@@ -242,7 +243,8 @@ class TestVisualRegionSQLitePersistence(unittest.TestCase):
             self.assertIsNone(loaded.reviewed_bbox)
             self.assertEqual(loaded.review_status, ReviewStatus.UNREVIEWED)
             self.assertEqual(loaded.sync_status, SyncStatus.PENDING_INITIAL_CROP)
-            self.assertEqual(loaded.active_artifact_version, 1)
+            self.assertEqual(loaded.active_artifact_version, 0)
+            self.assertEqual(loaded.artifact_version_watermark, 0)
 
     def test_save_and_retrieve_user_manual_region(self):
         bbox = BoundingBox(ymin=200, xmin=250, ymax=600, xmax=650)

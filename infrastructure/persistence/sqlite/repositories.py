@@ -459,6 +459,7 @@ class SQLiteJobRepository(IJobRepository):
             current_api_index=row["current_api_index"],
             api_switch_log=switch_log,
             output_path=row["output_path"],
+            output_artifact_version_watermark=row["output_artifact_version_watermark"] if "output_artifact_version_watermark" in row.keys() else 0,
             error_message=row["error_message"],
             retry_count=row["retry_count"],
             auto_pipeline2=bool(row["auto_pipeline2"]),
@@ -498,10 +499,11 @@ class SQLiteJobRepository(IJobRepository):
                 INSERT INTO jobs (
                     file_name, file_path, total_pages, processed_pages,
                     status, prompt_id, prompt_text, api_chain, current_api_index,
-                    api_switch_log, output_path, error_message, retry_count,
+                    api_switch_log, output_path, output_artifact_version_watermark,
+                    error_message, retry_count,
                     auto_pipeline2, pipeline2_prompt_id, scheduled_at,
                     cancel_requested, claimed_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job.file_name,
@@ -515,6 +517,7 @@ class SQLiteJobRepository(IJobRepository):
                     job.current_api_index,
                     switch_log_json,
                     job.output_path,
+                    job.output_artifact_version_watermark,
                     job.error_message,
                     job.retry_count,
                     1 if job.auto_pipeline2 else 0,
@@ -536,6 +539,7 @@ class SQLiteJobRepository(IJobRepository):
                     file_name = ?, file_path = ?, total_pages = ?, processed_pages = ?,
                     status = ?, prompt_id = ?, prompt_text = ?, api_chain = ?,
                     current_api_index = ?, api_switch_log = ?, output_path = ?,
+                    output_artifact_version_watermark = ?,
                     error_message = ?, retry_count = ?, auto_pipeline2 = ?,
                     pipeline2_prompt_id = ?, scheduled_at = ?, cancel_requested = ?,
                     claimed_at = ?, updated_at = ?
@@ -553,6 +557,7 @@ class SQLiteJobRepository(IJobRepository):
                     job.current_api_index,
                     switch_log_json,
                     job.output_path,
+                    job.output_artifact_version_watermark,
                     job.error_message,
                     job.retry_count,
                     1 if job.auto_pipeline2 else 0,
@@ -985,6 +990,7 @@ class SQLiteVisualRegionRepository(IVisualRegionRepository):
             review_status=ReviewStatus(row["review_status"]),
             sync_status=SyncStatus(row["sync_status"]),
             active_artifact_version=row["active_artifact_version"],
+            artifact_version_watermark=row["artifact_version_watermark"] if "artifact_version_watermark" in row.keys() else row["active_artifact_version"],
             active_artifact_uri=row["active_artifact_uri"],
             created_at=_parse_iso_dt(row["created_at"]),
             updated_at=_parse_iso_dt(row["updated_at"]),
@@ -1041,9 +1047,10 @@ class SQLiteVisualRegionRepository(IVisualRegionRepository):
                     job_id, region_id, page_number, display_order, origin,
                     detected_ymin, detected_xmin, detected_ymax, detected_xmax,
                     reviewed_ymin, reviewed_xmin, reviewed_ymax, reviewed_xmax,
-                    review_status, sync_status, active_artifact_version, active_artifact_uri,
+                    review_status, sync_status, active_artifact_version,
+                    artifact_version_watermark, active_artifact_uri,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     region.job_id,
@@ -1062,6 +1069,7 @@ class SQLiteVisualRegionRepository(IVisualRegionRepository):
                     region.review_status.value,
                     region.sync_status.value,
                     region.active_artifact_version,
+                    region.artifact_version_watermark,
                     region.active_artifact_uri,
                     created_iso,
                     now_iso,
@@ -1077,7 +1085,8 @@ class SQLiteVisualRegionRepository(IVisualRegionRepository):
                     job_id = ?, region_id = ?, page_number = ?, display_order = ?, origin = ?,
                     detected_ymin = ?, detected_xmin = ?, detected_ymax = ?, detected_xmax = ?,
                     reviewed_ymin = ?, reviewed_xmin = ?, reviewed_ymax = ?, reviewed_xmax = ?,
-                    review_status = ?, sync_status = ?, active_artifact_version = ?, active_artifact_uri = ?,
+                    review_status = ?, sync_status = ?, active_artifact_version = ?,
+                    artifact_version_watermark = ?, active_artifact_uri = ?,
                     updated_at = ?
                 WHERE id = ?
                 """,
@@ -1098,6 +1107,7 @@ class SQLiteVisualRegionRepository(IVisualRegionRepository):
                     region.review_status.value,
                     region.sync_status.value,
                     region.active_artifact_version,
+                    region.artifact_version_watermark,
                     region.active_artifact_uri,
                     now_iso,
                     region.id,
