@@ -149,6 +149,7 @@ class DesktopAppContainer:
             uow_factory=self.uow_factory,
             event_publisher=self.event_bus,
             runtime_wake_fn=self.runtime.wake,
+            execution_service=self.job_execution_service,
         )
 
         self.scheduler = DesktopJobScheduler(

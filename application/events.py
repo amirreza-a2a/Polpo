@@ -3,6 +3,7 @@
 # ============================================================
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional
 from core.entities.job import JobStatus
 
@@ -60,7 +61,7 @@ class MissedScheduleDetectedEvent:
     """Event emitted when a job's scheduled execution time passed while the application was closed."""
     job_id: int
     file_name: str
-    scheduled_at: Optional[str | object]
+    scheduled_at: Optional[datetime]
     policy: str
 
 
@@ -68,4 +69,4 @@ class MissedScheduleDetectedEvent:
 class ScheduleUpdatedEvent:
     """Event emitted when a job's scheduled execution time is set, updated, or cleared."""
     job_id: int
-    scheduled_at: Optional[str | object]
+    scheduled_at: Optional[datetime]

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Callable, Optional
 from application.ports.unit_of_work import IUnitOfWorkFactory
 from application.ports.notifier import IApplicationEventPublisher
-from application.events import JobStateChangedEvent, JobCancelledEvent, ScheduleUpdatedEvent
+from application.events import JobStateChangedEvent, ScheduleUpdatedEvent
 from application.dto.job_dto import JobResponseDTO
 from core.entities.job import JobStatus
 from core.policies.job_state_policy import JobStateTransitionPolicy
@@ -17,6 +17,7 @@ class ScheduleService:
     """
     Application service managing document job schedules.
     Provides use cases for rescheduling, clearing schedules, and acknowledging missed schedules.
+    Delegates cancellation to JobExecutionService to ensure single-owner cancellation semantics.
     """
 
     def __init__(
@@ -24,10 +25,12 @@ class ScheduleService:
         uow_factory: IUnitOfWorkFactory,
         event_publisher: Optional[IApplicationEventPublisher] = None,
         runtime_wake_fn: Optional[Callable[[], None]] = None,
+        execution_service: Optional[object] = None,
     ):
         self.uow_factory = uow_factory
         self.event_publisher = event_publisher
         self.runtime_wake_fn = runtime_wake_fn
+        self.execution_service = execution_service
 
     def reschedule_job(
         self,
@@ -99,7 +102,7 @@ class ScheduleService:
         Processes user resolution for an unresolved missed schedule:
         - 'run_now': Clears scheduled_at, unpauses if paused, and queues for immediate execution.
         - 'reschedule': Sets new_scheduled_at and unpauses if paused.
-        - 'cancel': Cooperatively cancels the job.
+        - 'cancel': Cooperatively cancels the job via JobExecutionService.
         """
         if action == "run_now":
             return self.reschedule_job(job_id, new_scheduled_at=None, user_id=user_id)
@@ -108,33 +111,31 @@ class ScheduleService:
                 raise DomainError("Action 'reschedule' requires new_scheduled_at parameter.")
             return self.reschedule_job(job_id, new_scheduled_at=new_scheduled_at, user_id=user_id)
         elif action == "cancel":
+            # Canonical delegation to JobExecutionService to avoid duplicate cancellation logic
+            if self.execution_service and hasattr(self.execution_service, "cancel_job"):
+                self.execution_service.cancel_job(job_id)
+            else:
+                with self.uow_factory.create() as uow:
+                    job = uow.jobs.get_by_id(job_id)
+                    if not job:
+                        raise EntityNotFoundError("Job", job_id)
+                    if hasattr(uow.jobs, "request_cancellation"):
+                        uow.jobs.request_cancellation(job_id)
+                        uow.commit()
+
             with self.uow_factory.create() as uow:
-                job = uow.jobs.get_by_id(job_id)
-                if not job:
+                updated_job = uow.jobs.get_by_id(job_id)
+                if not updated_job:
                     raise EntityNotFoundError("Job", job_id)
 
-                old_st = job.status
-                JobStateTransitionPolicy.validate_transition(old_st, JobStatus.CANCELLED)
-                job.status = JobStatus.CANCELLED
-                job.cancel_requested = True
-
-                uow.jobs.save(job)
-                uow.commit()
-
-            if self.event_publisher:
-                self.event_publisher.publish(
-                    JobStateChangedEvent(job_id=job.id, old_status=old_st, new_status=JobStatus.CANCELLED)
-                )
-                self.event_publisher.publish(JobCancelledEvent(job_id=job.id))
-
             return JobResponseDTO(
-                id=job.id,
+                id=updated_job.id,
                 user_id=user_id,
-                file_name=job.file_name,
-                status=job.status.value,
-                total_pages=job.total_pages,
-                processed_pages=job.processed_pages,
-                auto_pipeline2=job.auto_pipeline2,
+                file_name=updated_job.file_name,
+                status=updated_job.status.value,
+                total_pages=updated_job.total_pages,
+                processed_pages=updated_job.processed_pages,
+                auto_pipeline2=updated_job.auto_pipeline2,
             )
         else:
             raise DomainError(f"Invalid missed schedule action '{action}'. Must be 'run_now', 'reschedule', or 'cancel'.")

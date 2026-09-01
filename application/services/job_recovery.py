@@ -24,6 +24,8 @@ class JobRecoveryService:
     and resuming/retrying interrupted jobs.
     """
 
+    VALID_MISSED_POLICIES = ("run_immediately", "mark_paused", "prompt")
+
     def __init__(
         self,
         uow_factory: IUnitOfWorkFactory,
@@ -66,6 +68,7 @@ class JobRecoveryService:
         """
         Startup reconciliation for jobs whose scheduled_at passed while the application was closed.
         Applies AppSettings.missed_schedule_policy ('run_immediately', 'mark_paused', or 'prompt').
+        Raises DomainError if an invalid policy is supplied.
         """
         as_of = startup_time or datetime.now(timezone.utc)
         reconciled_records: List[Tuple[Job, Optional[datetime]]] = []
@@ -79,6 +82,12 @@ class JobRecoveryService:
                 except Exception:
                     pass
             effective_policy = configured_policy or "prompt"
+
+            if effective_policy not in self.VALID_MISSED_POLICIES:
+                raise DomainError(
+                    f"Invalid missed_schedule_policy '{effective_policy}'. "
+                    f"Must be one of {self.VALID_MISSED_POLICIES}"
+                )
 
             if hasattr(uow.jobs, "get_missed_schedules"):
                 missed_jobs = uow.jobs.get_missed_schedules(as_of=as_of)

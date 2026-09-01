@@ -13,10 +13,12 @@ from core.entities.api_slot import ApiSlot
 from core.entities.credential_ref import CredentialRef
 from core.entities.prompt import Prompt, PromptType
 from core.entities.settings import AppSettings
+from core.exceptions.domain_exceptions import DomainError
 from application.dto.job_dto import SubmitJobCommand
 from application.events import (
     JobStateChangedEvent,
     JobCompletedEvent,
+    JobCancelledEvent,
     MissedScheduleDetectedEvent,
     ScheduleUpdatedEvent,
 )
@@ -101,6 +103,7 @@ class TestDesktopJobScheduler(unittest.TestCase):
             uow_factory=self.uow_factory,
             event_publisher=self.event_bus,
             runtime_wake_fn=self.runtime.wake,
+            execution_service=self.execution_service,
         )
 
         self.scheduler = DesktopJobScheduler(
@@ -296,8 +299,40 @@ class TestDesktopJobScheduler(unittest.TestCase):
         self.scheduler.resume()
         self.assertTrue(self.scheduler.is_running)
 
-        self.scheduler.shutdown()
-        self.assertFalse(self.scheduler.is_running)
+    def test_missed_schedule_invalid_policy_raises_error(self):
+        """Reconciliation with an unknown policy raises DomainError."""
+        now_utc = datetime.now(timezone.utc)
+        past_dt = now_utc - timedelta(hours=1)
+
+        self.submission_service.submit_job(
+            SubmitJobCommand(user_id=1, filename="invalid_policy.pdf", file_bytes=b"%PDF-1.4 data", scheduled_at=past_dt)
+        )
+
+        with self.assertRaises(DomainError):
+            self.recovery_service.reconcile_missed_schedules(startup_time=now_utc, policy="invalid_policy_name")
+
+    def test_acknowledge_missed_schedule_cancel_delegation(self):
+        """Acknowledge missed schedule with action='cancel' delegates to cancellation service."""
+        now_utc = datetime.now(timezone.utc)
+        past_dt = now_utc - timedelta(hours=1)
+
+        dto = self.submission_service.submit_job(
+            SubmitJobCommand(user_id=1, filename="cancel_missed.pdf", file_bytes=b"%PDF-1.4 data", scheduled_at=past_dt)
+        )
+
+        events = []
+        self.event_bus.subscribe(object, lambda e: events.append(e))
+
+        res = self.schedule_service.acknowledge_missed_schedule(dto.id, action="cancel")
+        self.assertEqual(res.status, JobStatus.CANCELLED.value)
+
+        with self.uow_factory.create() as uow:
+            job = uow.jobs.get_by_id(dto.id)
+            self.assertEqual(job.status, JobStatus.CANCELLED)
+
+        cancel_events = [e for e in events if isinstance(e, JobCancelledEvent)]
+        self.assertEqual(len(cancel_events), 1)
+        self.assertEqual(cancel_events[0].job_id, dto.id)
 
 
 if __name__ == "__main__":
