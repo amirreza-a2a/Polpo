@@ -118,7 +118,8 @@ class JobController(QObject):
     def retry_job(self, job_id: int) -> bool:
         """Resets a failed job to PENDING state and triggers execution."""
         try:
-            return self.execution_service.retry_job(job_id)
+            dto = self.recovery_service.retry_job(job_id)
+            return dto is not None
         except Exception as err:
             self.error_occurred.emit(sanitize_error_message(str(err)))
             return False
@@ -127,7 +128,8 @@ class JobController(QObject):
     def resume_job(self, job_id: int) -> bool:
         """Resumes a paused job from its last processed checkpoint."""
         try:
-            return self.execution_service.resume_job(job_id)
+            dto = self.recovery_service.resume_job(job_id)
+            return dto is not None
         except Exception as err:
             self.error_occurred.emit(sanitize_error_message(str(err)))
             return False

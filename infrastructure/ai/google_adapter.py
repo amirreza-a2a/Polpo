@@ -105,18 +105,20 @@ class GoogleAdapter(AIProviderPort):
         )
 
     def generate_vision(self, request: VisionPromptRequest) -> AIResponse:
-        """ارسال تصویر و پرامپت به Google Gemini."""
+        """Sends image and prompt to Google Gemini for vision-based content extraction."""
         from google import genai
+        from infrastructure.ai.proxy import normalized_proxy_env
 
         model = request.model or self.default_model or self.FALLBACK_MODEL
 
         try:
             pil_img = Image.open(io.BytesIO(request.image_bytes))
-            client = genai.Client(api_key=self.api_key)
-            response = client.models.generate_content(
-                model=model,
-                contents=[pil_img, request.prompt],
-            )
+            with normalized_proxy_env():
+                client = genai.Client(api_key=self.api_key)
+                response = client.models.generate_content(
+                    model=model,
+                    contents=[pil_img, request.prompt],
+                )
             content = getattr(response, "text", "") or ""
             return AIResponse(content=content, model=model)
         except Exception as e:
@@ -125,17 +127,19 @@ class GoogleAdapter(AIProviderPort):
             raise norm_err from e
 
     def generate_text(self, request: TextPromptRequest) -> AIResponse:
-        """ارسال متن و پرامپت به Google Gemini."""
+        """Sends text prompt to Google Gemini for text-based generation."""
         from google import genai
+        from infrastructure.ai.proxy import normalized_proxy_env
 
         model = request.model or self.default_model or self.FALLBACK_MODEL
 
         try:
-            client = genai.Client(api_key=self.api_key)
-            response = client.models.generate_content(
-                model=model,
-                contents=[request.prompt],
-            )
+            with normalized_proxy_env():
+                client = genai.Client(api_key=self.api_key)
+                response = client.models.generate_content(
+                    model=model,
+                    contents=[request.prompt],
+                )
             content = getattr(response, "text", "") or ""
             return AIResponse(content=content, model=model)
         except Exception as e:

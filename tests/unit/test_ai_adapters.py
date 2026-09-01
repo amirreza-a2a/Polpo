@@ -416,5 +416,122 @@ class TestHandlerQuickConvertDelegation(unittest.TestCase):
         self.assertEqual(cmd.user_id, 42)
 
 
+class TestProxyNormalization(unittest.TestCase):
+    """Verifies proxy environment normalization for AI SDK httpx compatibility."""
+
+    def test_socks_scheme_normalized_to_socks5(self):
+        from infrastructure.ai.proxy import _normalize_proxy_url
+        self.assertEqual(
+            _normalize_proxy_url("socks://127.0.0.1:2080/"),
+            "socks5://127.0.0.1:2080/",
+        )
+
+    def test_http_proxy_unchanged(self):
+        from infrastructure.ai.proxy import _normalize_proxy_url
+        self.assertEqual(
+            _normalize_proxy_url("http://127.0.0.1:8080"),
+            "http://127.0.0.1:8080",
+        )
+
+    def test_https_proxy_unchanged(self):
+        from infrastructure.ai.proxy import _normalize_proxy_url
+        self.assertEqual(
+            _normalize_proxy_url("https://proxy.example.com:443"),
+            "https://proxy.example.com:443",
+        )
+
+    def test_socks5_proxy_unchanged(self):
+        from infrastructure.ai.proxy import _normalize_proxy_url
+        self.assertEqual(
+            _normalize_proxy_url("socks5://10.0.0.1:1080"),
+            "socks5://10.0.0.1:1080",
+        )
+
+    def test_empty_and_none_passthrough(self):
+        from infrastructure.ai.proxy import _normalize_proxy_url
+        self.assertEqual(_normalize_proxy_url(""), "")
+        self.assertIsNone(_normalize_proxy_url(None))
+
+    def test_context_manager_normalizes_and_restores(self):
+        import os
+        from infrastructure.ai.proxy import normalized_proxy_env
+
+        os.environ["all_proxy"] = "socks://127.0.0.1:2080/"
+        os.environ["http_proxy"] = "http://127.0.0.1:8080"
+        try:
+            with normalized_proxy_env():
+                self.assertEqual(os.environ["all_proxy"], "socks5://127.0.0.1:2080/")
+                # http:// should remain unchanged
+                self.assertEqual(os.environ["http_proxy"], "http://127.0.0.1:8080")
+            # Original value restored after context exit
+            self.assertEqual(os.environ["all_proxy"], "socks://127.0.0.1:2080/")
+        finally:
+            os.environ.pop("all_proxy", None)
+            os.environ.pop("http_proxy", None)
+
+    def test_google_adapter_vision_survives_socks_proxy_env(self):
+        """Regression: GoogleAdapter must not crash when socks:// proxy env is set."""
+        import os
+        os.environ["all_proxy"] = "socks://127.0.0.1:2080/"
+        try:
+            adapter = GoogleAdapter(api_key="test-key", default_model="gemini-2.0-flash")
+            with patch("google.genai.Client") as mock_client_cls:
+                mock_client = MagicMock()
+                mock_resp = MagicMock()
+                mock_resp.text = "# Extracted"
+                mock_client.models.generate_content.return_value = mock_resp
+                mock_client_cls.return_value = mock_client
+
+                req = VisionPromptRequest(prompt="Convert", image_bytes=b"fake", mime_type="image/jpeg")
+                resp = adapter.generate_vision(req)
+                self.assertEqual(resp.content, "# Extracted")
+        finally:
+            os.environ.pop("all_proxy", None)
+
+
+class TestControllerServiceDelegation(unittest.TestCase):
+    """Verifies that desktop controller methods delegate to the architecturally correct services."""
+
+    def test_resume_job_delegates_to_recovery_service(self):
+        """resume_job must delegate to JobRecoveryService, not JobExecutionService."""
+        import ast
+        from pathlib import Path
+        src = Path("interfaces/desktop/controllers/job_controller.py").read_text()
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "resume_job":
+                body_src = ast.dump(node)
+                self.assertIn("recovery_service", body_src,
+                    "resume_job must delegate to self.recovery_service")
+                self.assertNotIn("execution_service", body_src,
+                    "resume_job must NOT delegate to self.execution_service")
+
+    def test_retry_job_delegates_to_recovery_service(self):
+        """retry_job must delegate to JobRecoveryService, not JobExecutionService."""
+        import ast
+        from pathlib import Path
+        src = Path("interfaces/desktop/controllers/job_controller.py").read_text()
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "retry_job":
+                body_src = ast.dump(node)
+                self.assertIn("recovery_service", body_src,
+                    "retry_job must delegate to self.recovery_service")
+                self.assertNotIn("execution_service", body_src,
+                    "retry_job must NOT delegate to self.execution_service")
+
+    def test_cancel_job_delegates_to_execution_service(self):
+        """cancel_job correctly delegates to JobExecutionService."""
+        import ast
+        from pathlib import Path
+        src = Path("interfaces/desktop/controllers/job_controller.py").read_text()
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "cancel_job":
+                body_src = ast.dump(node)
+                self.assertIn("execution_service", body_src,
+                    "cancel_job must delegate to self.execution_service")
+
+
 if __name__ == "__main__":
     unittest.main()
