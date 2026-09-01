@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 import "../components"
 
 Item {
@@ -14,13 +15,13 @@ Item {
         }
     }
 
-    Column {
+    ColumnLayout {
         anchors.fill: parent
         anchors.margins: 20
         spacing: 16
 
-        Row {
-            width: parent.width
+        RowLayout {
+            Layout.fillWidth: true
             spacing: 16
 
             Text {
@@ -28,19 +29,20 @@ Item {
                 color: "#F9FAFB"
                 font.pixelSize: 20
                 font.bold: true
-                anchors.verticalCenter: parent.verticalCenter
             }
 
-            Item { width: 1; height: 1; anchors.fill: parent }
+            Item { Layout.fillWidth: true }
 
             Text {
                 text: root.statusNotice
                 color: "#10B981"
                 font.pixelSize: 12
-                anchors.verticalCenter: parent.verticalCenter
+                visible: root.statusNotice !== ""
             }
 
             Button {
+                id: addApiKeyButton
+                objectName: "addApiKeyButton"
                 text: "+ Add API Key"
                 highlighted: true
                 onClicked: addKeyModal.open()
@@ -49,27 +51,27 @@ Item {
 
         ListView {
             id: slotList
-            width: parent.width
-            height: parent.height - 80
+            objectName: "apiKeySlotList"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
             clip: true
             spacing: 12
             model: typeof apiSlotModel !== "undefined" ? apiSlotModel : null
 
             delegate: Card {
-                width: slotList.width
+                width: ListView.view.width
                 height: 80
 
-                Row {
+                RowLayout {
                     anchors.fill: parent
                     anchors.margins: 14
                     spacing: 16
 
-                    Column {
-                        width: parent.width - 240
+                    ColumnLayout {
+                        Layout.fillWidth: true
                         spacing: 4
-                        anchors.verticalCenter: parent.verticalCenter
 
-                        Row {
+                        RowLayout {
                             spacing: 10
                             Text {
                                 text: model.label
@@ -80,9 +82,8 @@ Item {
                             Rectangle {
                                 color: "#374151"
                                 radius: 4
-                                width: provText.implicitWidth + 8
-                                height: 20
-                                anchors.verticalCenter: parent.verticalCenter
+                                implicitWidth: provText.implicitWidth + 12
+                                implicitHeight: 20
                                 Text {
                                     id: provText
                                     anchors.centerIn: parent
@@ -97,12 +98,13 @@ Item {
                             text: (model.selectedModel ? ("Model: " + model.selectedModel) : "Default Model") + (model.baseUrl ? (" • URL: " + model.baseUrl) : "")
                             color: "#9CA3AF"
                             font.pixelSize: 11
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
                         }
                     }
 
-                    Row {
+                    RowLayout {
                         spacing: 8
-                        anchors.verticalCenter: parent.verticalCenter
 
                         Button {
                             text: "Test"
@@ -134,7 +136,7 @@ Item {
 
             Text {
                 anchors.centerIn: parent
-                text: "No API keys configured. Add an API key to enable OCR inference."
+                text: "No API keys configured. Click '+ Add API Key' to add an AI provider."
                 color: "#6B7280"
                 font.pixelSize: 14
                 visible: slotList.count === 0
@@ -144,11 +146,12 @@ Item {
 
     ModalDialog {
         id: addKeyModal
+        objectName: "addKeyModal"
         title: "Register BYOK Key"
         width: 480
         height: 420
 
-        Column {
+        ColumnLayout {
             anchors.fill: parent
             anchors.margins: 20
             spacing: 12
@@ -160,85 +163,87 @@ Item {
                 font.bold: true
             }
 
-            Row {
+            RowLayout {
+                Layout.fillWidth: true
                 spacing: 12
                 Text {
                     text: "Provider:"
                     color: "#D1D5DB"
-                    width: 100
-                    anchors.verticalCenter: parent.verticalCenter
+                    Layout.preferredWidth: 100
                 }
                 ComboBox {
                     id: providerCombo
-                    width: 320
+                    Layout.fillWidth: true
                     model: (typeof apiKeyController !== "undefined" && apiKeyController) ? apiKeyController.get_supported_providers() : ["google", "openai", "anthropic", "openrouter", "ollama"]
                 }
             }
 
-            Row {
+            RowLayout {
+                Layout.fillWidth: true
                 spacing: 12
                 Text {
                     text: "Slot Label:"
                     color: "#D1D5DB"
-                    width: 100
-                    anchors.verticalCenter: parent.verticalCenter
+                    Layout.preferredWidth: 100
                 }
                 TextField {
                     id: labelInput
-                    width: 320
+                    Layout.fillWidth: true
                     placeholderText: "e.g. My OpenAI GPT-4o Key"
                 }
             }
 
-            Row {
+            RowLayout {
+                Layout.fillWidth: true
                 spacing: 12
                 Text {
                     text: "API Key:"
                     color: "#D1D5DB"
-                    width: 100
-                    anchors.verticalCenter: parent.verticalCenter
+                    Layout.preferredWidth: 100
                 }
                 TextField {
                     id: keyInput
-                    width: 320
+                    Layout.fillWidth: true
                     placeholderText: "Secret Key (stored in OS Keyring)"
                     echoMode: TextInput.Password
                 }
             }
 
-            Row {
+            RowLayout {
+                Layout.fillWidth: true
                 spacing: 12
                 Text {
                     text: "Model Name:"
                     color: "#D1D5DB"
-                    width: 100
-                    anchors.verticalCenter: parent.verticalCenter
+                    Layout.preferredWidth: 100
                 }
                 TextField {
                     id: modelInput
-                    width: 320
+                    Layout.fillWidth: true
                     placeholderText: "Optional (e.g. gpt-4o, gemini-2.0-flash)"
                 }
             }
 
-            Row {
+            RowLayout {
+                Layout.fillWidth: true
                 spacing: 12
                 Text {
                     text: "Base URL:"
                     color: "#D1D5DB"
-                    width: 100
-                    anchors.verticalCenter: parent.verticalCenter
+                    Layout.preferredWidth: 100
                 }
                 TextField {
                     id: baseUrlInput
-                    width: 320
+                    Layout.fillWidth: true
                     placeholderText: "Optional custom endpoint URL"
                 }
             }
 
-            Row {
-                spacing: 12
-                anchors.horizontalCenter: parent.horizontalCenter
+            Item { Layout.fillHeight: true }
+
+            RowLayout {
+                Layout.alignment: Qt.AlignHCenter
+                spacing: 16
 
                 Button {
                     text: "Cancel"
@@ -272,11 +277,12 @@ Item {
 
     ModalDialog {
         id: editKeyModal
+        objectName: "editKeyModal"
         title: "Edit API Key Slot"
         width: 480
         height: 400
 
-        Column {
+        ColumnLayout {
             anchors.fill: parent
             anchors.margins: 20
             spacing: 12
@@ -288,67 +294,69 @@ Item {
                 font.bold: true
             }
 
-            Row {
+            RowLayout {
+                Layout.fillWidth: true
                 spacing: 12
                 Text {
                     text: "Slot Label:"
                     color: "#D1D5DB"
-                    width: 100
-                    anchors.verticalCenter: parent.verticalCenter
+                    Layout.preferredWidth: 100
                 }
                 TextField {
                     id: editLabelInput
-                    width: 320
+                    Layout.fillWidth: true
                 }
             }
 
-            Row {
+            RowLayout {
+                Layout.fillWidth: true
                 spacing: 12
                 Text {
                     text: "New Key:"
                     color: "#D1D5DB"
-                    width: 100
-                    anchors.verticalCenter: parent.verticalCenter
+                    Layout.preferredWidth: 100
                 }
                 TextField {
                     id: editKeyInput
-                    width: 320
+                    Layout.fillWidth: true
                     placeholderText: "Leave blank to keep existing secret"
                     echoMode: TextInput.Password
                 }
             }
 
-            Row {
+            RowLayout {
+                Layout.fillWidth: true
                 spacing: 12
                 Text {
                     text: "Model Name:"
                     color: "#D1D5DB"
-                    width: 100
-                    anchors.verticalCenter: parent.verticalCenter
+                    Layout.preferredWidth: 100
                 }
                 TextField {
                     id: editModelInput
-                    width: 320
+                    Layout.fillWidth: true
                 }
             }
 
-            Row {
+            RowLayout {
+                Layout.fillWidth: true
                 spacing: 12
                 Text {
                     text: "Base URL:"
                     color: "#D1D5DB"
-                    width: 100
-                    anchors.verticalCenter: parent.verticalCenter
+                    Layout.preferredWidth: 100
                 }
                 TextField {
                     id: editBaseUrlInput
-                    width: 320
+                    Layout.fillWidth: true
                 }
             }
 
-            Row {
-                spacing: 12
-                anchors.horizontalCenter: parent.horizontalCenter
+            Item { Layout.fillHeight: true }
+
+            RowLayout {
+                Layout.alignment: Qt.AlignHCenter
+                spacing: 16
 
                 Button {
                     text: "Cancel"

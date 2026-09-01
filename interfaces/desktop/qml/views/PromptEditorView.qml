@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 import "../components"
 
 Item {
@@ -7,13 +8,13 @@ Item {
     property int editingPromptId: 0
     property string activeFilter: ""
 
-    Column {
+    ColumnLayout {
         anchors.fill: parent
         anchors.margins: 20
         spacing: 16
 
-        Row {
-            width: parent.width
+        RowLayout {
+            Layout.fillWidth: true
             spacing: 16
 
             Text {
@@ -21,12 +22,10 @@ Item {
                 color: "#F9FAFB"
                 font.pixelSize: 20
                 font.bold: true
-                anchors.verticalCenter: parent.verticalCenter
             }
 
-            Row {
+            RowLayout {
                 spacing: 8
-                anchors.verticalCenter: parent.verticalCenter
 
                 Button {
                     text: "All"
@@ -54,9 +53,11 @@ Item {
                 }
             }
 
-            Item { width: 1; height: 1; anchors.fill: parent }
+            Item { Layout.fillWidth: true }
 
             Button {
+                id: newPromptBtn
+                objectName: "newPromptButton"
                 text: "+ New Prompt"
                 highlighted: true
                 onClicked: createPromptModal.open()
@@ -65,27 +66,27 @@ Item {
 
         ListView {
             id: promptList
-            width: parent.width
-            height: parent.height - 80
+            objectName: "promptList"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
             clip: true
             spacing: 10
             model: typeof promptListModel !== "undefined" ? promptListModel : null
 
             delegate: Card {
-                width: promptList.width
+                width: ListView.view.width
                 height: 84
 
-                Row {
+                RowLayout {
                     anchors.fill: parent
                     anchors.margins: 14
                     spacing: 16
 
-                    Column {
-                        width: parent.width - 260
+                    ColumnLayout {
+                        Layout.fillWidth: true
                         spacing: 4
-                        anchors.verticalCenter: parent.verticalCenter
 
-                        Row {
+                        RowLayout {
                             spacing: 8
                             Text {
                                 text: model.name
@@ -96,9 +97,8 @@ Item {
                             Rectangle {
                                 color: "#1E3A8A"
                                 radius: 4
-                                width: typeText.implicitWidth + 8
-                                height: 18
-                                anchors.verticalCenter: parent.verticalCenter
+                                implicitWidth: typeText.implicitWidth + 12
+                                implicitHeight: 18
                                 Text {
                                     id: typeText
                                     anchors.centerIn: parent
@@ -113,7 +113,6 @@ Item {
                                 color: "#34D399"
                                 font.pixelSize: 11
                                 font.bold: true
-                                anchors.verticalCenter: parent.verticalCenter
                             }
                         }
                         Text {
@@ -121,13 +120,12 @@ Item {
                             color: "#9CA3AF"
                             font.pixelSize: 12
                             elide: Text.ElideRight
-                            width: parent.width
+                            Layout.fillWidth: true
                         }
                     }
 
-                    Row {
+                    RowLayout {
                         spacing: 8
-                        anchors.verticalCenter: parent.verticalCenter
 
                         Button {
                             text: "Edit"
@@ -158,11 +156,12 @@ Item {
 
     ModalDialog {
         id: createPromptModal
+        objectName: "createPromptModal"
         title: "Create System Prompt"
         width: 520
         height: 440
 
-        Column {
+        ColumnLayout {
             anchors.fill: parent
             anchors.margins: 20
             spacing: 12
@@ -174,32 +173,32 @@ Item {
                 font.bold: true
             }
 
-            Row {
+            RowLayout {
+                Layout.fillWidth: true
                 spacing: 12
                 Text {
                     text: "Prompt Name:"
                     color: "#D1D5DB"
-                    width: 100
-                    anchors.verticalCenter: parent.verticalCenter
+                    Layout.preferredWidth: 100
                 }
                 TextField {
                     id: createNameInput
-                    width: 360
+                    Layout.fillWidth: true
                     placeholderText: "e.g. Persian Technical OCR"
                 }
             }
 
-            Row {
+            RowLayout {
+                Layout.fillWidth: true
                 spacing: 12
                 Text {
                     text: "Pipeline Type:"
                     color: "#D1D5DB"
-                    width: 100
-                    anchors.verticalCenter: parent.verticalCenter
+                    Layout.preferredWidth: 100
                 }
                 ComboBox {
                     id: createTypeCombo
-                    width: 360
+                    Layout.fillWidth: true
                     model: ["pipeline1", "pipeline2"]
                 }
             }
@@ -211,8 +210,8 @@ Item {
             }
 
             ScrollView {
-                width: parent.width
-                height: 120
+                Layout.fillWidth: true
+                Layout.preferredHeight: 120
                 clip: true
 
                 TextArea {
@@ -234,9 +233,11 @@ Item {
                 text: "Set as default for this pipeline"
             }
 
-            Row {
-                spacing: 12
-                anchors.horizontalCenter: parent.horizontalCenter
+            Item { Layout.fillHeight: true }
+
+            RowLayout {
+                Layout.alignment: Qt.AlignHCenter
+                spacing: 16
 
                 Button {
                     text: "Cancel"
@@ -264,11 +265,12 @@ Item {
 
     ModalDialog {
         id: editPromptModal
+        objectName: "editPromptModal"
         title: "Edit Prompt"
         width: 520
         height: 400
 
-        Column {
+        ColumnLayout {
             anchors.fill: parent
             anchors.margins: 20
             spacing: 12
@@ -280,17 +282,17 @@ Item {
                 font.bold: true
             }
 
-            Row {
+            RowLayout {
+                Layout.fillWidth: true
                 spacing: 12
                 Text {
                     text: "Prompt Name:"
                     color: "#D1D5DB"
-                    width: 100
-                    anchors.verticalCenter: parent.verticalCenter
+                    Layout.preferredWidth: 100
                 }
                 TextField {
                     id: editNameInput
-                    width: 360
+                    Layout.fillWidth: true
                 }
             }
 
@@ -301,8 +303,8 @@ Item {
             }
 
             ScrollView {
-                width: parent.width
-                height: 120
+                Layout.fillWidth: true
+                Layout.preferredHeight: 120
                 clip: true
 
                 TextArea {
@@ -323,9 +325,11 @@ Item {
                 text: "Set as default"
             }
 
-            Row {
-                spacing: 12
-                anchors.horizontalCenter: parent.horizontalCenter
+            Item { Layout.fillHeight: true }
+
+            RowLayout {
+                Layout.alignment: Qt.AlignHCenter
+                spacing: 16
 
                 Button {
                     text: "Cancel"

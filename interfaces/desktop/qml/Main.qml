@@ -74,6 +74,7 @@ ApplicationWindow {
 
             Sidebar {
                 id: sidebar
+                objectName: "mainSidebar"
                 Layout.fillHeight: true
                 currentTab: 0
                 onTabSelected: function(idx) {
@@ -83,6 +84,7 @@ ApplicationWindow {
 
             StackLayout {
                 id: stackLayout
+                objectName: "mainStackLayout"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 currentIndex: 0

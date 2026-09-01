@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 import "../components"
 
 Item {
@@ -13,13 +14,13 @@ Item {
         }
     }
 
-    Column {
+    ColumnLayout {
         anchors.fill: parent
         anchors.margins: 20
         spacing: 20
 
-        Row {
-            width: parent.width
+        RowLayout {
+            Layout.fillWidth: true
             spacing: 16
 
             Text {
@@ -27,40 +28,39 @@ Item {
                 color: "#F9FAFB"
                 font.pixelSize: 20
                 font.bold: true
-                anchors.verticalCenter: parent.verticalCenter
             }
 
-            Item { width: 1; height: 1; anchors.fill: parent }
+            Item { Layout.fillWidth: true }
 
             Text {
                 text: root.statusNotice
                 color: "#10B981"
                 font.pixelSize: 13
-                anchors.verticalCenter: parent.verticalCenter
+                visible: root.statusNotice !== ""
             }
         }
 
         Card {
-            width: parent.width
-            height: 380
+            Layout.fillWidth: true
+            Layout.preferredHeight: 380
 
-            Column {
+            ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 20
                 spacing: 16
 
-                Row {
+                RowLayout {
+                    Layout.fillWidth: true
                     spacing: 20
                     Text {
                         text: "UI Theme:"
                         color: "#D1D5DB"
                         font.pixelSize: 14
-                        width: 200
-                        anchors.verticalCenter: parent.verticalCenter
+                        Layout.preferredWidth: 200
                     }
                     ComboBox {
                         id: themeCombo
-                        width: 220
+                        Layout.preferredWidth: 220
                         model: ["system", "dark", "light"]
                         currentIndex: {
                             if (typeof settingsController === "undefined" || !settingsController) return 0;
@@ -70,16 +70,17 @@ Item {
                             return 0;
                         }
                     }
+                    Item { Layout.fillWidth: true }
                 }
 
-                Row {
+                RowLayout {
+                    Layout.fillWidth: true
                     spacing: 20
                     Text {
                         text: "Max Concurrent Jobs:"
                         color: "#D1D5DB"
                         font.pixelSize: 14
-                        width: 200
-                        anchors.verticalCenter: parent.verticalCenter
+                        Layout.preferredWidth: 200
                     }
                     SpinBox {
                         id: concurrencySpin
@@ -87,20 +88,21 @@ Item {
                         to: 8
                         value: typeof settingsController !== "undefined" && settingsController ? settingsController.maxConcurrentJobs : 2
                     }
+                    Item { Layout.fillWidth: true }
                 }
 
-                Row {
+                RowLayout {
+                    Layout.fillWidth: true
                     spacing: 20
                     Text {
                         text: "Missed Schedule Policy:"
                         color: "#D1D5DB"
                         font.pixelSize: 14
-                        width: 200
-                        anchors.verticalCenter: parent.verticalCenter
+                        Layout.preferredWidth: 200
                     }
                     ComboBox {
                         id: policyCombo
-                        width: 220
+                        Layout.preferredWidth: 220
                         model: ["prompt", "run_immediately", "mark_paused"]
                         currentIndex: {
                             if (typeof settingsController === "undefined" || !settingsController) return 0;
@@ -110,16 +112,17 @@ Item {
                             return 0;
                         }
                     }
+                    Item { Layout.fillWidth: true }
                 }
 
-                Row {
+                RowLayout {
+                    Layout.fillWidth: true
                     spacing: 20
                     Text {
                         text: "Artifact Retention (Days):"
                         color: "#D1D5DB"
                         font.pixelSize: 14
-                        width: 200
-                        anchors.verticalCenter: parent.verticalCenter
+                        Layout.preferredWidth: 200
                     }
                     SpinBox {
                         id: retentionSpin
@@ -127,9 +130,11 @@ Item {
                         to: 365
                         value: typeof settingsController !== "undefined" && settingsController ? settingsController.artifactRetentionDays : 30
                     }
+                    Item { Layout.fillWidth: true }
                 }
 
-                Row {
+                RowLayout {
+                    Layout.fillWidth: true
                     spacing: 20
                     CheckBox {
                         id: autoRetryCheck
@@ -138,7 +143,8 @@ Item {
                     }
                 }
 
-                Row {
+                RowLayout {
+                    Layout.fillWidth: true
                     spacing: 20
                     CheckBox {
                         id: autoPipeline2Check
@@ -147,9 +153,13 @@ Item {
                     }
                 }
 
-                Row {
+                Item { Layout.fillHeight: true }
+
+                RowLayout {
                     spacing: 16
                     Button {
+                        id: savePrefsBtn
+                        objectName: "savePreferencesButton"
                         text: "Save Preferences"
                         highlighted: true
                         onClicked: {
@@ -174,5 +184,7 @@ Item {
                 }
             }
         }
+
+        Item { Layout.fillHeight: true }
     }
 }

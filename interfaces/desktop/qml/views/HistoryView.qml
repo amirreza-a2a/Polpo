@@ -1,17 +1,18 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 import "../components"
 
 Item {
     id: root
 
-    Column {
+    ColumnLayout {
         anchors.fill: parent
         anchors.margins: 20
         spacing: 16
 
-        Row {
-            width: parent.width
+        RowLayout {
+            Layout.fillWidth: true
             spacing: 16
 
             Text {
@@ -19,42 +20,40 @@ Item {
                 color: "#F9FAFB"
                 font.pixelSize: 20
                 font.bold: true
-                anchors.verticalCenter: parent.verticalCenter
             }
 
-            Item { width: 1; height: 1; anchors.fill: parent }
+            Item { Layout.fillWidth: true }
 
             Text {
                 text: "Total: " + (typeof jobHistoryModel !== "undefined" && jobHistoryModel ? jobHistoryModel.totalJobs : 0) + " jobs"
                 color: "#9CA3AF"
                 font.pixelSize: 13
-                anchors.verticalCenter: parent.verticalCenter
             }
         }
 
         ListView {
             id: historyList
-            width: parent.width
-            height: parent.height - 110
+            objectName: "jobHistoryList"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
             clip: true
             spacing: 8
-            model: jobHistoryModel
+            model: typeof jobHistoryModel !== "undefined" ? jobHistoryModel : null
 
             delegate: Card {
-                width: historyList.width
-                height: 64
+                width: ListView.view.width
+                height: 68
 
-                Row {
+                RowLayout {
                     anchors.fill: parent
                     anchors.margins: 12
                     spacing: 16
 
-                    Column {
-                        width: parent.width - 280
+                    ColumnLayout {
+                        Layout.fillWidth: true
                         spacing: 4
-                        anchors.verticalCenter: parent.verticalCenter
 
-                        Row {
+                        RowLayout {
                             spacing: 10
                             Text {
                                 text: model.fileName
@@ -62,7 +61,7 @@ Item {
                                 font.pixelSize: 14
                                 font.bold: true
                                 elide: Text.ElideRight
-                                width: 220
+                                Layout.maximumWidth: 260
                             }
                             StatusBadge {
                                 status: model.status
@@ -75,9 +74,8 @@ Item {
                         }
                     }
 
-                    Row {
+                    RowLayout {
                         spacing: 8
-                        anchors.verticalCenter: parent.verticalCenter
 
                         Button {
                             text: "Open Markdown"
@@ -108,11 +106,13 @@ Item {
             }
         }
 
-        Row {
-            anchors.horizontalCenter: parent.horizontalCenter
+        RowLayout {
+            Layout.alignment: Qt.AlignHCenter
             spacing: 16
 
             Button {
+                id: historyPrevBtn
+                objectName: "historyPrevButton"
                 text: "◀ Previous"
                 enabled: typeof jobHistoryModel !== "undefined" && jobHistoryModel ? (jobHistoryModel.currentPage > 1) : false
                 onClicked: if (typeof jobHistoryModel !== "undefined" && jobHistoryModel) jobHistoryModel.prev_page()
@@ -122,10 +122,11 @@ Item {
                 text: "Page " + (typeof jobHistoryModel !== "undefined" && jobHistoryModel ? jobHistoryModel.currentPage : 1) + " of " + (typeof jobHistoryModel !== "undefined" && jobHistoryModel ? jobHistoryModel.totalPages : 1)
                 color: "#D1D5DB"
                 font.pixelSize: 13
-                anchors.verticalCenter: parent.verticalCenter
             }
 
             Button {
+                id: historyNextBtn
+                objectName: "historyNextButton"
                 text: "Next ▶"
                 enabled: typeof jobHistoryModel !== "undefined" && jobHistoryModel ? (jobHistoryModel.currentPage < jobHistoryModel.totalPages) : false
                 onClicked: if (typeof jobHistoryModel !== "undefined" && jobHistoryModel) jobHistoryModel.next_page()

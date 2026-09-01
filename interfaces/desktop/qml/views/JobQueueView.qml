@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 import QtQuick.Dialogs
 import "../components"
 
@@ -18,13 +19,13 @@ Item {
         }
     }
 
-    Column {
+    ColumnLayout {
         anchors.fill: parent
         anchors.margins: 20
         spacing: 16
 
-        Row {
-            width: parent.width
+        RowLayout {
+            Layout.fillWidth: true
             spacing: 16
 
             Text {
@@ -32,12 +33,13 @@ Item {
                 color: "#F9FAFB"
                 font.pixelSize: 20
                 font.bold: true
-                anchors.verticalCenter: parent.verticalCenter
             }
 
-            Item { width: 1; height: 1; anchors.fill: parent }
+            Item { Layout.fillWidth: true }
 
             Button {
+                id: submitDocBtn
+                objectName: "submitDocumentButton"
                 text: "+ Submit Document"
                 highlighted: true
                 onClicked: pdfPicker.open()
@@ -46,27 +48,27 @@ Item {
 
         ListView {
             id: queueList
-            width: parent.width
-            height: parent.height - 60
+            objectName: "jobQueueList"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
             clip: true
             spacing: 12
             model: typeof jobQueueModel !== "undefined" ? jobQueueModel : null
 
             delegate: Card {
-                width: queueList.width
+                width: ListView.view.width
                 height: 96
 
-                Row {
+                RowLayout {
                     anchors.fill: parent
                     anchors.margins: 14
                     spacing: 16
 
-                    Column {
-                        width: parent.width - 270
+                    ColumnLayout {
+                        Layout.fillWidth: true
                         spacing: 6
-                        anchors.verticalCenter: parent.verticalCenter
 
-                        Row {
+                        RowLayout {
                             spacing: 12
                             Text {
                                 text: model.fileName
@@ -74,7 +76,7 @@ Item {
                                 font.pixelSize: 15
                                 font.bold: true
                                 elide: Text.ElideRight
-                                width: 240
+                                Layout.maximumWidth: 260
                             }
                             StatusBadge {
                                 status: model.status
@@ -83,16 +85,15 @@ Item {
                                 text: model.activeApiLabel ? ("API: " + model.activeApiLabel) : ""
                                 color: "#9CA3AF"
                                 font.pixelSize: 12
-                                anchors.verticalCenter: parent.verticalCenter
                             }
                         }
 
                         ProgressBar {
-                            width: parent.width
+                            Layout.fillWidth: true
                             value: model.progressPercent
                         }
 
-                        Row {
+                        RowLayout {
                             spacing: 16
                             Text {
                                 text: "Page " + model.processedPages + " of " + model.totalPages + " (" + Math.round(model.progressPercent) + "%)"
@@ -110,15 +111,14 @@ Item {
                                 color: "#EF4444"
                                 font.pixelSize: 11
                                 elide: Text.ElideRight
-                                width: 200
+                                Layout.fillWidth: true
                                 visible: model.errorMessage !== ""
                             }
                         }
                     }
 
-                    Row {
+                    RowLayout {
                         spacing: 8
-                        anchors.verticalCenter: parent.verticalCenter
 
                         Button {
                             text: "Resume"
@@ -167,11 +167,12 @@ Item {
 
     ModalDialog {
         id: submitModal
+        objectName: "submitJobModal"
         title: "Submit Document for Conversion"
         width: 480
         height: 380
 
-        Column {
+        ColumnLayout {
             anchors.fill: parent
             anchors.margins: 20
             spacing: 14
@@ -188,39 +189,39 @@ Item {
                 color: "#9CA3AF"
                 font.pixelSize: 12
                 elide: Text.ElideMiddle
-                width: parent.width
+                Layout.fillWidth: true
             }
 
-            Row {
+            RowLayout {
+                Layout.fillWidth: true
                 spacing: 12
                 Text {
                     text: "Prompt Template:"
                     color: "#D1D5DB"
                     font.pixelSize: 13
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 120
+                    Layout.preferredWidth: 120
                 }
                 ComboBox {
                     id: promptCombo
-                    width: 280
+                    Layout.fillWidth: true
                     model: typeof promptListModel !== "undefined" ? promptListModel : null
                     textRole: "name"
                     valueRole: "id"
                 }
             }
 
-            Row {
+            RowLayout {
+                Layout.fillWidth: true
                 spacing: 12
                 Text {
                     text: "Scheduled Time:"
                     color: "#D1D5DB"
                     font.pixelSize: 13
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 120
+                    Layout.preferredWidth: 120
                 }
                 TextField {
                     id: scheduleInput
-                    width: 280
+                    Layout.fillWidth: true
                     placeholderText: "Immediate (or ISO UTC date)"
                 }
             }
@@ -231,9 +232,11 @@ Item {
                 checked: typeof settingsController !== "undefined" && settingsController ? settingsController.autoPipeline2 : false
             }
 
-            Row {
-                spacing: 12
-                anchors.horizontalCenter: parent.horizontalCenter
+            Item { Layout.fillHeight: true }
+
+            RowLayout {
+                Layout.alignment: Qt.AlignHCenter
+                spacing: 16
 
                 Button {
                     text: "Cancel"
@@ -261,11 +264,12 @@ Item {
 
     ModalDialog {
         id: rescheduleModal
+        objectName: "rescheduleJobModal"
         title: "Reschedule Job"
         width: 440
         height: 280
 
-        Column {
+        ColumnLayout {
             anchors.fill: parent
             anchors.margins: 20
             spacing: 14
@@ -279,11 +283,12 @@ Item {
 
             TextField {
                 id: newSchedTimeInput
-                width: parent.width
+                Layout.fillWidth: true
                 placeholderText: "New Scheduled ISO UTC (e.g. 2026-09-02T10:00:00Z)"
             }
 
-            Row {
+            RowLayout {
+                Layout.fillWidth: true
                 spacing: 8
                 Button {
                     text: "+1 Hour"
@@ -308,9 +313,11 @@ Item {
                 }
             }
 
-            Row {
-                spacing: 12
-                anchors.horizontalCenter: parent.horizontalCenter
+            Item { Layout.fillHeight: true }
+
+            RowLayout {
+                Layout.alignment: Qt.AlignHCenter
+                spacing: 16
 
                 Button {
                     text: "Cancel"
