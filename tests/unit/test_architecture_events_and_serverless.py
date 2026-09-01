@@ -11,6 +11,7 @@ import subprocess
 import unittest
 from pathlib import Path
 from dataclasses import is_dataclass
+from unittest.mock import MagicMock
 
 from application.events import (
     JobProgressEvent,
@@ -21,15 +22,17 @@ from application.events import (
     ApiSwitchEvent,
     ScheduleUpdatedEvent,
 )
+from infrastructure.events.event_bus import InMemoryEventBus
 from interfaces.desktop.workers.runtime import DesktopJobRuntime
 from interfaces.desktop.workers.scheduler import DesktopJobScheduler
+from interfaces.desktop.qt_compat import QAbstractListModel, QObject
 
 
 class TestArchitectureEventsAndServerless(unittest.TestCase):
     """
     Automated architectural checks enforcing:
       1. Application events are transport-neutral pure Python dataclasses.
-      2. Background workers communicate strictly via event publishing and do not import Qt models/controllers.
+      2. Background workers communicate strictly via event publishing and do not import or hold Qt models/controllers.
       3. Entire repository has zero imports of fastapi, uvicorn, starlette, or interfaces.api.
       4. Desktop startup opens zero inbound listening network sockets (process-level Linux socket audit).
       5. Desktop layer is strictly isolated from frozen legacy Telegram modules.
@@ -75,12 +78,9 @@ class TestArchitectureEventsAndServerless(unittest.TestCase):
 
     def test_worker_thread_isolation_from_qt_models(self):
         """
-        Issue 3: Strengthened worker reference isolation.
-        Verifies:
-          1. Worker files do not import Qt Quick/Qml, Qt models, or Qt controllers.
-          2. Worker constructors (__init__) and type annotations do not accept Qt model or controller types.
-          3. Worker instances do not expose attributes holding Qt model or controller objects.
-          4. All worker-to-UI communication flows strictly through IApplicationEventPublisher.
+        Rule: Background workers (DesktopJobRuntime, DesktopJobScheduler) must NOT import,
+        accept, or hold references to Qt models, controllers, QObjects, or QML components.
+        All presentation communication occurs strictly through the application event publisher.
         """
         forbidden_in_workers = {
             "interfaces.desktop.models",
@@ -89,7 +89,7 @@ class TestArchitectureEventsAndServerless(unittest.TestCase):
             "PySide6.QtQml",
         }
 
-        # 1. AST import check
+        # 1. AST Import check
         for py_file in self.workers_dir.rglob("*.py"):
             tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
             for node in ast.walk(tree):
@@ -108,7 +108,7 @@ class TestArchitectureEventsAndServerless(unittest.TestCase):
                             f"Worker file {py_file} must not from-import '{mod}'",
                         )
 
-        # 2. Structural constructor signature & annotation inspection
+        # 2. Constructor signature & annotation inspection
         for worker_cls in [DesktopJobRuntime, DesktopJobScheduler]:
             sig = inspect.signature(worker_cls.__init__)
             for param_name, param in sig.parameters.items():
@@ -118,6 +118,39 @@ class TestArchitectureEventsAndServerless(unittest.TestCase):
                 self.assertNotIn("model", type_str, f"{worker_cls.__name__} parameter '{param_name}' must not accept a Model")
                 self.assertNotIn("controller", type_str, f"{worker_cls.__name__} parameter '{param_name}' must not accept a Controller")
                 self.assertNotIn("qobject", type_str, f"{worker_cls.__name__} parameter '{param_name}' must not accept a QObject")
+
+        # 3. Runtime instance attribute inspection (Option A)
+        bus = InMemoryEventBus()
+        runtime = DesktopJobRuntime(
+            uow_factory=MagicMock(),
+            job_execution_service=MagicMock(),
+            settings_service=MagicMock(),
+            event_publisher=bus,
+        )
+        scheduler = DesktopJobScheduler(
+            uow_factory=MagicMock(),
+            runtime=runtime,
+            settings_service=MagicMock(),
+            event_publisher=bus,
+        )
+
+        for obj, name in [(runtime, "DesktopJobRuntime"), (scheduler, "DesktopJobScheduler")]:
+            for attr_name, attr_val in vars(obj).items():
+                self.assertFalse(
+                    isinstance(attr_val, (QAbstractListModel, QObject)),
+                    f"{name}.{attr_name} must not be a QAbstractListModel or QObject instance",
+                )
+                mod_name = getattr(type(attr_val), "__module__", "")
+                self.assertNotIn(
+                    "interfaces.desktop.models",
+                    mod_name,
+                    f"{name}.{attr_name} holds a presentation model instance: {mod_name}",
+                )
+                self.assertNotIn(
+                    "interfaces.desktop.controllers",
+                    mod_name,
+                    f"{name}.{attr_name} holds a presentation controller instance: {mod_name}",
+                )
 
     def test_serverless_zero_server_imports_repository_wide(self):
         """

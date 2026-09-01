@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from dataclasses import fields
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import keyring
 from keyring.backend import KeyringBackend
@@ -30,6 +30,7 @@ from infrastructure.security.encrypted_store import (
     InvalidPassphraseError,
 )
 from infrastructure.security.keyring_resolver import KeyringCredentialResolver
+from infrastructure.ai.google_adapter import GoogleAdapter
 from infrastructure.ai.executor_service import RateLimitedAIExecutor
 from interfaces.desktop.models.api_slot_model import ApiSlotModel
 
@@ -87,7 +88,7 @@ class TestArchitectureSecurity(unittest.TestCase):
         self.migration_runner.run_migrations()
         self.uow_factory = SQLiteUnitOfWorkFactory(self.db_manager)
 
-        # Issue 4: Save original keyring backend and restore in tearDown
+        # Save original keyring backend and restore in tearDown
         self._original_keyring = keyring.get_keyring()
         self.mock_keyring = MockDeterministicKeyring()
         keyring.set_keyring(self.mock_keyring)
@@ -96,7 +97,7 @@ class TestArchitectureSecurity(unittest.TestCase):
         logging.getLogger().addHandler(self.log_capture)
 
     def tearDown(self):
-        # Issue 4: Restore original keyring backend
+        # Restore original keyring backend
         logging.getLogger().removeHandler(self.log_capture)
         keyring.set_keyring(self._original_keyring)
         self.temp_dir.cleanup()
@@ -219,14 +220,13 @@ class TestArchitectureSecurity(unittest.TestCase):
 
     def test_log_and_exception_masking(self):
         """
-        Issue 2: Non-vacuous test verifying that when synthetic secrets flow through real
-        application registration, execution error paths, and exception formatting, the raw
-        canary secret is 100% absent from all captured logs and exception strings.
+        Verifies that when synthetic canary secrets genuinely flow through real credential resolution,
+        AI adapter construction, forced AI API authentication failures, and exception formatting,
+        the raw canary secret is 100% absent from all captured logs and exception strings.
         """
         resolver = KeyringCredentialResolver(service_name="sec_polpot_masking")
 
         # --- Path A: ApiKeyService registration failure log check ---
-        # Mock a UoW factory that fails during commit after storing secret
         failing_uow = MagicMock()
         failing_uow.apis.save.side_effect = RuntimeError("Database disk full simulation")
         failing_uow_factory = MagicMock()
@@ -243,39 +243,62 @@ class TestArchitectureSecurity(unittest.TestCase):
         try:
             failing_service.register_key(cmd)
         except Exception as ex:
-            # Assert secret is absent from exception representation
             self.assertNotIn(self.SYNTHETIC_SECRET, str(ex))
             self.assertNotIn(self.SYNTHETIC_SECRET, repr(ex))
 
-        # --- Path B: AI Executor error handling and logging path ---
-        mock_adapter = MagicMock()
-        mock_adapter.generate_vision.side_effect = AIAuthenticationError(
-            "HTTP 401: Invalid API Key or Unauthorized token provided by client."
+        # --- Path B: Genuine AI Credential Traversal & Forced Authentication Failure ---
+        # 1. Store synthetic canary secret in real resolver
+        cred_ref = CredentialRef("canary_ai_auth_key", "google", "byok")
+        resolver.store_api_key(cred_ref, self.SYNTHETIC_SECRET)
+
+        # 2. Slot with credential reference
+        canary_slot = ApiSlot(
+            id=42,
+            provider="google",
+            label="Canary Failing AI Provider",
+            selected_model="gemini-2.0-flash",
+            credential_ref=cred_ref,
         )
+
+        # 3. Real resolve_ai_adapter factory that extracts the canary secret from resolver
+        passed_keys_to_adapter = []
+        def real_adapter_factory(slot: ApiSlot):
+            raw_key = resolver.resolve_api_key(slot.credential_ref)
+            passed_keys_to_adapter.append(raw_key)
+            return GoogleAdapter(
+                api_key=raw_key,
+                default_model=slot.selected_model,
+            )
+
         executor = RateLimitedAIExecutor(
-            adapter_factory=lambda slot: mock_adapter,
+            adapter_factory=real_adapter_factory,
             rate_limiter=MagicMock(),
         )
-        canary_slot = ApiSlot(
-            id=10,
-            provider="google",
-            label="Canary AI Slot",
-            selected_model="gemini-2.0-flash",
-            credential_ref=CredentialRef("canary_cred_1", "google", "byok"),
-        )
-        # Execute fallback through failure
-        content, slot = executor.execute_vision_with_fallback(
-            chain=[canary_slot],
-            image_bytes=b"dummy_jpeg",
-            prompt="Transcribe page",
-            at_page=1,
-        )
-        self.assertIsNone(content)
+
+        # 4. Patch google.genai.Client to verify canary key genuinely enters client constructor, then force 401 failure
+        with patch("google.genai.Client") as mock_genai_client:
+            mock_client_instance = MagicMock()
+            mock_client_instance.models.generate_content.side_effect = Exception(
+                "401 API_KEY_INVALID: The provided API key is invalid or unauthorized."
+            )
+            mock_genai_client.return_value = mock_client_instance
+
+            content, active_slot = executor.execute_vision_with_fallback(
+                chain=[canary_slot],
+                image_bytes=b"dummy_jpeg",
+                prompt="Transcribe page",
+                at_page=1,
+            )
+
+            # Assert canary was genuinely resolved and passed into adapter and SDK client
+            self.assertIn(self.SYNTHETIC_SECRET, passed_keys_to_adapter)
+            mock_genai_client.assert_called_once_with(api_key=self.SYNTHETIC_SECRET)
+            self.assertIsNone(content)
 
         # --- Path C: Keyring resolution missing key exception ---
-        cred_ref = CredentialRef(identifier="non_existent_slot", provider="google", slot_type="byok")
+        missing_cred = CredentialRef(identifier="non_existent_slot", provider="google", slot_type="byok")
         with self.assertRaises(EntityNotFoundError) as ctx:
-            resolver.resolve_api_key(cred_ref)
+            resolver.resolve_api_key(missing_cred)
         self.assertNotIn(self.SYNTHETIC_SECRET, str(ctx.exception))
 
         # --- Global log inspection ---
