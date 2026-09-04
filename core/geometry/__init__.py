@@ -11,6 +11,11 @@ from core.geometry.coordinates import (
     ViewportMetrics,
     CoordinateTransformer,
 )
+from core.geometry.box_editor import (
+    BoxGeometryEditor,
+    HandleType,
+    MIN_NORMALIZED_DIMENSION,
+)
 
 __all__ = [
     "PointF",
@@ -19,4 +24,7 @@ __all__ = [
     "DisplayedImageMetrics",
     "ViewportMetrics",
     "CoordinateTransformer",
+    "BoxGeometryEditor",
+    "HandleType",
+    "MIN_NORMALIZED_DIMENSION",
 ]

@@ -11,6 +11,7 @@ from application.ports.document_processor import IDocumentProcessor
 from application.ports.storage import IArtifactStorage
 from application.ports.unit_of_work import IUnitOfWorkFactory
 from core.entities.artifact import ArtifactHandle, ArtifactType, StorageBackendType
+from core.entities.bounding_box import BoundingBox
 from core.entities.visual_region import VisualRegion
 from core.geometry.coordinates import (
     CoordinateTransformer,
@@ -185,6 +186,97 @@ class DocumentViewerService:
             )
 
         return overlay_items
+
+    def update_region_geometry(self, region_id: str, new_bbox: BoundingBox) -> VisualRegionDTO:
+        """
+        Updates the reviewed bounding box of an existing visual region.
+        Preserves immutable detected_bbox if AI-detected. Marks region as MODIFIED and DIRTY.
+        """
+        with self.uow_factory.create() as uow:
+            region = uow.visual_regions.get_by_region_id(region_id)
+            if not region:
+                raise EntityNotFoundError("VisualRegion", region_id)
+
+            region.update_geometry(new_bbox)
+            saved = uow.visual_regions.save(region)
+            uow.commit()
+
+        return self._to_dto(saved)
+
+    def reject_region(self, region_id: str) -> VisualRegionDTO:
+        """
+        Marks a visual region as rejected (deleted).
+        Preserves historical provenance in SQLite for audit and recovery.
+        """
+        with self.uow_factory.create() as uow:
+            region = uow.visual_regions.get_by_region_id(region_id)
+            if not region:
+                raise EntityNotFoundError("VisualRegion", region_id)
+
+            region.reject()
+            saved = uow.visual_regions.save(region)
+            uow.commit()
+
+        return self._to_dto(saved)
+
+    def restore_region(self, region_id: str) -> VisualRegionDTO:
+        """
+        Restores a previously rejected region back to active document review state.
+        """
+        with self.uow_factory.create() as uow:
+            region = uow.visual_regions.get_by_region_id(region_id)
+            if not region:
+                raise EntityNotFoundError("VisualRegion", region_id)
+
+            region.restore()
+            saved = uow.visual_regions.save(region)
+            uow.commit()
+
+        return self._to_dto(saved)
+
+    def reset_region_to_ai(self, region_id: str) -> VisualRegionDTO:
+        """
+        Resets a modified region's geometry back to its original immutable detected_bbox.
+        """
+        with self.uow_factory.create() as uow:
+            region = uow.visual_regions.get_by_region_id(region_id)
+            if not region:
+                raise EntityNotFoundError("VisualRegion", region_id)
+
+            region.reset_to_ai()
+            saved = uow.visual_regions.save(region)
+            uow.commit()
+
+        return self._to_dto(saved)
+
+    def create_manual_region(
+        self,
+        job_id: int,
+        page_number: int,
+        bbox: BoundingBox,
+    ) -> VisualRegionDTO:
+        """
+        Creates a new user-defined manual visual region.
+        Assigns origin = USER_MANUAL, detected_bbox = None, and reviewed_bbox = bbox.
+        """
+        with self.uow_factory.create() as uow:
+            job = uow.jobs.get_by_id(job_id)
+            if not job:
+                raise EntityNotFoundError("Job", job_id)
+
+            existing = uow.visual_regions.get_by_job_and_page(job_id, page_number)
+            next_order = max([r.display_order for r in existing], default=0) + 1
+
+            manual_region = VisualRegion.create_user_manual(
+                job_id=job_id,
+                page_number=page_number,
+                display_order=next_order,
+                reviewed_bbox=bbox,
+            )
+            saved = uow.visual_regions.save(manual_region)
+            uow.commit()
+
+        return self._to_dto(saved)
 
     @staticmethod
     def _to_dto(region: VisualRegion) -> VisualRegionDTO:

@@ -94,6 +94,29 @@ Item {
                     onClicked: controller.resetView()
                 }
 
+                Rectangle {
+                    width: 1
+                    Layout.preferredHeight: 24
+                    color: "#3a3a48"
+                }
+
+                // Phase 10D Review & Editing Controls
+                Button {
+                    id: deleteRegionBtn
+                    objectName: "deleteRegionButton"
+                    text: "Delete Region"
+                    enabled: controller && controller.hasSelection && !controller.isLoading
+                    onClicked: controller.deleteSelectedRegion()
+                }
+
+                Button {
+                    id: resetToAiBtn
+                    objectName: "resetToAiButton"
+                    text: "Reset to AI"
+                    enabled: controller && controller.canResetSelectedToAi && !controller.isLoading
+                    onClicked: controller.resetSelectedRegionToAi()
+                }
+
                 Item { Layout.fillWidth: true }
 
                 // Region Count Badge
@@ -138,6 +161,43 @@ Item {
             onHeightChanged: syncViewportAndScene()
             Component.onCompleted: syncViewportAndScene()
 
+            // Viewport Canvas Pan & Zoom Mouse Interaction (for margin space & wheel)
+            MouseArea {
+                id: panZoomArea
+                objectName: "panZoomArea"
+                anchors.fill: parent
+                hoverEnabled: true
+                acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+
+                property real lastX: 0
+                property real lastY: 0
+
+                onPressed: function(mouse) {
+                    lastX = mouse.x;
+                    lastY = mouse.y;
+                    if (mouse.button === Qt.LeftButton && controller) {
+                        controller.clearSelection();
+                    }
+                }
+
+                onPositionChanged: function(mouse) {
+                    if (pressed && controller) {
+                        var dx = mouse.x - lastX;
+                        var dy = mouse.y - lastY;
+                        controller.panBy(-dx, -dy);
+                        lastX = mouse.x;
+                        lastY = mouse.y;
+                    }
+                }
+
+                onWheel: function(wheel) {
+                    if (controller) {
+                        var factor = wheel.angleDelta.y > 0 ? 1.15 : (1.0 / 1.15);
+                        controller.zoomAt(controller.zoom * factor, wheel.x, wheel.y);
+                    }
+                }
+            }
+
             // Shared Transformed Scene: Page image and overlay share exact same affine transform
             Item {
                 id: pageScene
@@ -165,40 +225,8 @@ Item {
                         objectName: "regionOverlay"
                         anchors.fill: parent
                         controller: viewerViewRoot.controller
+                        viewportArea: viewportArea
                         fitMode: "preserve_aspect_fit"
-                    }
-                }
-            }
-
-            // Viewport Pan & Zoom Mouse Interaction
-            MouseArea {
-                id: panZoomArea
-                anchors.fill: parent
-                hoverEnabled: true
-                acceptedButtons: Qt.LeftButton
-
-                property real lastX: 0
-                property real lastY: 0
-
-                onPressed: function(mouse) {
-                    lastX = mouse.x;
-                    lastY = mouse.y;
-                }
-
-                onPositionChanged: function(mouse) {
-                    if (pressed && controller) {
-                        var dx = mouse.x - lastX;
-                        var dy = mouse.y - lastY;
-                        controller.panBy(-dx, -dy);
-                        lastX = mouse.x;
-                        lastY = mouse.y;
-                    }
-                }
-
-                onWheel: function(wheel) {
-                    if (controller) {
-                        var factor = wheel.angleDelta.y > 0 ? 1.15 : (1.0 / 1.15);
-                        controller.zoomAt(controller.zoom * factor, wheel.x, wheel.y);
                     }
                 }
             }
