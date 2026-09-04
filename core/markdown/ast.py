@@ -28,18 +28,21 @@ class InlineType(str, Enum):
     STRONG = "strong"          # Bold text
     CODE_SPAN = "code_span"    # Inline monospaced backtick code
     LINK = "link"              # Hyperlink
+    IMAGE = "image"            # Inline image (standard Markdown or wiki-link)
 
 
 @dataclass(frozen=True)
 class InlineSpan:
     """
     Immutable semantic inline span.
-    Supports recursive composition of formatting (e.g. bold italic link).
+    Supports recursive composition of formatting (e.g. bold italic link)
+    and semantic inline images without losing textual distinction.
     """
     span_type: InlineType
     text: str = ""
-    target: Optional[str] = None  # URL or reference for links
+    target: Optional[str] = None  # URL for links; image source URI for inline images
     children: Tuple["InlineSpan", ...] = ()
+    region_id: Optional[str] = None  # Optional explicit region_id for inline wiki-links
 
     def __post_init__(self) -> None:
         if not isinstance(self.children, tuple):
