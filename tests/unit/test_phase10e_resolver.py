@@ -523,5 +523,352 @@ class TestCoreMarkdownDependencyBoundaries(unittest.TestCase):
                         )
 
 
+class TestInlineVisualRegionResolver(unittest.TestCase):
+    """
+    Focused regression tests for inline visual region identity resolution across
+    paragraphs, headings, lists, blockquotes, tables, and nested inline spans.
+    Verifies that InlineSpan(IMAGE) adheres to the exact same deterministic 4-tier
+    resolution policy as standalone ImageBlock.
+    """
+
+    def setUp(self):
+        self.job_id = 42
+        self.bbox = BoundingBox(ymin=100, xmin=100, ymax=300, xmax=400)
+        self.rid_1 = uuid.uuid4().hex
+        self.rid_2 = uuid.uuid4().hex
+        self.rid_3 = uuid.uuid4().hex
+
+        self.region_1 = VisualRegion.create_ai_detected(
+            job_id=self.job_id,
+            page_number=1,
+            display_order=1,
+            detected_bbox=self.bbox,
+            region_id=self.rid_1,
+        )
+        self.region_2 = VisualRegion.create_ai_detected(
+            job_id=self.job_id,
+            page_number=1,
+            display_order=2,
+            detected_bbox=self.bbox,
+            region_id=self.rid_2,
+        )
+        self.region_3 = VisualRegion.create_user_manual(
+            job_id=self.job_id,
+            page_number=2,
+            display_order=1,
+            reviewed_bbox=self.bbox,
+            region_id=self.rid_3,
+        )
+        self.active_regions = [self.region_1, self.region_2, self.region_3]
+
+    def test_case_01_standalone_image_block_resolves_exactly_as_before(self):
+        """Case 1: Standalone ImageBlock still resolves exactly as before."""
+        img = ImageBlock(source=f"crop_{self.job_id}_{self.rid_1}_v1.jpg")
+        doc = MarkdownDocument(blocks=(img,))
+        resolved = resolve_image_regions(doc, self.active_regions, self.job_id)
+        res_img = resolved.blocks[0]
+        self.assertIsInstance(res_img, ImageBlock)
+        self.assertTrue(res_img.is_associated)
+        self.assertEqual(res_img.region_id, self.rid_1)
+        self.assertEqual(res_img.display_order, 1)
+
+    def test_case_02_paragraph_containing_one_inline_image_resolves(self):
+        """Case 2: Paragraph containing one inline image resolves."""
+        text_span = InlineSpan(span_type=InlineType.TEXT, text="Caption: ")
+        img_span = InlineSpan(
+            span_type=InlineType.IMAGE,
+            target=f"crop_{self.job_id}_{self.rid_1}_v2.png",
+            text="Diagram",
+        )
+        p = ParagraphBlock(inlines=(text_span, img_span))
+        doc = MarkdownDocument(blocks=(p,))
+
+        resolved = resolve_image_regions(doc, self.active_regions, self.job_id)
+        res_p = resolved.blocks[0]
+        self.assertIsInstance(res_p, ParagraphBlock)
+        self.assertEqual(len(res_p.inlines), 2)
+        self.assertFalse(res_p.inlines[0].is_associated)
+        self.assertTrue(res_p.inlines[1].is_associated)
+        self.assertEqual(res_p.inlines[1].region_id, self.rid_1)
+        self.assertEqual(res_p.inlines[1].display_order, 1)
+        self.assertEqual(res_p.inlines[1].text, "Diagram")
+        self.assertEqual(res_p.inlines[1].target, f"crop_{self.job_id}_{self.rid_1}_v2.png")
+
+    def test_case_03_paragraph_containing_multiple_inline_images_resolves_independently(self):
+        """Case 3: Paragraph containing multiple inline images resolves independently."""
+        img1 = InlineSpan(span_type=InlineType.IMAGE, region_id=self.rid_1, target="custom1.png")
+        sep = InlineSpan(span_type=InlineType.TEXT, text=" and ")
+        img2 = InlineSpan(span_type=InlineType.IMAGE, target=f"crop_{self.job_id}_{self.rid_2}_v1.png")
+        p = ParagraphBlock(inlines=(img1, sep, img2))
+        doc = MarkdownDocument(blocks=(p,))
+
+        resolved = resolve_image_regions(doc, self.active_regions, self.job_id)
+        res_p = resolved.blocks[0]
+        self.assertTrue(res_p.inlines[0].is_associated)
+        self.assertEqual(res_p.inlines[0].region_id, self.rid_1)
+        self.assertEqual(res_p.inlines[0].display_order, 1)
+        self.assertFalse(res_p.inlines[1].is_associated)
+        self.assertTrue(res_p.inlines[2].is_associated)
+        self.assertEqual(res_p.inlines[2].region_id, self.rid_2)
+        self.assertEqual(res_p.inlines[2].display_order, 2)
+
+    def test_case_04_heading_containing_an_inline_image_resolves(self):
+        """Case 4: Heading containing an inline image resolves."""
+        img = InlineSpan(span_type=InlineType.IMAGE, region_id=self.rid_3, target="icon.png")
+        title = InlineSpan(span_type=InlineType.TEXT, text=" Section Title")
+        h = HeadingBlock(level=2, inlines=(img, title))
+        doc = MarkdownDocument(blocks=(h,))
+
+        resolved = resolve_image_regions(doc, self.active_regions, self.job_id)
+        res_h = resolved.blocks[0]
+        self.assertIsInstance(res_h, HeadingBlock)
+        self.assertTrue(res_h.inlines[0].is_associated)
+        self.assertEqual(res_h.inlines[0].region_id, self.rid_3)
+        self.assertEqual(res_h.inlines[0].display_order, 1)
+        self.assertEqual(res_h.inlines[1].text, " Section Title")
+
+    def test_case_05_list_item_containing_an_inline_image_resolves(self):
+        """Case 5: List item containing an inline image resolves."""
+        label = InlineSpan(span_type=InlineType.TEXT, text="Figure item: ")
+        img = InlineSpan(span_type=InlineType.IMAGE, region_id=self.rid_1, target="crop.png")
+        item = ListItem(inlines=(label, img))
+        lst = ListBlock(items=(item,), is_ordered=False)
+        doc = MarkdownDocument(blocks=(lst,))
+
+        resolved = resolve_image_regions(doc, self.active_regions, self.job_id)
+        res_lst = resolved.blocks[0]
+        self.assertIsInstance(res_lst, ListBlock)
+        res_item = res_lst.items[0]
+        self.assertTrue(res_item.inlines[1].is_associated)
+        self.assertEqual(res_item.inlines[1].region_id, self.rid_1)
+        self.assertEqual(res_item.inlines[1].display_order, 1)
+
+    def test_case_06_blockquote_containing_inline_image_resolves_recursively(self):
+        """Case 6: Blockquote containing inline image resolves recursively."""
+        img = InlineSpan(span_type=InlineType.IMAGE, region_id=self.rid_2, target="quote.png")
+        p = ParagraphBlock(inlines=(img,))
+        bq = BlockquoteBlock(blocks=(p,))
+        doc = MarkdownDocument(blocks=(bq,))
+
+        resolved = resolve_image_regions(doc, self.active_regions, self.job_id)
+        res_bq = resolved.blocks[0]
+        self.assertIsInstance(res_bq, BlockquoteBlock)
+        res_p = res_bq.blocks[0]
+        self.assertIsInstance(res_p, ParagraphBlock)
+        self.assertTrue(res_p.inlines[0].is_associated)
+        self.assertEqual(res_p.inlines[0].region_id, self.rid_2)
+        self.assertEqual(res_p.inlines[0].display_order, 2)
+
+    def test_case_07_explicit_region_id_remains_authoritative(self):
+        """Case 7: Explicit region_id remains authoritative over filename patterns."""
+        # Filename implies Tier 3 (p1_1 -> region_1), but explicit region_id specifies region_2
+        img = InlineSpan(
+            span_type=InlineType.IMAGE,
+            target=f"crop_{self.job_id}_p1_1.jpg",
+            region_id=self.rid_2,
+        )
+        p = ParagraphBlock(inlines=(img,))
+        doc = MarkdownDocument(blocks=(p,))
+
+        resolved = resolve_image_regions(doc, self.active_regions, self.job_id)
+        res_img = resolved.blocks[0].inlines[0]
+        self.assertTrue(res_img.is_associated)
+        self.assertEqual(res_img.region_id, self.rid_2)
+        self.assertEqual(res_img.display_order, 2)
+
+    def test_case_08_unknown_explicit_region_id_remains_unassociated_according_to_existing_policy(self):
+        """Case 8: Unknown explicit region_id remains unassociated without falling back to filename."""
+        unknown_rid = uuid.uuid4().hex
+        img = InlineSpan(
+            span_type=InlineType.IMAGE,
+            target=f"crop_{self.job_id}_p1_1.jpg",
+            region_id=unknown_rid,
+        )
+        p = ParagraphBlock(inlines=(img,))
+        doc = MarkdownDocument(blocks=(p,))
+
+        resolved = resolve_image_regions(doc, self.active_regions, self.job_id)
+        res_img = resolved.blocks[0].inlines[0]
+        self.assertFalse(res_img.is_associated)
+        self.assertEqual(res_img.region_id, unknown_rid)
+        self.assertIsNone(res_img.display_order)
+
+    def test_case_09_legacy_filename_association_works_where_currently_supported(self):
+        """Case 9: Legacy filename association works where currently supported."""
+        img = InlineSpan(
+            span_type=InlineType.IMAGE,
+            target=f"crop_{self.job_id}_p1_2.jpg",
+        )
+        p = ParagraphBlock(inlines=(img,))
+        doc = MarkdownDocument(blocks=(p,))
+
+        resolved = resolve_image_regions(doc, self.active_regions, self.job_id)
+        res_img = resolved.blocks[0].inlines[0]
+        self.assertTrue(res_img.is_associated)
+        self.assertEqual(res_img.region_id, self.rid_2)
+        self.assertEqual(res_img.display_order, 2)
+
+    def test_case_10_repeated_resolution_is_deterministic(self):
+        """Case 10: Repeated resolution is deterministic."""
+        img1 = InlineSpan(span_type=InlineType.IMAGE, region_id=self.rid_1, target="1.jpg")
+        img2 = InlineSpan(span_type=InlineType.IMAGE, target=f"crop_{self.job_id}_{self.rid_2}_v1.jpg")
+        p = ParagraphBlock(inlines=(img1, img2))
+        doc = MarkdownDocument(blocks=(p,))
+
+        res1 = resolve_image_regions(doc, self.active_regions, self.job_id)
+        res2 = resolve_image_regions(doc, self.active_regions, self.job_id)
+
+        self.assertEqual(res1.blocks[0].inlines[0].region_id, res2.blocks[0].inlines[0].region_id)
+        self.assertEqual(res1.blocks[0].inlines[0].is_associated, res2.blocks[0].inlines[0].is_associated)
+        self.assertEqual(res1.blocks[0].inlines[1].region_id, res2.blocks[0].inlines[1].region_id)
+        self.assertEqual(res1.blocks[0].inlines[1].is_associated, res2.blocks[0].inlines[1].is_associated)
+
+    def test_case_11_original_immutable_ast_is_not_mutated(self):
+        """Case 11: Original immutable AST is not mutated."""
+        img = InlineSpan(span_type=InlineType.IMAGE, region_id=self.rid_1, target="crop.jpg")
+        p = ParagraphBlock(inlines=(img,))
+        doc = MarkdownDocument(blocks=(p,))
+
+        resolved = resolve_image_regions(doc, self.active_regions, self.job_id)
+        # Input AST remains untouched
+        self.assertFalse(img.is_associated)
+        self.assertFalse(p.inlines[0].is_associated)
+        self.assertFalse(doc.blocks[0].inlines[0].is_associated)
+        # Resolved output reflects association
+        self.assertTrue(resolved.blocks[0].inlines[0].is_associated)
+
+    def test_case_12_existing_10e1_resolver_behavior_remains_unchanged_for_block_level_images(self):
+        """Case 12: Existing 10E.1 resolver behavior remains unchanged for block-level images."""
+        img_t1 = ImageBlock(source="t1.jpg", region_id=self.rid_1)
+        img_t2 = ImageBlock(source=f"crop_{self.job_id}_{self.rid_2}_v1.png")
+        img_t3 = ImageBlock(source=f"crop_{self.job_id}_p2_1.png")
+        img_t4 = ImageBlock(source="standard.jpg")
+
+        doc = MarkdownDocument(blocks=(img_t1, img_t2, img_t3, img_t4))
+        resolved = resolve_image_regions(doc, self.active_regions, self.job_id)
+
+        # Tier 1
+        self.assertTrue(resolved.blocks[0].is_associated)
+        self.assertEqual(resolved.blocks[0].region_id, self.rid_1)
+        self.assertEqual(resolved.blocks[0].display_order, 1)
+        # Tier 2
+        self.assertTrue(resolved.blocks[1].is_associated)
+        self.assertEqual(resolved.blocks[1].region_id, self.rid_2)
+        self.assertEqual(resolved.blocks[1].display_order, 2)
+        # Tier 3
+        self.assertTrue(resolved.blocks[2].is_associated)
+        self.assertEqual(resolved.blocks[2].region_id, self.rid_3)
+        self.assertEqual(resolved.blocks[2].display_order, 1)
+        # Tier 4
+        self.assertFalse(resolved.blocks[3].is_associated)
+        self.assertIsNone(resolved.blocks[3].region_id)
+
+    def test_table_fallback_cell_inline_image_resolves(self):
+        """Verifies that inline images inside TableFallbackBlock header and row cells resolve."""
+        img_header = InlineSpan(span_type=InlineType.IMAGE, region_id=self.rid_1, target="head.png")
+        img_cell = InlineSpan(span_type=InlineType.IMAGE, target=f"crop_{self.job_id}_{self.rid_2}_v1.jpg")
+        text_span = InlineSpan(span_type=InlineType.TEXT, text="Header")
+
+        tbl = TableFallbackBlock(
+            raw_table="| Header | Icon |\n|---|---|\n| Cell | Crop |",
+            headers=((text_span,), (img_header,)),
+            rows=(((text_span,), (img_cell,)),),
+        )
+        doc = MarkdownDocument(blocks=(tbl,))
+        resolved = resolve_image_regions(doc, self.active_regions, self.job_id)
+
+        res_tbl = resolved.blocks[0]
+        self.assertIsInstance(res_tbl, TableFallbackBlock)
+        self.assertTrue(res_tbl.headers[1][0].is_associated)
+        self.assertEqual(res_tbl.headers[1][0].region_id, self.rid_1)
+        self.assertTrue(res_tbl.rows[0][1][0].is_associated)
+        self.assertEqual(res_tbl.rows[0][1][0].region_id, self.rid_2)
+
+    def test_stale_explicit_id_preserves_declared_identity_without_lower_tier_override(self):
+        """
+        Verifies that a stale explicit region_id (e.g. STALE-ID) preserves the declared
+        identity without asserting association and strictly prevents lower-tier filename
+        matching (e.g. Tier 3 legacy pattern) from overriding it.
+        """
+        # Filename would match region_1 via Tier 3 (crop_42_p1_1.jpg), but explicit region_id="STALE-ID"
+        img = InlineSpan(
+            span_type=InlineType.IMAGE,
+            target=f"crop_{self.job_id}_p1_1.jpg",
+            region_id="STALE-ID",
+        )
+        p = ParagraphBlock(inlines=(img,))
+        doc = MarkdownDocument(blocks=(p,))
+
+        resolved = resolve_image_regions(doc, self.active_regions, self.job_id)
+        res_img = resolved.blocks[0].inlines[0]
+        self.assertFalse(res_img.is_associated)
+        self.assertEqual(res_img.region_id, "STALE-ID")
+        self.assertIsNone(res_img.display_order)
+
+    def test_inline_image_alt_text_is_not_an_identity_source(self):
+        """
+        Verifies that span.text (alt text) is never parsed for region_id=... syntax.
+        Tier 1 identity for inline images must strictly originate from span.region_id.
+        """
+        # span.text has region_id=self.rid_2, but span.region_id is None and filename matches region_1
+        img = InlineSpan(
+            span_type=InlineType.IMAGE,
+            text=f"Figure alt text region_id={self.rid_2}",
+            target=f"crop_{self.job_id}_p1_1.jpg",
+            region_id=None,
+        )
+        p = ParagraphBlock(inlines=(img,))
+        doc = MarkdownDocument(blocks=(p,))
+
+        resolved = resolve_image_regions(doc, self.active_regions, self.job_id)
+        res_img = resolved.blocks[0].inlines[0]
+        # Since span.text is NOT an identity source, it does not match rid_2 via Tier 1.
+        # Instead, filename resolves via Tier 3 to region_1.
+        self.assertTrue(res_img.is_associated)
+        self.assertEqual(res_img.region_id, self.rid_1)
+        self.assertEqual(res_img.display_order, 1)
+        self.assertEqual(res_img.text, f"Figure alt text region_id={self.rid_2}")
+
+    def test_nested_inline_image_inside_strong_emphasis_link_resolves_recursively(self):
+        """
+        Verifies that an inline image deeply nested inside link -> strong -> emphasis
+        is resolved without destroying the surrounding formatting wrappers.
+        """
+        inner_img = InlineSpan(
+            span_type=InlineType.IMAGE,
+            region_id=self.rid_1,
+            target="nested_crop.png",
+            text="Nested Image",
+        )
+        em_span = InlineSpan(span_type=InlineType.EMPHASIS, children=(inner_img,))
+        strong_span = InlineSpan(span_type=InlineType.STRONG, children=(em_span,))
+        link_span = InlineSpan(
+            span_type=InlineType.LINK,
+            target="https://polpot.app",
+            children=(strong_span,),
+        )
+        p = ParagraphBlock(inlines=(link_span,))
+        doc = MarkdownDocument(blocks=(p,))
+
+        resolved = resolve_image_regions(doc, self.active_regions, self.job_id)
+        res_link = resolved.blocks[0].inlines[0]
+
+        self.assertEqual(res_link.span_type, InlineType.LINK)
+        self.assertEqual(res_link.target, "https://polpot.app")
+
+        res_strong = res_link.children[0]
+        self.assertEqual(res_strong.span_type, InlineType.STRONG)
+
+        res_em = res_strong.children[0]
+        self.assertEqual(res_em.span_type, InlineType.EMPHASIS)
+
+        res_img = res_em.children[0]
+        self.assertEqual(res_img.span_type, InlineType.IMAGE)
+        self.assertTrue(res_img.is_associated)
+        self.assertEqual(res_img.region_id, self.rid_1)
+        self.assertEqual(res_img.display_order, 1)
+        self.assertEqual(res_img.text, "Nested Image")
+
+
 if __name__ == "__main__":
     unittest.main()

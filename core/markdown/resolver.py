@@ -12,9 +12,16 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 from core.entities.visual_region import VisualRegion
 from core.markdown.ast import (
     BlockquoteBlock,
+    HeadingBlock,
     ImageBlock,
+    InlineSpan,
+    InlineType,
+    ListBlock,
+    ListItem,
     MarkdownBlock,
     MarkdownDocument,
+    ParagraphBlock,
+    TableFallbackBlock,
 )
 
 # Regex to detect explicit region_id attributes in tags, alt text, or titles:
@@ -68,67 +75,46 @@ def _extract_filename(source: str) -> str:
     return os.path.basename(clean)
 
 
-def _find_explicit_region_id(image: ImageBlock) -> Optional[str]:
-    """
-    Inspects image properties for an explicit region_id declaration (Tier 1).
-    Checks image.region_id, image.raw_tag, image.title, and image.alt_text.
-    """
-    if image.region_id:
-        norm = _normalize_uuid(image.region_id)
-        if norm:
-            return norm
-
-    for candidate in (image.raw_tag, image.title, image.alt_text):
-        if candidate:
-            m = EXPLICIT_REGION_ID_RE.search(candidate)
-            if m:
-                norm = _normalize_uuid(m.group(1))
-                if norm:
-                    return norm
-    return None
-
-
-def _resolve_image(
-    image: ImageBlock,
+def _resolve_image_identity(
+    source: Optional[str],
+    declared_region_id: Optional[str],
+    text_candidates: Sequence[Optional[str]],
     regions_by_uuid: Dict[str, VisualRegion],
     regions_by_page_order: Dict[Tuple[int, int], List[VisualRegion]],
     target_job_id_str: str,
-) -> ImageBlock:
+) -> Tuple[Optional[str], bool, Optional[int]]:
     """
-    Resolves a single ImageBlock against active visual regions using
-    the four-tier precedence model. Returns a new ImageBlock.
+    Resolves image identity against active visual regions using the four-tier
+    precedence model. Returns (region_id, is_associated, display_order).
+    Shared identically between block-level ImageBlock and inline InlineSpan(IMAGE).
     """
     # -----------------------------------------------------------------
     # Tier 1: Explicit Metadata Token (Canonical Identity)
     # -----------------------------------------------------------------
-    explicit_id = _find_explicit_region_id(image)
-    if explicit_id is not None:
-        if explicit_id in regions_by_uuid:
-            matched = regions_by_uuid[explicit_id]
-            return replace(
-                image,
-                region_id=matched.region_id,
-                is_associated=True,
-                display_order=matched.display_order,
-            )
-        # Explicit region ID was provided but does not match any active
-        # region for this job (e.g. deleted or stale). Preserve explicit
-        # reference without asserting active association. Do not fall back.
-        return replace(
-            image,
-            region_id=explicit_id,
-            is_associated=False,
-            display_order=None,
-        )
+    if declared_region_id:
+        norm_uuid = _normalize_uuid(declared_region_id)
+        if norm_uuid and norm_uuid in regions_by_uuid:
+            matched = regions_by_uuid[norm_uuid]
+            return matched.region_id, True, matched.display_order
+        # Explicit declared identity does not match any active region for this job
+        # (e.g. deleted, stale, or malformed). Preserve declared identity without
+        # asserting active association. Do not fall back to filename heuristics.
+        return declared_region_id, False, None
 
-    filename = _extract_filename(image.source)
+    for candidate in text_candidates:
+        if candidate:
+            m = EXPLICIT_REGION_ID_RE.search(candidate)
+            if m:
+                extracted = m.group(1)
+                norm_uuid = _normalize_uuid(extracted)
+                if norm_uuid and norm_uuid in regions_by_uuid:
+                    matched = regions_by_uuid[norm_uuid]
+                    return matched.region_id, True, matched.display_order
+                return extracted, False, None
+
+    filename = _extract_filename(source or "")
     if not filename:
-        return replace(
-            image,
-            region_id=None,
-            is_associated=False,
-            display_order=None,
-        )
+        return None, False, None
 
     # -----------------------------------------------------------------
     # Tier 2: Reviewed Artifact Filename Pattern (Stable Artifact)
@@ -141,19 +127,9 @@ def _resolve_image(
             extracted_uuid = _normalize_uuid(m_tier2.group("region_id"))
             if extracted_uuid and extracted_uuid in regions_by_uuid:
                 matched = regions_by_uuid[extracted_uuid]
-                return replace(
-                    image,
-                    region_id=matched.region_id,
-                    is_associated=True,
-                    display_order=matched.display_order,
-                )
+                return matched.region_id, True, matched.display_order
         # Belongs to another job or unverified/stale region in Tier 2 pattern
-        return replace(
-            image,
-            region_id=None,
-            is_associated=False,
-            display_order=None,
-        )
+        return None, False, None
 
     # -----------------------------------------------------------------
     # Tier 3: Legacy Display Order Heuristic (Compatibility Heuristic)
@@ -168,37 +144,82 @@ def _resolve_image(
             candidates = regions_by_page_order.get((page_num, order_num), [])
             if len(candidates) == 1:
                 matched = candidates[0]
-                return replace(
-                    image,
-                    region_id=matched.region_id,
-                    is_associated=True,
-                    display_order=matched.display_order,
-                )
+                return matched.region_id, True, matched.display_order
             # Ambiguous duplicate candidates (>1) or missing (0):
             # Do not guess; treat as unassociated.
-            return replace(
-                image,
-                region_id=None,
-                is_associated=False,
-                display_order=None,
-            )
+            return None, False, None
         # Unrelated job ID in legacy pattern
-        return replace(
-            image,
-            region_id=None,
-            is_associated=False,
-            display_order=None,
-        )
+        return None, False, None
 
     # -----------------------------------------------------------------
     # Tier 4: Unassociated Image
     # -----------------------------------------------------------------
+    return None, False, None
+
+
+def _resolve_image(
+    image: ImageBlock,
+    regions_by_uuid: Dict[str, VisualRegion],
+    regions_by_page_order: Dict[Tuple[int, int], List[VisualRegion]],
+    target_job_id_str: str,
+) -> ImageBlock:
+    """
+    Resolves a single ImageBlock against active visual regions using
+    the four-tier precedence model. Returns a new ImageBlock.
+    """
+    rid, is_assoc, order = _resolve_image_identity(
+        source=image.source,
+        declared_region_id=image.region_id,
+        text_candidates=(image.raw_tag, image.title, image.alt_text),
+        regions_by_uuid=regions_by_uuid,
+        regions_by_page_order=regions_by_page_order,
+        target_job_id_str=target_job_id_str,
+    )
     return replace(
         image,
-        region_id=None,
-        is_associated=False,
-        display_order=None,
+        region_id=rid,
+        is_associated=is_assoc,
+        display_order=order,
     )
+
+
+def _resolve_inline_span(
+    span: InlineSpan,
+    regions_by_uuid: Dict[str, VisualRegion],
+    regions_by_page_order: Dict[Tuple[int, int], List[VisualRegion]],
+    target_job_id_str: str,
+) -> InlineSpan:
+    """
+    Recursively resolves inline spans, resolving any nested or top-level
+    InlineType.IMAGE spans against active visual regions.
+    """
+    new_children = tuple(
+        _resolve_inline_span(c, regions_by_uuid, regions_by_page_order, target_job_id_str)
+        for c in span.children
+    ) if span.children else span.children
+
+    if span.span_type == InlineType.IMAGE:
+        # Tier 1 canonical identity for inline images is strictly bound to
+        # the semantic span.region_id field populated by the parser.
+        # span.text is alt text and must never be parsed as an identity source.
+        rid, is_assoc, order = _resolve_image_identity(
+            source=span.target,
+            declared_region_id=span.region_id,
+            text_candidates=(),
+            regions_by_uuid=regions_by_uuid,
+            regions_by_page_order=regions_by_page_order,
+            target_job_id_str=target_job_id_str,
+        )
+        return replace(
+            span,
+            region_id=rid,
+            is_associated=is_assoc,
+            display_order=order,
+            children=new_children,
+        )
+    elif new_children != span.children:
+        return replace(span, children=new_children)
+    return span
 
 
 def _resolve_block(
@@ -207,7 +228,7 @@ def _resolve_block(
     regions_by_page_order: Dict[Tuple[int, int], List[VisualRegion]],
     target_job_id_str: str,
 ) -> MarkdownBlock:
-    """Recursively resolves image nodes within block structures."""
+    """Recursively resolves image nodes and inline image spans within block structures."""
     if isinstance(block, ImageBlock):
         return _resolve_image(
             block,
@@ -215,12 +236,55 @@ def _resolve_block(
             regions_by_page_order,
             target_job_id_str,
         )
+    elif isinstance(block, ParagraphBlock):
+        new_inlines = tuple(
+            _resolve_inline_span(s, regions_by_uuid, regions_by_page_order, target_job_id_str)
+            for s in block.inlines
+        )
+        return replace(block, inlines=new_inlines)
+    elif isinstance(block, HeadingBlock):
+        new_inlines = tuple(
+            _resolve_inline_span(s, regions_by_uuid, regions_by_page_order, target_job_id_str)
+            for s in block.inlines
+        )
+        return replace(block, inlines=new_inlines)
+    elif isinstance(block, ListBlock):
+        new_items = tuple(
+            replace(
+                item,
+                inlines=tuple(
+                    _resolve_inline_span(s, regions_by_uuid, regions_by_page_order, target_job_id_str)
+                    for s in item.inlines
+                ),
+            )
+            for item in block.items
+        )
+        return replace(block, items=new_items)
     elif isinstance(block, BlockquoteBlock):
         new_blocks = tuple(
             _resolve_block(b, regions_by_uuid, regions_by_page_order, target_job_id_str)
             for b in block.blocks
         )
         return replace(block, blocks=new_blocks)
+    elif isinstance(block, TableFallbackBlock):
+        new_headers = tuple(
+            tuple(
+                _resolve_inline_span(s, regions_by_uuid, regions_by_page_order, target_job_id_str)
+                for s in cell
+            )
+            for cell in block.headers
+        )
+        new_rows = tuple(
+            tuple(
+                tuple(
+                    _resolve_inline_span(s, regions_by_uuid, regions_by_page_order, target_job_id_str)
+                    for s in cell
+                )
+                for cell in row
+            )
+            for row in block.rows
+        )
+        return replace(block, headers=new_headers, rows=new_rows)
     return block
 
 

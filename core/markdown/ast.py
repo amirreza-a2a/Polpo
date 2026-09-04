@@ -42,7 +42,9 @@ class InlineSpan:
     text: str = ""
     target: Optional[str] = None  # URL for links; image source URI for inline images
     children: Tuple["InlineSpan", ...] = ()
-    region_id: Optional[str] = None  # Optional explicit region_id for inline wiki-links
+    region_id: Optional[str] = None  # Optional explicit region_id or resolved region identity
+    is_associated: bool = False  # True when region_id is confirmed bound to an active VisualRegion
+    display_order: Optional[int] = None  # Visual region display order when associated
 
     def __post_init__(self) -> None:
         if not isinstance(self.children, tuple):
