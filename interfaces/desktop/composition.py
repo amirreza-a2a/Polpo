@@ -32,6 +32,8 @@ from application.services.api_key_service import ApiKeyService
 from application.services.settings_service import LocalSettingsService
 from application.services.prompt_service import PromptService
 from application.services.artifact_service import ArtifactService
+from application.services.apply_review_service import ApplyReviewService
+from application.services.document_viewer_service import DocumentViewerService
 from interfaces.desktop.workers.runtime import DesktopJobRuntime
 from interfaces.desktop.workers.scheduler import DesktopJobScheduler
 
@@ -135,6 +137,18 @@ class DesktopAppContainer:
         self.job_recovery_service = JobRecoveryService(
             uow_factory=self.uow_factory,
             event_publisher=self.event_bus,
+        )
+
+        self.apply_review_service = ApplyReviewService(
+            uow_factory=self.uow_factory,
+            storage=self.storage,
+            doc_processor=self.doc_processor,
+        )
+
+        self.document_viewer_service = DocumentViewerService(
+            uow_factory=self.uow_factory,
+            storage=self.storage,
+            doc_processor=self.doc_processor,
         )
 
         # 6. Desktop Concurrent Runtime & Persistent Scheduler

@@ -154,3 +154,7 @@ class PyMuPDFDocumentProcessor(IDocumentProcessor):
             )
         except Exception:
             return None
+
+    def get_image_dimensions(self, image_bytes: bytes) -> Tuple[int, int]:
+        """Retrieves (width, height) in pixels from raw image bytes."""
+        return ImageCropper.get_image_dimensions(image_bytes)

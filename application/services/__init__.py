@@ -12,6 +12,7 @@ from application.services.prompt_service import PromptService
 from application.services.api_service import ApiManagementService
 from application.services.artifact_service import ArtifactService
 from application.services.apply_review_service import ApplyReviewService
+from application.services.document_viewer_service import DocumentViewerService
 
 __all__ = [
     "JobSubmissionService",
@@ -24,4 +25,5 @@ __all__ = [
     "ApiManagementService",
     "ArtifactService",
     "ApplyReviewService",
+    "DocumentViewerService",
 ]

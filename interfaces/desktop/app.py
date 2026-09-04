@@ -16,6 +16,7 @@ from interfaces.desktop.controllers import (
     PromptController,
     SettingsController,
     QuickConvertController,
+    DocumentViewerController,
 )
 from interfaces.desktop.models import (
     JobQueueModel,
@@ -92,6 +93,9 @@ def create_app(
     quick_convert_controller = QuickConvertController(
         quick_convert_service=container.quick_convert_service,
     )
+    document_viewer_controller = DocumentViewerController(
+        viewer_service=container.document_viewer_service,
+    )
 
     # 5. QAbstractListModel ViewModels
     job_queue_model = JobQueueModel(
@@ -118,6 +122,7 @@ def create_app(
     container.prompt_controller = prompt_controller
     container.settings_controller = settings_controller
     container.quick_convert_controller = quick_convert_controller
+    container.document_viewer_controller = document_viewer_controller
     container.job_queue_model = job_queue_model
     container.job_history_model = job_history_model
     container.api_slot_model = api_slot_model
@@ -131,6 +136,7 @@ def create_app(
     ctx.setContextProperty("promptController", prompt_controller)
     ctx.setContextProperty("settingsController", settings_controller)
     ctx.setContextProperty("quickConvertController", quick_convert_controller)
+    ctx.setContextProperty("documentViewerController", document_viewer_controller)
     ctx.setContextProperty("jobQueueModel", job_queue_model)
     ctx.setContextProperty("jobHistoryModel", job_history_model)
     ctx.setContextProperty("apiSlotModel", api_slot_model)

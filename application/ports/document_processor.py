@@ -75,3 +75,8 @@ class IDocumentProcessor(ABC):
     ) -> Optional[bytes]:
         """Crops a specific visual region geometry from a page raster."""
         pass
+
+    @abstractmethod
+    def get_image_dimensions(self, image_bytes: bytes) -> Tuple[int, int]:
+        """Returns (width, height) in pixels for the provided raster image bytes."""
+        pass
