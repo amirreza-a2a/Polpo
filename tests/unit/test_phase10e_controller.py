@@ -20,14 +20,14 @@ from application.services.markdown_viewer_service import MarkdownViewerService
 from core.exceptions.domain_exceptions import DomainError, EntityNotFoundError
 from interfaces.desktop.controllers.markdown_viewer_controller import MarkdownViewerController
 from interfaces.desktop.models.markdown_document_model import MarkdownDocumentModel
-from interfaces.desktop.qt_compat import QCoreApplication
+from interfaces.desktop.qt_compat import QGuiApplication
 
 
 @pytest.fixture(scope="session")
 def qapp():
-    app = QCoreApplication.instance()
+    app = QGuiApplication.instance()
     if app is None:
-        app = QCoreApplication([])
+        app = QGuiApplication(["-platform", "offscreen"])
     return app
 
 
