@@ -200,6 +200,8 @@ class TestDesktopRuntimeConcurrency(unittest.TestCase):
             recovered_job = uow.jobs.get_by_id(job_dto.id)
             self.assertEqual(recovered_job.status, JobStatus.PAUSED)
 
+        container.shutdown()
+
 
 if __name__ == "__main__":
     unittest.main()

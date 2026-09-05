@@ -184,7 +184,15 @@ class SQLiteMigrationRunner:
                 conn.execute("BEGIN IMMEDIATE")
                 try:
                     for stmt in statements:
-                        conn.execute(stmt)
+                        try:
+                            conn.execute(stmt)
+                        except sqlite3.OperationalError as e:
+                            # Handle idempotent column additions for existing environments where columns
+                            # may have been added during pre-release migration iterations.
+                            if "duplicate column name" in str(e).lower() and stmt.strip().upper().startswith("ALTER TABLE"):
+                                logger.warning("Column already exists in table, skipping statement: %s (%s)", stmt, e)
+                            else:
+                                raise
 
                     now_utc = datetime.now(timezone.utc).isoformat()
                     conn.execute(

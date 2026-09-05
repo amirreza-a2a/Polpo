@@ -69,6 +69,7 @@ class MarkdownViewerController(QObject):
         self._page_filter: int = 0
 
         self._request_id: int = 0
+        self._is_shutdown: bool = False
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="MarkdownViewerWorker")
 
         self._internalDocLoaded.connect(self._on_internal_doc_loaded)
@@ -231,6 +232,26 @@ class MarkdownViewerController(QObject):
         self.highlightedRegionIdChanged.emit()
         self.highlightedOccurrenceIdChanged.emit()
 
+    @property
+    def is_shutdown(self) -> bool:
+        return self._is_shutdown
+
+    @Slot()
+    def shutdown(self) -> None:
+        """
+        Explicit idempotent shutdown lifecycle for MarkdownViewerController.
+        Invalidates in-flight work via request_id increment, and cancels
+        queued/not-yet-started tasks on the executor without unsafe termination.
+        """
+        if self._is_shutdown:
+            return
+        self._is_shutdown = True
+        self._request_id += 1
+        try:
+            self._executor.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            self._executor.shutdown(wait=False)
+
     # -----------------------------------------------------------------------
     # Zoom Slots
     # -----------------------------------------------------------------------
@@ -257,15 +278,25 @@ class MarkdownViewerController(QObject):
         """
         Selects a visual region, updates highlighted properties, locates its
         node index in O(1), and requests the view to scroll to it.
+        Supports exact occurrence targeting and primary occurrence fallback.
         """
         if not region_id:
             return
 
         self.set_highlighted_region_id(region_id)
-        if occurrence_id:
-            self.set_highlighted_occurrence_id(occurrence_id)
 
-        node_idx = self._model.indexOfRegion(region_id)
+        target_occ = occurrence_id
+        if not target_occ:
+            target_occ = self._model.primaryOccurrenceOfRegion(region_id)
+
+        self.set_highlighted_occurrence_id(target_occ)
+
+        node_idx = -1
+        if target_occ:
+            node_idx = self._model.indexOfOccurrence(target_occ)
+        if node_idx < 0:
+            node_idx = self._model.indexOfRegion(region_id)
+
         if node_idx >= 0:
             self.set_selected_node_index(node_idx)
             self.requestScrollToNode.emit(node_idx)

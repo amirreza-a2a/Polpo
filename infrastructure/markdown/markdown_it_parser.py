@@ -354,6 +354,8 @@ class MarkdownItParser(IMarkdownParser):
         self._md.enable("table")
         # Register PolpoT wiki-link inline rule
         wiki_link_plugin(self._md)
+        # Allow all links into AST so downstream application layer can enforce URL whitelist/sanitization
+        self._md.validateLink = lambda url: True
 
     def parse(self, text: str) -> MarkdownDocument:
         """

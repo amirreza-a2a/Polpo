@@ -23,7 +23,6 @@ CREATE TABLE IF NOT EXISTS visual_regions (
     sync_status TEXT NOT NULL DEFAULT 'pending_initial_crop' 
         CHECK(sync_status IN ('pending_initial_crop', 'synced', 'dirty_recrop_required', 'sync_failed')),
     active_artifact_version INTEGER NOT NULL DEFAULT 0,
-    artifact_version_watermark INTEGER NOT NULL DEFAULT 0,
     active_artifact_uri TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,

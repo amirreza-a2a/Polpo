@@ -22,8 +22,9 @@ Rectangle {
     property var controller: null
 
     readonly property bool isHighlighted: controller ? (
-        (controller.highlightedOccurrenceId !== "" && controller.highlightedOccurrenceId === occurrenceId) ||
-        (controller.highlightedRegionId !== "" && controller.highlightedRegionId === regionId)
+        controller.highlightedOccurrenceId !== "" ?
+            (controller.highlightedOccurrenceId === occurrenceId) :
+            (controller.highlightedRegionId !== "" && controller.highlightedRegionId === regionId)
     ) : false
 
     width: Math.max(80, Math.min(240, 160 * scaleFactor))

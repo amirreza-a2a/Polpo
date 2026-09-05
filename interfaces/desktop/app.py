@@ -33,21 +33,42 @@ def wire_review_workspace_sync(
 ) -> None:
     """
     Wires bidirectional interaction between PDF Document Viewer and Markdown Viewer:
-    1. Selecting an image in Markdown selects and centers the region in the PDF viewer.
+    1. Selecting an image in Markdown selects and centers the region in the PDF viewer,
+       tracking the exact occurrence ID.
     2. Selecting a visual region bounding box in PDF viewer scrolls to and highlights
-       the corresponding block in the Markdown viewer.
+       that exact occurrence in Markdown if known, or falls back to primary occurrence.
     Uses identity guards to prevent recursive signal loops.
     """
+    originating_occurrences: Dict[str, str] = {}
+
     def _on_markdown_region_selected(region_id: str, occurrence_id: str):
-        if region_id and document_viewer_controller.selectedRegionId != region_id:
-            document_viewer_controller.selectRegion(region_id)
+        if region_id and occurrence_id:
+            originating_occurrences[region_id] = occurrence_id
+        if region_id:
+            target_page = markdown_viewer_controller.model.pageNumberOfRegion(region_id)
+            if (
+                target_page > 0
+                and document_viewer_controller.currentPage != target_page
+                and document_viewer_controller.currentJobId > 0
+            ):
+                document_viewer_controller.loadPage(document_viewer_controller.currentJobId, target_page)
+            if document_viewer_controller.selectedRegionId != region_id:
+                document_viewer_controller.selectRegion(region_id)
 
     def _on_pdf_selection_changed():
         sel_id = document_viewer_controller.selectedRegionId
-        if sel_id and markdown_viewer_controller.highlightedRegionId != sel_id:
-            markdown_viewer_controller.selectRegion(sel_id)
+        if sel_id:
+            target_occ = originating_occurrences.get(sel_id, "")
+            if markdown_viewer_controller.highlightedRegionId != sel_id or (
+                target_occ and markdown_viewer_controller.highlightedOccurrenceId != target_occ
+            ):
+                markdown_viewer_controller.selectRegion(sel_id, target_occ)
+
+    def _on_document_changed():
+        originating_occurrences.clear()
 
     markdown_viewer_controller.regionSelected.connect(_on_markdown_region_selected)
+    markdown_viewer_controller.documentChanged.connect(_on_document_changed)
     document_viewer_controller.selectionChanged.connect(_on_pdf_selection_changed)
 
 

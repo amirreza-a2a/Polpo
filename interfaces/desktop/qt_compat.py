@@ -19,6 +19,7 @@ try:
     )
     from PySide6.QtGui import QGuiApplication, QDesktopServices
     from PySide6.QtQml import QQmlApplicationEngine
+    from PySide6.QtQuick import QQuickItem
     QT_BINDING = "PySide6"
 except ImportError:
     from PyQt6.QtCore import (
@@ -36,6 +37,7 @@ except ImportError:
     )
     from PyQt6.QtGui import QGuiApplication, QDesktopServices
     from PyQt6.QtQml import QQmlApplicationEngine
+    from PyQt6.QtQuick import QQuickItem
     QT_BINDING = "PyQt6"
 
 __all__ = [
@@ -53,5 +55,6 @@ __all__ = [
     "QGuiApplication",
     "QDesktopServices",
     "QQmlApplicationEngine",
+    "QQuickItem",
     "QT_BINDING",
 ]

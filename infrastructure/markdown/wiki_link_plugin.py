@@ -42,6 +42,7 @@ def wiki_image_rule(state: StateInline, silent: bool) -> bool:
         return False
 
     if silent:
+        state.pos += match.end()
         return True
 
     raw_clause = match.group(2)

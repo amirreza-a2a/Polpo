@@ -67,21 +67,21 @@ Item {
     // -----------------------------------------------------------------------
     Component {
         id: headingComponent
-        Text {
+        MarkdownInlineFlow {
             width: parent.width
-            textFormat: Text.RichText
-            text: model.content
-            color: "#f9fafb"
-            wrapMode: Text.WordWrap
-            font.bold: true
-            font.pixelSize: {
+            segments: model.segments || []
+            textFallback: model.content || ""
+            fontBold: true
+            defaultPixelSize: {
                 var l = model.level || 1
-                if (l === 1) return Math.round(24 * scaleFactor)
-                if (l === 2) return Math.round(20 * scaleFactor)
-                if (l === 3) return Math.round(17 * scaleFactor)
-                return Math.round(15 * scaleFactor)
+                if (l === 1) return 24
+                if (l === 2) return 20
+                if (l === 3) return 17
+                return 15
             }
-            onLinkActivated: if (controller) controller.handleLinkClicked(link)
+            textColor: "#f9fafb"
+            scaleFactor: delegateRoot.scaleFactor
+            controller: delegateRoot.controller
         }
     }
 
@@ -90,64 +90,14 @@ Item {
     // -----------------------------------------------------------------------
     Component {
         id: paragraphComponent
-        Item {
-            id: paraItem
+        MarkdownInlineFlow {
             width: parent.width
-            implicitHeight: hasMultipleSegments ? flowLayout.implicitHeight : simpleText.implicitHeight
-
-            readonly property bool hasMultipleSegments: model.segments && model.segments.length > 1
-
-            // Simple fast path for pure text paragraphs
-            Text {
-                id: simpleText
-                visible: !paraItem.hasMultipleSegments
-                width: parent.width
-                textFormat: Text.RichText
-                text: model.content
-                color: "#e5e7eb"
-                font.pixelSize: Math.round(14 * scaleFactor)
-                lineHeight: 1.4
-                wrapMode: Text.WordWrap
-                onLinkActivated: if (controller) controller.handleLinkClicked(link)
-            }
-
-            // Mixed inline layout for paragraphs with embedded images
-            Flow {
-                id: flowLayout
-                visible: paraItem.hasMultipleSegments
-                width: parent.width
-                spacing: 6
-
-                Repeater {
-                    model: model.segments || []
-
-                    delegate: Loader {
-                        sourceComponent: modelData.segmentType === "image" ? inlineImageComp : inlineTextComp
-
-                        Component {
-                            id: inlineTextComp
-                            Text {
-                                textFormat: Text.RichText
-                                text: modelData.textHtml
-                                color: "#e5e7eb"
-                                font.pixelSize: Math.round(14 * scaleFactor)
-                                lineHeight: 1.4
-                                wrapMode: Text.WordWrap
-                                onLinkActivated: if (controller) controller.handleLinkClicked(link)
-                            }
-                        }
-
-                        Component {
-                            id: inlineImageComp
-                            MarkdownInlineImageItem {
-                                imageRef: modelData.imageRef
-                                scaleFactor: delegateRoot.scaleFactor
-                                controller: delegateRoot.controller
-                            }
-                        }
-                    }
-                }
-            }
+            segments: model.segments || []
+            textFallback: model.content || ""
+            textColor: "#e5e7eb"
+            defaultPixelSize: 14
+            scaleFactor: delegateRoot.scaleFactor
+            controller: delegateRoot.controller
         }
     }
 
@@ -160,6 +110,7 @@ Item {
             imageUri: model.imageUri
             altText: model.altText
             regionId: model.primaryRegionId
+            occurrenceId: model.primaryOccurrenceId || ""
             displayOrder: model.displayOrder
             isAssociated: model.isAssociated
             scaleFactor: delegateRoot.scaleFactor
@@ -208,30 +159,63 @@ Item {
     }
 
     // -----------------------------------------------------------------------
-    // List Component
+    // List Component (Native Inline Images per Item via list_item_segments)
     // -----------------------------------------------------------------------
     Component {
         id: listComponent
-        Text {
+        Column {
+            id: listCol
             width: parent.width
-            textFormat: Text.RichText
-            text: model.content
-            color: "#e5e7eb"
-            font.pixelSize: Math.round(14 * scaleFactor)
-            lineHeight: 1.4
-            wrapMode: Text.WordWrap
-            onLinkActivated: if (controller) controller.handleLinkClicked(link)
+            spacing: 6
+
+            readonly property var itemSegs: model.listItemSegments || []
+            readonly property var rawItems: model.listItems || []
+            readonly property int itemCount: Math.max(itemSegs.length, rawItems.length)
+            readonly property bool isOrderedList: model.isOrdered || false
+            readonly property int startIndexVal: model.startIndex || 1
+
+            Repeater {
+                model: listCol.itemCount
+
+                Row {
+                    id: itemRow
+                    width: listCol.width
+                    spacing: 8
+
+                    readonly property var currentRaw: (listCol.rawItems && index < listCol.rawItems.length) ? listCol.rawItems[index] : ""
+                    readonly property bool isTaskItem: typeof currentRaw === "string" && (currentRaw.indexOf("☐ ") === 0 || currentRaw.indexOf("☑ ") === 0)
+
+                    Text {
+                        visible: !itemRow.isTaskItem
+                        text: listCol.isOrderedList ? ((listCol.startIndexVal + index) + ". ") : "• "
+                        color: "#9ca3af"
+                        font.pixelSize: Math.round(14 * delegateRoot.scaleFactor)
+                        font.bold: true
+                    }
+
+                    MarkdownInlineFlow {
+                        width: itemRow.isTaskItem ? parent.width : (parent.width - 24)
+                        segments: (listCol.itemSegs && index < listCol.itemSegs.length) ? listCol.itemSegs[index] : []
+                        textFallback: itemRow.currentRaw
+                        textColor: "#e5e7eb"
+                        defaultPixelSize: 14
+                        scaleFactor: delegateRoot.scaleFactor
+                        controller: delegateRoot.controller
+                    }
+                }
+            }
         }
     }
 
     // -----------------------------------------------------------------------
-    // Blockquote Component
+    // Blockquote Component (Preserving Child Block Hierarchy & Native Inline Images)
     // -----------------------------------------------------------------------
     Component {
         id: blockquoteComponent
         Rectangle {
+            id: quoteBox
             width: parent.width
-            implicitHeight: quoteText.implicitHeight + 16
+            implicitHeight: quoteCol.implicitHeight + 20
             color: "#16161e"
             radius: 4
 
@@ -244,18 +228,43 @@ Item {
                 radius: 1
             }
 
-            Text {
-                id: quoteText
-                anchors.fill: parent
+            Column {
+                id: quoteCol
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.right: parent.right
                 anchors.margins: 10
                 anchors.leftMargin: 16
-                textFormat: Text.RichText
-                text: model.content
-                color: "#d1d5db"
-                font.italic: true
-                font.pixelSize: Math.round(13 * scaleFactor)
-                wrapMode: Text.WordWrap
-                onLinkActivated: if (controller) controller.handleLinkClicked(link)
+                spacing: 8
+
+                readonly property var childrenList: (model.quoteChildren && model.quoteChildren.length > 0) ? model.quoteChildren : [
+                    { childType: "paragraph", content: model.content || "", level: 0, segments: model.segments || [] }
+                ]
+
+                Repeater {
+                    model: quoteCol.childrenList
+
+                    MarkdownInlineFlow {
+                        width: quoteCol.width
+                        segments: modelData.segments || []
+                        textFallback: modelData.content || ""
+                        fontItalic: modelData.childType !== "heading"
+                        fontBold: modelData.childType === "heading"
+                        textColor: modelData.childType === "heading" ? "#f9fafb" : "#d1d5db"
+                        defaultPixelSize: {
+                            if (modelData.childType === "heading") {
+                                var l = modelData.level || 1
+                                if (l === 1) return 20
+                                if (l === 2) return 18
+                                if (l === 3) return 16
+                                return 14
+                            }
+                            return 13
+                        }
+                        scaleFactor: delegateRoot.scaleFactor
+                        controller: delegateRoot.controller
+                    }
+                }
             }
         }
     }
@@ -273,23 +282,70 @@ Item {
     }
 
     // -----------------------------------------------------------------------
-    // Table Fallback Component
+    // Table Fallback Component (Structured cells with Inline Flow support)
     // -----------------------------------------------------------------------
     Component {
         id: tableFallbackComponent
         Rectangle {
+            id: tableRect
             width: parent.width
-            implicitHeight: tableText.implicitHeight + 16
+            readonly property var cellRows: model.tableCellSegments || []
+            readonly property bool hasStructuredCells: cellRows.length > 0
+            implicitHeight: hasStructuredCells ? tableLayout.implicitHeight + 16 : tableText.implicitHeight + 16
             color: "#14141a"
             radius: 4
             border.color: "#2a2a35"
             border.width: 1
 
-            Text {
-                id: tableText
+            Column {
+                id: tableLayout
+                visible: tableRect.hasStructuredCells
                 anchors.fill: parent
                 anchors.margins: 8
-                text: model.content
+                spacing: 6
+
+                Repeater {
+                    model: tableRect.cellRows
+
+                    Row {
+                        id: rowLayout
+                        width: parent.width
+                        spacing: 8
+                        readonly property var rowData: modelData || []
+
+                        Repeater {
+                            model: rowData
+
+                            Rectangle {
+                                width: Math.max(80, (rowLayout.width - (rowData.length - 1) * 8) / (rowData.length || 1))
+                                implicitHeight: cellFlow.implicitHeight + 8
+                                color: "#1a1a24"
+                                radius: 3
+                                border.color: "#333344"
+                                border.width: 1
+
+                                MarkdownInlineFlow {
+                                    id: cellFlow
+                                    anchors.centerIn: parent
+                                    width: parent.width - 8
+                                    segments: modelData || []
+                                    textColor: "#e5e7eb"
+                                    defaultPixelSize: 12
+                                    scaleFactor: delegateRoot.scaleFactor
+                                    controller: delegateRoot.controller
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text {
+                id: tableText
+                visible: !tableRect.hasStructuredCells
+                anchors.fill: parent
+                anchors.margins: 8
+                text: model.content || ""
                 color: "#e5e7eb"
                 font.family: "Monospace"
                 font.pixelSize: Math.round(12 * scaleFactor)

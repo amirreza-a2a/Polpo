@@ -29,7 +29,8 @@ Rectangle {
                 { name: "Quick Convert", icon: "image" },
                 { name: "API Keys", icon: "key" },
                 { name: "Prompts", icon: "edit" },
-                { name: "Settings", icon: "settings" }
+                { name: "Settings", icon: "settings" },
+                { name: "Review Workspace", icon: "document" }
             ]
 
             Rectangle {

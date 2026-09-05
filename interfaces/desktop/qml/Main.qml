@@ -19,9 +19,21 @@ ApplicationWindow {
     property int missedJobId: 0
     property string missedFileName: ""
 
+    function openReviewWorkspace(jobId) {
+        if (typeof documentViewerController !== "undefined" && documentViewerController) {
+            documentViewerController.loadPage(jobId, 1);
+        }
+        if (typeof markdownViewerController !== "undefined" && markdownViewerController) {
+            markdownViewerController.loadDocument(jobId);
+        }
+        sidebar.currentTab = 6;
+        stackLayout.currentIndex = 6;
+    }
+
     Connections {
         target: jobController
         function onError_occurred(msg) { window.globalError = msg; }
+        function onOpen_review_requested(jid) { window.openReviewWorkspace(jid); }
     }
     Connections {
         target: apiKeyController
@@ -95,6 +107,7 @@ ApplicationWindow {
                 ApiKeyView {}
                 PromptEditorView {}
                 SettingsView {}
+                ReviewWorkspaceView {}
             }
         }
     }

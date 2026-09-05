@@ -149,7 +149,7 @@ def test_slugify_and_helpers():
 
     assert _is_safe_url("https://example.com") is True
     assert _is_safe_url("http://example.com/foo") is True
-    assert _is_safe_url("file:///local/path.jpg") is True
+    assert _is_safe_url("file:///local/path.jpg") is False
     assert _is_safe_url("#section-1") is True
     assert _is_safe_url("javascript:alert(1)") is False
     assert _is_safe_url("region://018f2d5a12347a8b9cde567812345678") is False
@@ -232,7 +232,7 @@ def test_richtext_sanitization_and_injection_defense():
 
     raw_md = """Here is **bold**, *italic*, `inline_code()`, and a <script>alert('xss')</script> tag.
 
-Also a [Safe Link](https://polpot.dev) and a [Malicious Link](javascript:exploit()) and an injected [Region Link](region://fake-id).
+Also a [Safe Link](https://polpot.dev) and a [Malicious Link](javascript:exploit()) and an injected [Region Link](region://fake-id) and a [Local File](file:///etc/passwd).
 """
     dto = service.render_text(raw_md, active_regions=[], job_id=100)
 
@@ -250,6 +250,9 @@ Also a [Safe Link](https://polpot.dev) and a [Malicious Link](javascript:exploit
     assert '<a href="javascript:' not in p2_content
     # raw region:// target is sanitized to # (not allowed from markdown source)
     assert '<a href="#">Region Link</a>' in p2_content
+    # file:// target is strictly sanitized to # (not allowed as clickable external URL)
+    assert '<a href="#">Local File</a>' in p2_content
+    assert "file:///etc/passwd" not in p2_content
 
 
 # ---------------------------------------------------------------------------
@@ -434,3 +437,303 @@ def test_clean_architecture_imports():
                 if node.module:
                     root_pkg = node.module.split(".")[0]
                     assert root_pkg not in disallowed_modules, f"Disallowed import from '{node.module}' in {rel_path}"
+
+
+# ---------------------------------------------------------------------------
+# 8. R1 Remediation Tests: Blockquote collision, Segments everywhere, Tag balancing
+# ---------------------------------------------------------------------------
+
+def test_blockquote_occurrence_counter_collision_prevention():
+    """
+    R1.1 Verification: Multiple child paragraphs in a blockquote must allocate
+    from one shared occurrence counter so occurrence IDs never collide.
+    """
+    parser = MarkdownItParser()
+    service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
+
+    r1 = make_test_region(job_id=100, region_id="a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d", display_order=1)
+    r2 = make_test_region(job_id=100, region_id="f1e2d3c4b5a64987ba654321fedcba98", display_order=2)
+
+    raw_md = """> First paragraph with ![[crop_1.jpg|region_id=a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d]]
+>
+> Second paragraph with ![[crop_2.jpg|region_id=f1e2d3c4b5a64987ba654321fedcba98]]
+"""
+    dto = service.render_text(raw_md, active_regions=[r1, r2], job_id=100)
+
+    assert len(dto.nodes) == 1
+    node = dto.nodes[0]
+    assert node.node_type == "blockquote"
+    assert len(node.regions) == 2
+
+    occ1 = node.regions[0].occurrence_id
+    occ2 = node.regions[1].occurrence_id
+
+    # Must be strictly distinct
+    assert occ1 != occ2
+    assert occ1.endswith("_img_0")
+    assert occ2.endswith("_img_1")
+
+    # Inverted index must map both distinctly without overwriting
+    assert "a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d" in dto.region_to_occurrences
+    assert "f1e2d3c4b5a64987ba654321fedcba98" in dto.region_to_occurrences
+
+    assert dto.region_to_occurrences["a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d"][0].occurrence_id == occ1
+    assert dto.region_to_occurrences["f1e2d3c4b5a64987ba654321fedcba98"][0].occurrence_id == occ2
+
+    # Segments must be preserved on blockquote
+    assert len(node.segments) >= 2
+
+
+def test_nested_formatting_around_inline_images():
+    """
+    R1.3 Verification: Inline images embedded in strong, emphasis, or link formatting
+    must emit properly balanced HTML text segments around the image segment.
+    """
+    parser = MarkdownItParser()
+    service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
+
+    r = make_test_region(job_id=100, region_id="a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d", display_order=1)
+
+    # 1. Bold around image
+    md_bold = "**before ![[crop.jpg|region_id=a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d]] after**"
+    dto_bold = service.render_text(md_bold, active_regions=[r], job_id=100)
+    segs_bold = dto_bold.nodes[0].segments
+
+    assert len(segs_bold) == 3
+    assert segs_bold[0].segment_type == "text"
+    assert segs_bold[0].text_html == "<b>before </b>"
+    assert segs_bold[1].segment_type == "image"
+    assert segs_bold[2].segment_type == "text"
+    assert segs_bold[2].text_html == "<b> after</b>"
+
+    # 2. Bold + Italic nested around image
+    md_nested = "***bold and italic ![[crop.jpg|region_id=a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d]] still bold and italic***"
+    dto_nested = service.render_text(md_nested, active_regions=[r], job_id=100)
+    segs_nested = dto_nested.nodes[0].segments
+
+    assert len(segs_nested) == 3
+    assert segs_nested[0].segment_type == "text"
+    assert "<b><i>bold and italic </i></b>" in segs_nested[0].text_html or "<i><b>bold and italic </b></i>" in segs_nested[0].text_html
+    assert segs_nested[1].segment_type == "image"
+    assert segs_nested[2].segment_type == "text"
+    assert "<b><i> still bold and italic</i></b>" in segs_nested[2].text_html or "<i><b> still bold and italic</b></i>" in segs_nested[2].text_html
+
+    # 3. Link around image
+    md_link = "[Link start ![[crop.jpg|region_id=a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d]] link end](https://example.com)"
+    dto_link = service.render_text(md_link, active_regions=[r], job_id=100)
+    segs_link = dto_link.nodes[0].segments
+
+    assert len(segs_link) == 3
+    assert segs_link[0].segment_type == "text"
+    assert segs_link[0].text_html == '<a href="https://example.com">Link start </a>'
+    assert segs_link[1].segment_type == "image"
+    assert segs_link[2].segment_type == "text"
+    assert segs_link[2].text_html == '<a href="https://example.com"> link end</a>'
+
+
+def test_structured_segments_preserved_across_all_block_types():
+    """
+    R1.2 Verification: Structured InlineSegmentDTO items must be preserved
+    for headings, list items, blockquotes, and tables.
+    """
+    parser = MarkdownItParser()
+    service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
+
+    r = make_test_region(job_id=100, region_id="a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d", display_order=1)
+
+    raw_md = """# Heading with ![[crop.jpg|region_id=a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d]]
+
+- Item 1 with text
+- Item 2 with ![[crop.jpg|region_id=a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d]]
+
+> Blockquote with ![[crop.jpg|region_id=a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d]]
+"""
+    dto = service.render_text(raw_md, active_regions=[r], job_id=100)
+    nodes = dto.nodes
+
+    # 1. Heading
+    h_node = nodes[0]
+    assert h_node.node_type == "heading"
+    assert len(h_node.segments) >= 2
+    assert any(s.segment_type == "image" for s in h_node.segments)
+
+    # 2. List
+    l_node = nodes[1]
+    assert l_node.node_type == "list"
+    assert len(l_node.list_item_segments) == 2
+    assert any(s.segment_type == "image" for s in l_node.list_item_segments[1])
+    assert any(s.segment_type == "image" for s in l_node.segments)
+
+    # 3. Blockquote
+    b_node = nodes[2]
+    assert b_node.node_type == "blockquote"
+    assert len(b_node.segments) >= 2
+    assert any(s.segment_type == "image" for s in b_node.segments)
+
+
+def test_node_id_invariant_and_duplicate_lexical_ordering():
+    """
+    R1.5 Verification: Invariant guarantees that distinct blocks preserve their IDs
+    under unrelated block insertion, while identical duplicate blocks receive
+    lexically ordered occurrence indices.
+    """
+    parser = MarkdownItParser()
+    service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
+
+    raw_md = """Identical paragraph.
+
+Distinct middle paragraph.
+
+Identical paragraph.
+"""
+    dto = service.render_text(raw_md, active_regions=[], job_id=100)
+    nodes = dto.nodes
+
+    # Identical duplicates have the same hash prefix but distinct lexical indices
+    assert nodes[0].node_id.startswith("p_")
+    assert nodes[0].node_id.endswith("_1")
+
+    assert nodes[1].node_id.startswith("p_")
+    assert nodes[1].node_id.endswith("_1")
+
+    assert nodes[2].node_id.startswith("p_")
+    assert nodes[2].node_id.endswith("_2")
+    assert nodes[0].node_id[:-2] == nodes[2].node_id[:-2]
+
+
+def test_task_list_item_with_image_preserves_task_checkbox_in_segments():
+    """
+    R1.2 Verification: Task checkboxes (☐ and ☑) must be preserved in
+    list_item_segments when items contain inline images.
+    """
+    parser = MarkdownItParser()
+    service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
+
+    r = make_test_region(job_id=100, region_id="a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d", display_order=1)
+
+    raw_md = """- [ ] Incomplete task with ![[crop.jpg|region_id=a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d]]
+- [x] Completed task with ![[crop.jpg|region_id=a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d]]
+"""
+    dto = service.render_text(raw_md, active_regions=[r], job_id=100)
+    l_node = dto.nodes[0]
+
+    assert len(l_node.list_item_segments) == 2
+    item0_segs = l_node.list_item_segments[0]
+    item1_segs = l_node.list_item_segments[1]
+
+    # First segment of item 0 must carry the uncompleted checkbox
+    assert item0_segs[0].segment_type == "text"
+    assert item0_segs[0].text_html.startswith("☐ ")
+
+    # First segment of item 1 must carry the completed checkbox
+    assert item1_segs[0].segment_type == "text"
+    assert item1_segs[0].text_html.startswith("☑ ")
+
+
+def test_blockquote_with_heading_and_multiple_blocks_preserves_content():
+    """
+    R1.1 & R1.2 Verification: Blockquotes containing headings and paragraphs
+    must not drop headings and must preserve deterministic occurrence numbering.
+    """
+    parser = MarkdownItParser()
+    service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
+
+    r1 = make_test_region(job_id=100, region_id="a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d", display_order=1)
+    r2 = make_test_region(job_id=100, region_id="f1e2d3c4b5a64987ba654321fedcba98", display_order=2)
+
+    raw_md = """> # Quoted Heading with ![[crop_1.jpg|region_id=a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d]]
+>
+> Quoted Paragraph with ![[crop_2.jpg|region_id=f1e2d3c4b5a64987ba654321fedcba98]]
+"""
+    dto = service.render_text(raw_md, active_regions=[r1, r2], job_id=100)
+    b_node = dto.nodes[0]
+    assert b_node.node_type == "blockquote"
+    assert "<h1>" in b_node.content
+    assert "<p>" in b_node.content
+    assert len(b_node.regions) == 2
+
+    # Deterministic shared counter across heading and paragraph in the blockquote
+    assert b_node.regions[0].occurrence_id.endswith("_img_0")
+    assert b_node.regions[1].occurrence_id.endswith("_img_1")
+
+
+def test_table_cell_with_multiple_occurrences_of_same_region():
+    """
+    R1.2 & R2.3 Verification: Table cells containing multiple occurrences of the
+    same visual region index all occurrences distinctly without collision.
+    """
+    parser = MarkdownItParser()
+    service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
+
+    rid = "a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d"
+    r = make_test_region(job_id=100, region_id=rid, display_order=1)
+
+    raw_md = f"""| Header 1 |
+| --- |
+| **before ![[crop_1.jpg\\|region_id={rid}]] middle ![[crop_2.jpg\\|region_id={rid}]] after** |
+"""
+    dto = service.render_text(raw_md, active_regions=[r], job_id=100)
+    assert rid in dto.region_to_occurrences
+    occs = dto.region_to_occurrences[rid]
+    assert len(occs) == 2
+    assert occs[0].occurrence_id != occs[1].occurrence_id
+    assert occs[0].node_index == 0
+    assert occs[1].node_index == 0
+
+
+def test_blockquote_preserves_child_block_hierarchy_and_inline_images():
+    """
+    R1.1, R1.2, R3 Verification: Blockquotes preserve structured child blocks
+    (heading, paragraph, paragraph with inline image) in quote_children with
+    distinct child_type, level, and inline segments, and unique occurrence IDs.
+    """
+    parser = MarkdownItParser()
+    service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
+
+    rid = "a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d"
+    r = make_test_region(job_id=100, region_id=rid, display_order=1)
+
+    raw_md = f"""> ## Section Title In Quote
+>
+> First paragraph with pure text.
+>
+> Second paragraph with inline image ![[crop.jpg|region_id={rid}]] and trailing text.
+"""
+    dto = service.render_text(raw_md, active_regions=[r], job_id=100)
+    assert len(dto.nodes) == 1
+    b_node = dto.nodes[0]
+    assert b_node.node_type == "blockquote"
+    assert len(b_node.quote_children) == 3
+
+    # Child 0: Heading
+    child0 = b_node.quote_children[0]
+    assert child0.child_type == "heading"
+    assert child0.level == 2
+    assert "Section Title In Quote" in child0.content
+    assert len(child0.segments) >= 1
+    assert child0.segments[0].segment_type == "text"
+
+    # Child 1: Plain Paragraph
+    child1 = b_node.quote_children[1]
+    assert child1.child_type == "paragraph"
+    assert child1.level == 0
+    assert "First paragraph with pure text." in child1.content
+    assert len(child1.segments) >= 1
+    assert child1.segments[0].segment_type == "text"
+
+    # Child 2: Paragraph with Image
+    child2 = b_node.quote_children[2]
+    assert child2.child_type == "paragraph"
+    assert child2.level == 0
+    assert len(child2.segments) >= 3
+    image_segs = [s for s in child2.segments if s.segment_type == "image"]
+    assert len(image_segs) == 1
+    assert image_segs[0].image_ref is not None
+    assert image_segs[0].image_ref.region_id == rid
+    assert image_segs[0].image_ref.occurrence_id == f"{b_node.node_id}_p2_img_0"
+
+    # Region index mapping reflects node index 0
+    assert rid in dto.region_to_occurrences
+    assert len(dto.region_to_occurrences[rid]) == 1
+    assert dto.region_to_occurrences[rid][0].node_index == 0
+    assert dto.region_to_occurrences[rid][0].occurrence_id == f"{b_node.node_id}_p2_img_0"

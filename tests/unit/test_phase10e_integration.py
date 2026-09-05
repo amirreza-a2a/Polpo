@@ -27,7 +27,7 @@ from interfaces.desktop.app import create_app, wire_review_workspace_sync
 from interfaces.desktop.composition import DesktopAppContainer
 from interfaces.desktop.controllers.document_viewer_controller import DocumentViewerController
 from interfaces.desktop.controllers.markdown_viewer_controller import MarkdownViewerController
-from interfaces.desktop.qt_compat import QGuiApplication
+from interfaces.desktop.qt_compat import QGuiApplication, Qt
 
 
 @pytest.fixture(scope="session")
@@ -60,6 +60,7 @@ def test_composition_root_wires_markdown_components():
         assert container.markdown_viewer_service.parser is container.markdown_parser
         assert container.markdown_viewer_service.uow_factory is container.uow_factory
         assert container.markdown_viewer_service.storage is container.storage
+        container.shutdown()
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +122,7 @@ def test_bidirectional_sync_markdown_to_pdf(qapp):
 
     # Verification: PDF Document Viewer selected region is synchronized!
     assert doc_ctrl.selectedRegionId == "a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d"
+    md_ctrl.shutdown()
 
 
 def test_bidirectional_sync_pdf_to_markdown(qapp):
@@ -172,6 +174,7 @@ def test_bidirectional_sync_pdf_to_markdown(qapp):
     # Verification: Markdown Viewer highlighted region and node index synchronized!
     assert md_ctrl.highlightedRegionId == "f1e2d3c4b5a64987ba654321fedcba98"
     assert md_ctrl.selectedNodeIndex == 0
+    md_ctrl.shutdown()
 
 
 # ---------------------------------------------------------------------------
@@ -251,5 +254,176 @@ def test_full_end_to_end_workspace_flow(qapp):
         doc_ctrl._active_regions = [{"region_id": region_id_hex, "display_order": 1}]
         md_ctrl.selectRegion(region_id_hex)
         assert doc_ctrl.selectedRegionId == region_id_hex
+
+        container.shutdown()
+
+
+def test_occurrence_aware_bidirectional_synchronization(qapp):
+    """
+    R2.3 Verification:
+    1. Markdown -> PDF: Selecting exact occurrence preserves occurrence identity.
+    2. PDF -> Markdown: When originating occurrence is known, restores that exact occurrence.
+    3. PDF -> Markdown: When originating occurrence is unknown, falls back to primary occurrence.
+    """
+    mock_doc_service = MagicMock(spec=DocumentViewerService)
+    mock_md_service = MagicMock(spec=MarkdownViewerService)
+
+    doc_ctrl = DocumentViewerController(viewer_service=mock_doc_service)
+    md_ctrl = MarkdownViewerController(viewer_service=mock_md_service)
+
+    vref_occ1 = VisualRegionRefDTO(
+        occurrence_id="p_1_img_0",
+        source="crop_1.jpg",
+        region_id="reg_multi",
+        is_associated=True,
+    )
+    vref_occ2 = VisualRegionRefDTO(
+        occurrence_id="p_5_img_1",
+        source="crop_2.jpg",
+        region_id="reg_multi",
+        is_associated=True,
+    )
+
+    node0 = MarkdownNodeDTO(node_id="p_0", node_type="paragraph", content="Intro")
+    node1 = MarkdownNodeDTO(node_id="p_1", node_type="paragraph", regions=(vref_occ1,))
+    node2 = MarkdownNodeDTO(node_id="p_2", node_type="paragraph", content="Middle text")
+    node3 = MarkdownNodeDTO(node_id="p_3", node_type="paragraph", regions=(vref_occ2,))
+
+    doc_dto = MarkdownDocumentDTO(
+        job_id=10,
+        version=1,
+        nodes=(node0, node1, node2, node3),
+        region_to_occurrences={
+            "reg_multi": (
+                RegionOccurrenceRef(node_index=1, occurrence_id="p_1_img_0"),
+                RegionOccurrenceRef(node_index=3, occurrence_id="p_5_img_1"),
+            )
+        },
+    )
+    md_ctrl._model.set_document(doc_dto)
+
+    wire_review_workspace_sync(doc_ctrl, md_ctrl)
+
+    doc_ctrl._active_regions = [
+        {
+            "region_id": "reg_multi",
+            "display_order": 1,
+            "origin": "ai_detected",
+            "review_status": "unreviewed",
+            "effective_ymin": 100,
+            "effective_xmin": 100,
+            "effective_ymax": 200,
+            "effective_xmax": 200,
+        }
+    ]
+
+    # 1. User clicks the second occurrence in Markdown
+    md_ctrl.selectRegion("reg_multi", "p_5_img_1")
+
+    # PDF gets the region
+    assert doc_ctrl.selectedRegionId == "reg_multi"
+
+    # 2. Deselect in PDF, then re-select in PDF
+    doc_ctrl.selectRegion(None)
+    assert not doc_ctrl.selectedRegionId
+
+    doc_ctrl.selectRegion("reg_multi")
+    assert doc_ctrl.selectedRegionId == "reg_multi"
+
+    # PDF -> Markdown: Originating occurrence p_5_img_1 was remembered!
+    assert md_ctrl.highlightedRegionId == "reg_multi"
+    assert md_ctrl.highlightedOccurrenceId == "p_5_img_1"
+    assert md_ctrl.selectedNodeIndex == 3
+
+    # 3. Clean fallback test: Clear originating state and re-select from PDF directly
+    md_ctrl.clear()
+    md_ctrl._model.set_document(doc_dto)
+    doc_ctrl.selectRegion(None)
+
+    # Trigger PDF selection without markdown originating occurrence
+    doc_ctrl.selectRegion("reg_multi")
+    # Must fall back to primary occurrence (node 1, p_1_img_0)
+    assert md_ctrl.highlightedRegionId == "reg_multi"
+    assert md_ctrl.highlightedOccurrenceId == "p_1_img_0"
+    assert md_ctrl.selectedNodeIndex == 1
+    md_ctrl.shutdown()
+
+
+def test_r4_review_workspace_shell_integration(qapp, monkeypatch):
+    """
+    R4 Verification:
+    1. JobController.open_artifact_default emits open_review_requested without OS viewer.
+    2. Main.qml exposes ReviewWorkspaceView at tab 6 with side-by-side viewers.
+    3. History action Open Markdown routes directly to Review Workspace.
+    """
+    from pathlib import Path
+    from interfaces.desktop.qt_compat import QDesktopServices
+
+    # 1. Assert QDesktopServices.openUrl is never invoked for review workflow
+    mock_open_url = MagicMock()
+    monkeypatch.setattr(QDesktopServices, "openUrl", mock_open_url)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db_path = os.path.join(tmp_dir, "test.db")
+        app, engine, container = create_app(
+            argv=["-platform", "offscreen"],
+            db_path=db_path,
+            artifacts_dir=os.path.join(tmp_dir, "artifacts"),
+            vault_path=os.path.join(tmp_dir, "vault.enc"),
+            passphrase="test_passphrase_12345",
+            start_background_runtime=False,
+            scheduler_tick_interval=0.1,
+        )
+
+        qml_path = Path(__file__).parent.parent.parent / "interfaces" / "desktop" / "qml" / "Main.qml"
+        engine.load(str(qml_path))
+        qapp.processEvents()
+
+        root_objects = engine.rootObjects()
+        assert len(root_objects) == 1
+        window = root_objects[0]
+
+        stack = window.findChild(object, "mainStackLayout")
+        sidebar = window.findChild(object, "mainSidebar")
+        assert stack is not None
+        assert sidebar is not None
+
+        # Tab 6 must be ReviewWorkspaceView
+        assert stack.property("count") == 7
+
+        review_view = window.findChild(object, "reviewWorkspaceView")
+        assert review_view is not None, "ReviewWorkspaceView must be embedded in Main.qml shell"
+
+        split_view = review_view.findChild(object, "reviewSplitView")
+        assert split_view is not None, "ReviewWorkspaceView must contain a reviewSplitView"
+        assert split_view.property("orientation") in (Qt.Orientation.Horizontal, 1) or getattr(split_view.property("orientation"), "value", None) == 1
+
+        doc_view = review_view.findChild(object, "documentViewerView")
+        assert doc_view is not None, "DocumentViewerView must be a descendant of reviewWorkspaceView"
+
+        md_view = review_view.findChild(object, "markdownView")
+        assert md_view is not None, "MarkdownView must be a descendant of reviewWorkspaceView"
+
+        # Mock query service job detail with output path
+        mock_job = MagicMock()
+        mock_job.output_path = "/tmp/out.md"
+        container.job_controller.query_service.get_job_detail = MagicMock(return_value=mock_job)
+
+        # 2. Trigger open_artifact_default
+        received_jobs = []
+        container.job_controller.open_review_requested.connect(lambda jid: received_jobs.append(jid))
+
+        ok = container.job_controller.open_artifact_default(42)
+        assert ok is True
+        assert received_jobs == [42]
+        # Verify OS default viewer was NOT launched
+        assert mock_open_url.call_count == 0
+
+        # Process events so Main.qml onOpen_review_requested executes
+        qapp.processEvents()
+
+        # Shell entered review workspace!
+        assert sidebar.property("currentTab") == 6
+        assert stack.property("currentIndex") == 6
 
         container.shutdown()

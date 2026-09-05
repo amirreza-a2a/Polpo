@@ -38,6 +38,7 @@ class JobController(QObject):
 
     job_submitted = Signal(int)
     error_occurred = Signal(str)
+    open_review_requested = Signal(int)
 
     def __init__(
         self,
@@ -236,14 +237,14 @@ class JobController(QObject):
 
     @Slot(int, result=bool)
     def open_artifact_default(self, job_id: int) -> bool:
-        """Opens the output markdown file in the system default application."""
+        """Enters the internal review workspace for the job instead of launching external OS viewer."""
         try:
             dto = self.query_service.get_job_detail(job_id)
             if not dto or not dto.output_path:
                 self.error_occurred.emit(f"No output artifact available for job {job_id}")
                 return False
-            path = _to_local_path(dto.output_path)
-            return QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+            self.open_review_requested.emit(job_id)
+            return True
         except Exception as err:
             self.error_occurred.emit(sanitize_error_message(str(err)))
             return False

@@ -436,6 +436,8 @@ class TestPhase8DRemediation(unittest.TestCase):
             reconciled = uow.jobs.get_by_id(dto.id)
             self.assertEqual(reconciled.status, JobStatus.PAUSED)
 
+        new_container.shutdown()
+
     # -------------------------------------------------------------
     # 7. Rate Limiter Concurrent Reservation Verification
     # -------------------------------------------------------------

@@ -42,6 +42,10 @@ class MarkdownDocumentModel(QAbstractListModel):
     PageNumberRole = Qt.ItemDataRole.UserRole + 15
     ImageUriRole = Qt.ItemDataRole.UserRole + 16
     AltTextRole = Qt.ItemDataRole.UserRole + 17
+    PrimaryOccurrenceIdRole = Qt.ItemDataRole.UserRole + 18
+    ListItemSegmentsRole = Qt.ItemDataRole.UserRole + 19
+    TableCellSegmentsRole = Qt.ItemDataRole.UserRole + 20
+    QuoteChildrenRole = Qt.ItemDataRole.UserRole + 21
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -49,6 +53,8 @@ class MarkdownDocumentModel(QAbstractListModel):
         self._document_dto: Optional[MarkdownDocumentDTO] = None
         self._region_to_node_index: Dict[str, int] = {}
         self._region_to_occurrences: Dict[str, List[Dict[str, Any]]] = {}
+        self._occurrence_to_node_index: Dict[str, int] = {}
+        self._region_to_page_number: Dict[str, int] = {}
 
     def roleNames(self) -> Dict[int, bytes]:
         return {
@@ -64,6 +70,10 @@ class MarkdownDocumentModel(QAbstractListModel):
             self.SegmentsRole: b"segments",
             self.RegionsRole: b"regions",
             self.PrimaryRegionIdRole: b"primaryRegionId",
+            self.PrimaryOccurrenceIdRole: b"primaryOccurrenceId",
+            self.ListItemSegmentsRole: b"listItemSegments",
+            self.TableCellSegmentsRole: b"tableCellSegments",
+            self.QuoteChildrenRole: b"quoteChildren",
             self.IsAssociatedRole: b"isAssociated",
             self.DisplayOrderRole: b"displayOrder",
             self.PageNumberRole: b"pageNumber",
@@ -115,6 +125,14 @@ class MarkdownDocumentModel(QAbstractListModel):
             return item["imageUri"]
         elif role == self.AltTextRole:
             return item["altText"]
+        elif role == self.PrimaryOccurrenceIdRole:
+            return item["primaryOccurrenceId"]
+        elif role == self.ListItemSegmentsRole:
+            return item["listItemSegments"]
+        elif role == self.TableCellSegmentsRole:
+            return item["tableCellSegments"]
+        elif role == self.QuoteChildrenRole:
+            return item["quoteChildren"]
         return None
 
     def set_document(self, document_dto: Optional[MarkdownDocumentDTO]) -> None:
@@ -126,6 +144,8 @@ class MarkdownDocumentModel(QAbstractListModel):
         self._items.clear()
         self._region_to_node_index.clear()
         self._region_to_occurrences.clear()
+        self._occurrence_to_node_index.clear()
+        self._region_to_page_number.clear()
 
         if document_dto is not None:
             self._document_dto = document_dto
@@ -142,6 +162,7 @@ class MarkdownDocumentModel(QAbstractListModel):
                 reg_dicts = [self._ref_to_dict(r) for r in node.regions]
 
                 primary_region_id = ""
+                primary_occurrence_id = ""
                 is_associated = False
                 display_order = 0
                 page_number = 0
@@ -151,15 +172,63 @@ class MarkdownDocumentModel(QAbstractListModel):
                 if node.regions:
                     primary = node.regions[0]
                     primary_region_id = primary.region_id or ""
+                    primary_occurrence_id = primary.occurrence_id or ""
                     is_associated = primary.is_associated
                     display_order = primary.display_order or 0
                     page_number = primary.page_number or 0
                     image_uri = self._resolve_qml_uri(primary)
                     alt_text = primary.alt_text
 
+                list_item_seg_dicts = []
+                for item_segs in node.list_item_segments:
+                    sub_dicts = [
+                        {
+                            "segmentType": s.segment_type,
+                            "textHtml": s.text_html,
+                            "imageRef": self._ref_to_dict(s.image_ref) if s.image_ref else None,
+                        }
+                        for s in item_segs
+                    ]
+                    list_item_seg_dicts.append(sub_dicts)
+
+                table_cell_seg_dicts = []
+                for row in node.table_cell_segments:
+                    row_dicts = []
+                    for col in row:
+                        col_dicts = [
+                            {
+                               "segmentType": s.segment_type,
+                                "textHtml": s.text_html,
+                                "imageRef": self._ref_to_dict(s.image_ref) if s.image_ref else None,
+                            }
+                            for s in col
+                        ]
+                        row_dicts.append(col_dicts)
+                    table_cell_seg_dicts.append(row_dicts)
+
+                quote_child_dicts = []
+                for q_child in node.quote_children:
+                    q_segs = [
+                        {
+                            "segmentType": s.segment_type,
+                            "textHtml": s.text_html,
+                            "imageRef": self._ref_to_dict(s.image_ref) if s.image_ref else None,
+                        }
+                        for s in q_child.segments
+                    ]
+                    quote_child_dicts.append({
+                        "childType": q_child.child_type,
+                        "content": q_child.content,
+                        "level": q_child.level,
+                        "segments": q_segs,
+                    })
+
                 for r in node.regions:
-                    if r.region_id and r.region_id not in self._region_to_node_index:
-                        self._region_to_node_index[r.region_id] = idx
+                    if r.region_id:
+                        if r.region_id not in self._region_to_node_index:
+                            self._region_to_node_index[r.region_id] = idx
+                        if r.page_number and r.region_id not in self._region_to_page_number:
+                            self._region_to_page_number[r.region_id] = r.page_number
 
                 item = {
                     "nodeId": node.node_id,
@@ -172,8 +241,12 @@ class MarkdownDocumentModel(QAbstractListModel):
                     "rawMarkdown": node.raw_markdown,
                     "listItems": list(node.list_items),
                     "segments": seg_dicts,
+                    "listItemSegments": list_item_seg_dicts,
+                    "tableCellSegments": table_cell_seg_dicts,
+                    "quoteChildren": quote_child_dicts,
                     "regions": reg_dicts,
                     "primaryRegionId": primary_region_id,
+                    "primaryOccurrenceId": primary_occurrence_id,
                     "isAssociated": is_associated,
                     "displayOrder": display_order,
                     "pageNumber": page_number,
@@ -187,6 +260,8 @@ class MarkdownDocumentModel(QAbstractListModel):
                     {"nodeIndex": o.node_index, "occurrenceId": o.occurrence_id}
                     for o in occ_refs
                 ]
+                for o in occ_refs:
+                    self._occurrence_to_node_index[o.occurrence_id] = o.node_index
         else:
             self._document_dto = None
 
@@ -230,6 +305,28 @@ class MarkdownDocumentModel(QAbstractListModel):
         if not region_id:
             return []
         return self._region_to_occurrences.get(region_id, [])
+
+    @Slot(str, result=str)
+    def primaryOccurrenceOfRegion(self, region_id: str) -> str:
+        """Returns the primary occurrence_id for the given region_id, or empty string."""
+        if not region_id:
+            return ""
+        occs = self._region_to_occurrences.get(region_id, [])
+        return occs[0]["occurrenceId"] if occs else ""
+
+    @Slot(str, result=int)
+    def indexOfOccurrence(self, occurrence_id: str) -> int:
+        """Returns the node index for a specific occurrence_id in O(1), or -1 if not found."""
+        if not occurrence_id:
+            return -1
+        return self._occurrence_to_node_index.get(occurrence_id, -1)
+
+    @Slot(str, result=int)
+    def pageNumberOfRegion(self, region_id: str) -> int:
+        """Returns the 1-based page number for the given region_id in O(1), or 0 if not found."""
+        if not region_id:
+            return 0
+        return self._region_to_page_number.get(region_id, 0)
 
     @Slot(int, result="QVariantMap")
     def getNode(self, index: int) -> Optional[Dict[str, Any]]:

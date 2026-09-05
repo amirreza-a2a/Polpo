@@ -353,3 +353,220 @@ def test_clean_architecture_controller_imports():
                 if node.module:
                     root_pkg = node.module.split(".")[0]
                     assert root_pkg not in disallowed_modules, f"Disallowed import from '{node.module}' in {rel_path}"
+
+
+# ---------------------------------------------------------------------------
+# 7. R2 Hardening Tests: PrimaryOccurrenceIdRole, Executor Shutdown, Multi-Occurrence
+# ---------------------------------------------------------------------------
+
+def test_model_primary_occurrence_id_and_lookup_slots(qapp):
+    """
+    R2.1 Verification: PrimaryOccurrenceIdRole exposes deterministic occurrence identity
+    and model provides O(1) occurrence lookup slots.
+    """
+    model = MarkdownDocumentModel()
+    doc_dto = create_sample_document_dto()
+    model.set_document(doc_dto)
+
+    idx1 = model.index(1, 0)
+    assert model.data(idx1, MarkdownDocumentModel.PrimaryOccurrenceIdRole) == "p_hash_1_img_0"
+
+    idx2 = model.index(2, 0)
+    assert model.data(idx2, MarkdownDocumentModel.PrimaryOccurrenceIdRole) == "p_hash_2_img_0"
+
+    # Row 0 has no regions
+    idx0 = model.index(0, 0)
+    assert model.data(idx0, MarkdownDocumentModel.PrimaryOccurrenceIdRole) == ""
+
+    # Slot lookups
+    assert model.primaryOccurrenceOfRegion("rid_001") == "p_hash_1_img_0"
+    assert model.primaryOccurrenceOfRegion("rid_002") == "p_hash_2_img_0"
+    assert model.primaryOccurrenceOfRegion("unknown") == ""
+
+    assert model.indexOfOccurrence("p_hash_1_img_0") == 1
+    assert model.indexOfOccurrence("p_hash_2_img_0") == 2
+    assert model.indexOfOccurrence("unknown") == -1
+
+
+def test_controller_shutdown_lifecycle(qapp):
+    """
+    R2.2 Verification: Explicit shutdown lifecycle invalidates in-flight requests
+    and cleanly stops the executor without crashing.
+    """
+    mock_service = MagicMock(spec=MarkdownViewerService)
+    ctrl = MarkdownViewerController(viewer_service=mock_service)
+
+    init_req_id = ctrl._request_id
+    ctrl.shutdown()
+
+    # Generation token incremented to invalidate pending/in-flight work
+    assert ctrl._request_id > init_req_id
+    # Executor shutdown flag set
+    assert ctrl._executor._shutdown is True
+
+
+def test_controller_exact_occurrence_selection_and_primary_fallback(qapp):
+    """
+    R2.3 Controller Verification: Selecting an exact occurrence scrolls to its specific node,
+    while omitting occurrence_id falls back to the region's primary occurrence.
+    """
+    mock_service = MagicMock(spec=MarkdownViewerService)
+    ctrl = MarkdownViewerController(viewer_service=mock_service)
+
+    vref_occ1 = VisualRegionRefDTO(
+        occurrence_id="node1_occ_1",
+        source="crop.jpg",
+        region_id="multi_reg",
+        is_associated=True,
+    )
+    vref_occ2 = VisualRegionRefDTO(
+        occurrence_id="node2_occ_2",
+        source="crop.jpg",
+        region_id="multi_reg",
+        is_associated=True,
+    )
+
+    node1 = MarkdownNodeDTO(
+        node_id="p_1",
+        node_type="paragraph",
+        regions=(vref_occ1,),
+    )
+    node2 = MarkdownNodeDTO(
+        node_id="p_2",
+        node_type="paragraph",
+        regions=(vref_occ2,),
+    )
+
+    doc_dto = MarkdownDocumentDTO(
+        job_id=1,
+        version=1,
+        nodes=(node1, node2),
+        region_to_occurrences={
+            "multi_reg": (
+                RegionOccurrenceRef(node_index=0, occurrence_id="node1_occ_1"),
+                RegionOccurrenceRef(node_index=1, occurrence_id="node2_occ_2"),
+            )
+        },
+    )
+    ctrl._model.set_document(doc_dto)
+
+    # 1. Exact occurrence targeting selects node index 1
+    ctrl.selectRegion("multi_reg", "node2_occ_2")
+    assert ctrl.highlightedRegionId == "multi_reg"
+    assert ctrl.highlightedOccurrenceId == "node2_occ_2"
+    assert ctrl.selectedNodeIndex == 1
+
+    # 2. Fallback to primary occurrence when occurrence_id is omitted
+    ctrl.selectRegion("multi_reg")
+    assert ctrl.highlightedRegionId == "multi_reg"
+    assert ctrl.highlightedOccurrenceId == "node1_occ_1"
+    assert ctrl.selectedNodeIndex == 0
+
+
+def test_model_indexed_lookups_and_page_number(qapp):
+    """
+    R2.1 & R2.3 Verification: Model exposes fast O(1) indexed lookups for
+    indexOfOccurrence and pageNumberOfRegion.
+    """
+    mock_service = MagicMock(spec=MarkdownViewerService)
+    ctrl = MarkdownViewerController(viewer_service=mock_service)
+    model = ctrl.model
+
+    vref = VisualRegionRefDTO(
+        occurrence_id="occ_page3",
+        source="crop.jpg",
+        region_id="reg_p3",
+        is_associated=True,
+        page_number=3,
+    )
+    node = MarkdownNodeDTO(
+        node_id="p_0",
+        node_type="paragraph",
+        regions=(vref,),
+    )
+    doc_dto = MarkdownDocumentDTO(
+        job_id=42,
+        version=1,
+        nodes=(node,),
+        region_to_occurrences={"reg_p3": (RegionOccurrenceRef(node_index=0, occurrence_id="occ_page3"),)},
+    )
+    model.set_document(doc_dto)
+
+    assert model.indexOfOccurrence("occ_page3") == 0
+    assert model.indexOfOccurrence("nonexistent") == -1
+    assert model.indexOfOccurrence("") == -1
+
+    assert model.pageNumberOfRegion("reg_p3") == 3
+    assert model.pageNumberOfRegion("nonexistent") == 0
+    assert model.pageNumberOfRegion("") == 0
+
+
+def test_controller_shutdown_idempotent(qapp):
+    """
+    R2.2 Verification: MarkdownViewerController.shutdown() is idempotent.
+    Calling shutdown once marks controller as shutdown and closes executor.
+    Calling shutdown multiple times is harmless and does not repeatedly shut down executor.
+    """
+    mock_service = MagicMock(spec=MarkdownViewerService)
+    ctrl = MarkdownViewerController(viewer_service=mock_service)
+    mock_executor = MagicMock()
+    ctrl._executor = mock_executor
+
+    assert ctrl.is_shutdown is False
+
+    # First shutdown call
+    ctrl.shutdown()
+    assert ctrl.is_shutdown is True
+    assert mock_executor.shutdown.call_count == 1
+    mock_executor.shutdown.assert_called_with(wait=False, cancel_futures=True)
+
+    # Second shutdown call (idempotent no-op)
+    ctrl.shutdown()
+    assert ctrl.is_shutdown is True
+    assert mock_executor.shutdown.call_count == 1
+
+
+def test_model_exposes_quote_children_role(qapp):
+    """
+    R1.2 & R3 Verification: MarkdownDocumentModel exposes QuoteChildrenRole
+    with structured child blocks and native inline image references.
+    """
+    from application.dto.markdown_dto import QuoteChildBlockDTO
+
+    model = MarkdownDocumentModel()
+    vref = VisualRegionRefDTO(
+        occurrence_id="quote_node_p1_img_0",
+        source="crop.jpg",
+        region_id="reg_quote",
+        is_associated=True,
+        page_number=1,
+    )
+    img_seg = InlineSegmentDTO(segment_type="image", image_ref=vref)
+    text_seg = InlineSegmentDTO(segment_type="text", text_html="Quote text")
+
+    q_child0 = QuoteChildBlockDTO(child_type="heading", content="Quote Heading", level=2, segments=(text_seg,))
+    q_child1 = QuoteChildBlockDTO(child_type="paragraph", content="Quote Paragraph", level=0, segments=(img_seg,))
+
+    node = MarkdownNodeDTO(
+        node_id="quote_1",
+        node_type="blockquote",
+        quote_children=(q_child0, q_child1),
+    )
+    doc_dto = MarkdownDocumentDTO(
+        job_id=42,
+        version=1,
+        nodes=(node,),
+        region_to_occurrences={"reg_quote": (RegionOccurrenceRef(node_index=0, occurrence_id="quote_node_p1_img_0"),)},
+    )
+    model.set_document(doc_dto)
+
+    assert model.rowCount() == 1
+    idx = model.index(0, 0)
+    children = model.data(idx, MarkdownDocumentModel.QuoteChildrenRole)
+    assert len(children) == 2
+    assert children[0]["childType"] == "heading"
+    assert children[0]["level"] == 2
+    assert children[1]["childType"] == "paragraph"
+    assert len(children[1]["segments"]) == 1
+    assert children[1]["segments"][0]["segmentType"] == "image"
+    assert children[1]["segments"][0]["imageRef"]["regionId"] == "reg_quote"

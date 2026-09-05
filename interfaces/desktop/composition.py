@@ -215,6 +215,8 @@ class DesktopAppContainer:
         self.start_runtime()
 
     def shutdown(self) -> None:
-        """Shuts down the desktop scheduler and runtime and releases resources."""
+        """Shuts down the desktop scheduler, runtime, and controllers, releasing resources."""
+        if hasattr(self, "markdown_viewer_controller") and self.markdown_viewer_controller:
+            self.markdown_viewer_controller.shutdown()
         self.scheduler.shutdown()
         self.runtime.shutdown()

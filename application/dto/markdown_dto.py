@@ -45,6 +45,18 @@ class RegionOccurrenceRef:
 
 
 @dataclass(frozen=True)
+class QuoteChildBlockDTO:
+    """
+    Structured child block within a blockquote (e.g. paragraph or heading),
+    preserving block structure, level, content, and native inline segments.
+    """
+    child_type: str  # "heading", "paragraph", etc.
+    content: str = ""
+    level: int = 0
+    segments: Tuple[InlineSegmentDTO, ...] = ()
+
+
+@dataclass(frozen=True)
 class MarkdownNodeDTO:
     """
     Flattened block-level presentation node consumed by QML ListView delegates.
@@ -61,6 +73,10 @@ class MarkdownNodeDTO:
     regions: Tuple[VisualRegionRefDTO, ...] = ()
     segments: Tuple[InlineSegmentDTO, ...] = ()
     list_items: Tuple[str, ...] = ()
+    list_item_segments: Tuple[Tuple[InlineSegmentDTO, ...], ...] = ()
+    table_cell_segments: Tuple[Tuple[Tuple[InlineSegmentDTO, ...], ...], ...] = ()
+    quote_children: Tuple[QuoteChildBlockDTO, ...] = ()
+
 
 
 @dataclass(frozen=True)

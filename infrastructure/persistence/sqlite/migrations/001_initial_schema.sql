@@ -68,7 +68,6 @@ CREATE TABLE IF NOT EXISTS jobs (
     current_api_index INTEGER NOT NULL DEFAULT 0,
     api_switch_log TEXT,
     output_path TEXT,
-    output_artifact_version_watermark INTEGER NOT NULL DEFAULT 0,
     error_message TEXT,
     retry_count INTEGER NOT NULL DEFAULT 0,
     auto_pipeline2 INTEGER NOT NULL DEFAULT 0 CHECK(auto_pipeline2 IN (0, 1)),

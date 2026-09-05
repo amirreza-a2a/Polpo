@@ -14,6 +14,7 @@ from application.dto.markdown_dto import (
     InlineSegmentDTO,
     MarkdownDocumentDTO,
     MarkdownNodeDTO,
+    QuoteChildBlockDTO,
     RegionOccurrenceRef,
     VisualRegionRefDTO,
 )
@@ -54,8 +55,9 @@ def _normalize_whitespace(text: str) -> str:
 
 def _is_safe_url(url: Optional[str]) -> bool:
     """
-    Validates hyperlink URLs against allowed safe schemes.
-    Explicitly excludes region:// which is internal-only and synthesized by the DTO layer.
+    Validates hyperlink URLs against allowed safe external web schemes.
+    Explicitly excludes file://, region://, javascript:, and data: schemes.
+    Internal region:// links are synthesized strictly by the DTO layer for active visual regions.
     """
     if not url:
         return False
@@ -63,7 +65,6 @@ def _is_safe_url(url: Optional[str]) -> bool:
     return (
         u.startswith("http://")
         or u.startswith("https://")
-        or u.startswith("file://")
         or u.startswith("#")
     )
 
@@ -244,6 +245,15 @@ class MarkdownViewerService:
         regions_by_id: Mapping[str, VisualRegion],
         base_dir: Optional[str] = None,
     ) -> MarkdownNodeDTO:
+        """
+        Projects a canonical AST block into an immutable presentation MarkdownNodeDTO.
+
+        Deterministic Node Identity Invariant:
+        Node IDs are derived from the SHA-256 content hash (or slug) and a document-scoped
+        occurrence counter for that content key. This ensures stability when distinct blocks
+        are inserted or edited elsewhere in the document. For identical duplicate blocks
+        within the same document, identity reflects their lexical occurrence order.
+        """
         if isinstance(block, HeadingBlock):
             plain = "".join(s.plain_text for s in block.inlines)
             slug = _slugify(plain)[:24]
@@ -354,20 +364,41 @@ class MarkdownViewerService:
             node_id = f"list_{kind}_{list_hash}_{seen_counts[key]}"
 
             list_item_htmls: List[str] = []
+            list_item_segments: List[Tuple[InlineSegmentDTO, ...]] = []
             all_regions: List[VisualRegionRefDTO] = []
+            all_segments: List[InlineSegmentDTO] = []
             img_counter = [0]
 
             for item_idx, item in enumerate(block.items):
                 prefix = "☑ " if item.task_checked else ("☐ " if item.is_task else "")
-                item_content, _, item_regions = self._render_inlines(
+                item_content, item_segs, item_regions = self._render_inlines(
                     inlines=item.inlines,
                     node_id=f"{node_id}_item_{item_idx}",
                     regions_by_id=regions_by_id,
                     base_dir=base_dir,
                     counter=img_counter,
                 )
+                if prefix:
+                    if item_segs and item_segs[0].segment_type == "text":
+                        first_seg = item_segs[0]
+                        item_segs = (
+                            InlineSegmentDTO(
+                                segment_type="text",
+                                text_html=f"{prefix}{first_seg.text_html}",
+                            ),
+                        ) + item_segs[1:]
+                    else:
+                        item_segs = (
+                            InlineSegmentDTO(
+                                segment_type="text",
+                                text_html=prefix,
+                            ),
+                        ) + item_segs
+
                 list_item_htmls.append(f"{prefix}{item_content}")
+                list_item_segments.append(item_segs)
                 all_regions.extend(item_regions)
+                all_segments.extend(item_segs)
 
             items_tuple = tuple(list_item_htmls)
             if block.is_ordered:
@@ -382,6 +413,8 @@ class MarkdownViewerService:
                 start_index=block.start_index,
                 content=content,
                 list_items=items_tuple,
+                list_item_segments=tuple(list_item_segments),
+                segments=tuple(all_segments),
                 regions=tuple(all_regions),
             )
 
@@ -398,16 +431,72 @@ class MarkdownViewerService:
 
             inner_htmls = []
             quote_regions: List[VisualRegionRefDTO] = []
-            for sub_b in block.blocks:
+            quote_segments: List[InlineSegmentDTO] = []
+            quote_children: List[QuoteChildBlockDTO] = []
+            # Shared deterministic counter for the entire blockquote node ensures unique occurrence IDs
+            quote_img_counter = [0]
+
+            for p_idx, sub_b in enumerate(block.blocks):
                 if isinstance(sub_b, ParagraphBlock):
-                    c_html, _, r_list = self._render_inlines(
+                    sub_node_id = f"{node_id}_p{p_idx}"
+                    c_html, s_list, r_list = self._render_inlines(
                         sub_b.inlines,
-                        node_id=node_id,
+                        node_id=sub_node_id,
                         regions_by_id=regions_by_id,
                         base_dir=base_dir,
+                        counter=quote_img_counter,
                     )
                     inner_htmls.append(f"<p>{c_html}</p>")
                     quote_regions.extend(r_list)
+                    quote_segments.extend(s_list)
+                    quote_children.append(
+                        QuoteChildBlockDTO(
+                            child_type="paragraph",
+                            content=c_html,
+                            level=0,
+                            segments=s_list,
+                        )
+                    )
+                elif isinstance(sub_b, HeadingBlock):
+                    sub_node_id = f"{node_id}_h{p_idx}"
+                    c_html, s_list, r_list = self._render_inlines(
+                        sub_b.inlines,
+                        node_id=sub_node_id,
+                        regions_by_id=regions_by_id,
+                        base_dir=base_dir,
+                        counter=quote_img_counter,
+                    )
+                    inner_htmls.append(f"<h{sub_b.level}>{c_html}</h{sub_b.level}>")
+                    quote_regions.extend(r_list)
+                    quote_segments.extend(s_list)
+                    quote_children.append(
+                        QuoteChildBlockDTO(
+                            child_type="heading",
+                            content=c_html,
+                            level=sub_b.level,
+                            segments=s_list,
+                        )
+                    )
+                elif hasattr(sub_b, "inlines"):
+                    sub_node_id = f"{node_id}_b{p_idx}"
+                    c_html, s_list, r_list = self._render_inlines(
+                        sub_b.inlines,
+                        node_id=sub_node_id,
+                        regions_by_id=regions_by_id,
+                        base_dir=base_dir,
+                        counter=quote_img_counter,
+                    )
+                    inner_htmls.append(f"<p>{c_html}</p>")
+                    quote_regions.extend(r_list)
+                    quote_segments.extend(s_list)
+                    quote_children.append(
+                        QuoteChildBlockDTO(
+                            child_type="paragraph",
+                            content=c_html,
+                            level=0,
+                            segments=s_list,
+                        )
+                    )
 
             content = f"<blockquote>{''.join(inner_htmls)}</blockquote>" if inner_htmls else "<blockquote></blockquote>"
             return MarkdownNodeDTO(
@@ -415,6 +504,8 @@ class MarkdownViewerService:
                 node_type="blockquote",
                 content=content,
                 regions=tuple(quote_regions),
+                segments=tuple(quote_segments),
+                quote_children=tuple(quote_children),
             )
 
         elif isinstance(block, ThematicBreakBlock):
@@ -433,11 +524,51 @@ class MarkdownViewerService:
             key = ("table", table_hash)
             seen_counts[key] += 1
             node_id = f"table_{table_hash}_{seen_counts[key]}"
+
+            table_img_counter = [0]
+            table_regions: List[VisualRegionRefDTO] = []
+            table_segments: List[InlineSegmentDTO] = []
+            table_cell_segments: List[Tuple[Tuple[InlineSegmentDTO, ...], ...]] = []
+
+            if block.headers:
+                header_row_segs: List[Tuple[InlineSegmentDTO, ...]] = []
+                for col_idx, cell_inlines in enumerate(block.headers):
+                    _, c_segs, c_regs = self._render_inlines(
+                        cell_inlines,
+                        node_id=f"{node_id}_th_{col_idx}",
+                        regions_by_id=regions_by_id,
+                        base_dir=base_dir,
+                        counter=table_img_counter,
+                    )
+                    header_row_segs.append(c_segs)
+                    table_regions.extend(c_regs)
+                    table_segments.extend(c_segs)
+                table_cell_segments.append(tuple(header_row_segs))
+
+            if block.rows:
+                for row_idx, row in enumerate(block.rows):
+                    row_segs: List[Tuple[InlineSegmentDTO, ...]] = []
+                    for col_idx, cell_inlines in enumerate(row):
+                        _, c_segs, c_regs = self._render_inlines(
+                            cell_inlines,
+                            node_id=f"{node_id}_r{row_idx}_c{col_idx}",
+                            regions_by_id=regions_by_id,
+                            base_dir=base_dir,
+                            counter=table_img_counter,
+                        )
+                        row_segs.append(c_segs)
+                        table_regions.extend(c_regs)
+                        table_segments.extend(c_segs)
+                    table_cell_segments.append(tuple(row_segs))
+
             return MarkdownNodeDTO(
                 node_id=node_id,
                 node_type="table_fallback",
                 content=block.raw_table,
                 raw_markdown=block.raw_table,
+                regions=tuple(table_regions),
+                segments=tuple(table_segments),
+                table_cell_segments=tuple(table_cell_segments),
             )
 
         # Generic fallback
@@ -459,15 +590,19 @@ class MarkdownViewerService:
         segments_list: List[InlineSegmentDTO] = []
         current_text_chunks: List[str] = []
         full_content_chunks: List[str] = []
+        active_formatting: List[Tuple[str, str]] = []
 
         def flush_text_segment():
             if current_text_chunks:
-                segments_list.append(
-                    InlineSegmentDTO(
-                        segment_type="text",
-                        text_html="".join(current_text_chunks),
+                html_text = "".join(current_text_chunks)
+                raw_text = re.sub(r"<[^>]+>", "", html_text)
+                if raw_text or "<br/>" in html_text or "<img" in html_text:
+                    segments_list.append(
+                        InlineSegmentDTO(
+                            segment_type="text",
+                            text_html=html_text,
+                        )
                     )
-                )
                 current_text_chunks.clear()
 
         def process_span(span: InlineSpan):
@@ -495,9 +630,18 @@ class MarkdownViewerService:
                     label = html.escape(span.text or span.target or "image", quote=True)
                     full_content_chunks.append(f"[{label}]")
 
-                # Emit distinct image segment for native QML Flow rendering
+                # Before flushing text segment, close active formatting tags in reverse order
+                for _, close_tag in reversed(active_formatting):
+                    current_text_chunks.append(close_tag)
+
                 flush_text_segment()
+
+                # Emit distinct image segment for native QML Flow rendering
                 segments_list.append(InlineSegmentDTO(segment_type="image", image_ref=vref))
+
+                # Re-open active formatting tags for the subsequent text segment
+                for open_tag, _ in active_formatting:
+                    current_text_chunks.append(open_tag)
 
             elif span.span_type == InlineType.TEXT:
                 escaped = "<br/>" if span.text == "\n" else html.escape(span.text, quote=True)
@@ -510,20 +654,26 @@ class MarkdownViewerService:
                 full_content_chunks.append(escaped)
 
             elif span.span_type == InlineType.STRONG:
-                current_text_chunks.append("<b>")
-                full_content_chunks.append("<b>")
+                open_tag, close_tag = "<b>", "</b>"
+                active_formatting.append((open_tag, close_tag))
+                current_text_chunks.append(open_tag)
+                full_content_chunks.append(open_tag)
                 for child in span.children:
                     process_span(child)
-                current_text_chunks.append("</b>")
-                full_content_chunks.append("</b>")
+                current_text_chunks.append(close_tag)
+                full_content_chunks.append(close_tag)
+                active_formatting.pop()
 
             elif span.span_type == InlineType.EMPHASIS:
-                current_text_chunks.append("<i>")
-                full_content_chunks.append("<i>")
+                open_tag, close_tag = "<i>", "</i>"
+                active_formatting.append((open_tag, close_tag))
+                current_text_chunks.append(open_tag)
+                full_content_chunks.append(open_tag)
                 for child in span.children:
                     process_span(child)
-                current_text_chunks.append("</i>")
-                full_content_chunks.append("</i>")
+                current_text_chunks.append(close_tag)
+                full_content_chunks.append(close_tag)
+                active_formatting.pop()
 
             elif span.span_type == InlineType.LINK:
                 safe_href = (
@@ -531,12 +681,15 @@ class MarkdownViewerService:
                     if _is_safe_url(span.target)
                     else "#"
                 )
-                current_text_chunks.append(f'<a href="{safe_href}">')
-                full_content_chunks.append(f'<a href="{safe_href}">')
+                open_tag, close_tag = f'<a href="{safe_href}">', "</a>"
+                active_formatting.append((open_tag, close_tag))
+                current_text_chunks.append(open_tag)
+                full_content_chunks.append(open_tag)
                 for child in span.children:
                     process_span(child)
-                current_text_chunks.append("</a>")
-                full_content_chunks.append("</a>")
+                current_text_chunks.append(close_tag)
+                full_content_chunks.append(close_tag)
+                active_formatting.pop()
 
             else:
                 for child in span.children:

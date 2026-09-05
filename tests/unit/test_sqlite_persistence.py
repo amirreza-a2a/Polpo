@@ -119,9 +119,10 @@ class TestSQLitePersistence(unittest.TestCase):
             cur = conn.cursor()
             cur.execute("SELECT version, name FROM schema_version ORDER BY version ASC")
             rows = cur.fetchall()
-            self.assertEqual(len(rows), 2)
+            self.assertEqual(len(rows), 3)
             self.assertEqual(rows[0]["version"], 1)
             self.assertEqual(rows[1]["version"], 2)
+            self.assertEqual(rows[2]["version"], 3)
 
             # Verify all expected tables exist
             cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -136,6 +137,15 @@ class TestSQLitePersistence(unittest.TestCase):
                 "visual_regions",
             }
             self.assertTrue(expected_tables.issubset(tables))
+
+            # Verify watermark columns exist
+            cur.execute("PRAGMA table_info(jobs)")
+            job_cols = {row["name"] for row in cur.fetchall()}
+            self.assertIn("output_artifact_version_watermark", job_cols)
+
+            cur.execute("PRAGMA table_info(visual_regions)")
+            region_cols = {row["name"] for row in cur.fetchall()}
+            self.assertIn("artifact_version_watermark", region_cols)
         finally:
             conn.close()
 
@@ -188,6 +198,183 @@ class TestSQLitePersistence(unittest.TestCase):
 
             cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='broken_table'")
             self.assertIsNone(cur.fetchone())
+        finally:
+            conn.close()
+
+    def test_migration_upgrade_v1_to_v2_to_v3(self):
+        """
+        Verifies that a database initialized at schema version 1 with existing rows
+        upgrades sequentially through version 2 and version 3, preserving existing
+        rows and populating default values for new columns.
+        """
+        db_path = Path(self.temp_dir.name) / "v1_upgrade_test.db"
+        mig_dir = Path(__file__).parents[2] / "infrastructure" / "persistence" / "sqlite" / "migrations"
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+
+        # 1. Apply only 001_initial_schema.sql
+        with open(mig_dir / "001_initial_schema.sql", "r", encoding="utf-8") as f:
+            v1_sql = f.read()
+        runner = SQLiteMigrationRunner(SQLiteDatabaseManager(db_path))
+        for stmt in runner._split_sql_statements(v1_sql):
+            conn.execute(stmt)
+        runner.ensure_version_table(conn)
+        conn.execute(
+            f"INSERT INTO {runner.SCHEMA_VERSION_TABLE} (version, name, applied_at) VALUES (?, ?, ?)",
+            (1, "initial_schema", "2026-09-01T12:00:00Z"),
+        )
+        # Insert a job row in v1 schema (no watermark column exists yet)
+        conn.execute(
+            """
+            INSERT INTO jobs (
+                file_name, file_path, total_pages, processed_pages, status,
+                current_api_index, retry_count, auto_pipeline2, cancel_requested,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("doc_v1.pdf", "/path/to/doc_v1.pdf", 10, 5, "processing", 0, 0, 0, 0, "2026-09-01T12:00:00Z", "2026-09-01T12:00:00Z"),
+        )
+        conn.commit()
+        conn.close()
+
+        # 2. Run migrations runner to upgrade to latest version
+        test_mgr = SQLiteDatabaseManager(db_path)
+        test_runner = SQLiteMigrationRunner(test_mgr)
+        applied = test_runner.run_migrations()
+        self.assertEqual(applied, [2, 3])
+
+        # 3. Verify schema_version table
+        conn2 = test_mgr.create_connection()
+        try:
+            cur = conn2.cursor()
+            cur.execute("SELECT version FROM schema_version ORDER BY version ASC")
+            versions = [r["version"] for r in cur.fetchall()]
+            self.assertEqual(versions, [1, 2, 3])
+
+            # Verify watermark columns exist
+            cur.execute("PRAGMA table_info(jobs)")
+            job_cols = {r["name"] for r in cur.fetchall()}
+            self.assertIn("output_artifact_version_watermark", job_cols)
+
+            cur.execute("PRAGMA table_info(visual_regions)")
+            vr_cols = {r["name"] for r in cur.fetchall()}
+            self.assertIn("artifact_version_watermark", vr_cols)
+
+            # Verify existing job row is preserved with watermark default = 0
+            cur.execute("SELECT file_name, status, output_artifact_version_watermark FROM jobs WHERE id = 1")
+            row = cur.fetchone()
+            self.assertEqual(row["file_name"], "doc_v1.pdf")
+            self.assertEqual(row["status"], "processing")
+            self.assertEqual(row["output_artifact_version_watermark"], 0)
+        finally:
+            conn2.close()
+
+    def test_migration_fresh_database_from_scratch(self):
+        """
+        Verifies that an empty database migrates cleanly through all versions (v0 -> v1 -> v2 -> v3)
+        without errors.
+        """
+        fresh_db_path = Path(self.temp_dir.name) / "fresh_scratch.db"
+        fresh_mgr = SQLiteDatabaseManager(fresh_db_path)
+        fresh_runner = SQLiteMigrationRunner(fresh_mgr)
+        applied = fresh_runner.run_migrations()
+        self.assertEqual(applied, [1, 2, 3])
+
+        # Re-running migrations is completely idempotent
+        self.assertEqual(fresh_runner.run_migrations(), [])
+
+    def test_existing_jobs_preserved_with_watermark_default(self):
+        """
+        Verifies that existing jobs created before migration 3 can be retrieved via JobRepository,
+        have watermark default 0, and new jobs can be created and updated with watermarks.
+        """
+        db_path = Path(self.temp_dir.name) / "repo_watermark_test.db"
+        mig_dir = Path(__file__).parents[2] / "infrastructure" / "persistence" / "sqlite" / "migrations"
+        conn = sqlite3.connect(str(db_path))
+
+        # Setup v1 schema and job
+        with open(mig_dir / "001_initial_schema.sql", "r", encoding="utf-8") as f:
+            v1_sql = f.read()
+        runner = SQLiteMigrationRunner(SQLiteDatabaseManager(db_path))
+        for stmt in runner._split_sql_statements(v1_sql):
+            conn.execute(stmt)
+        runner.ensure_version_table(conn)
+        conn.execute(
+            f"INSERT INTO {runner.SCHEMA_VERSION_TABLE} (version, name, applied_at) VALUES (?, ?, ?)",
+            (1, "initial_schema", "2026-09-01T12:00:00Z"),
+        )
+        conn.execute(
+            """
+            INSERT INTO jobs (
+                file_name, file_path, total_pages, processed_pages, status,
+                current_api_index, retry_count, auto_pipeline2, cancel_requested,
+                created_at, updated_at
+            ) VALUES ('legacy.pdf', '/path/legacy.pdf', 5, 5, 'done', 0, 0, 0, 0, '2026-09-01T12:00:00Z', '2026-09-01T12:00:00Z')
+            """
+        )
+        conn.commit()
+        conn.close()
+
+        # Migrate to v3
+        test_mgr = SQLiteDatabaseManager(db_path)
+        test_runner = SQLiteMigrationRunner(test_mgr)
+        test_runner.run_migrations()
+
+        # Repository access
+        uow_factory = SQLiteUnitOfWorkFactory(test_mgr)
+        with uow_factory.create() as uow:
+            legacy_job = uow.jobs.get_by_id(1)
+            self.assertIsNotNone(legacy_job)
+            self.assertEqual(legacy_job.file_name, "legacy.pdf")
+            self.assertEqual(legacy_job.output_artifact_version_watermark, 0)
+
+            # Insert new job with watermark = 3
+            new_job = Job(
+                id=None,
+                file_name="new.pdf",
+                file_path="/path/new.pdf",
+                total_pages=2,
+                status=JobStatus.PENDING,
+                output_artifact_version_watermark=3,
+            )
+            saved = uow.jobs.save(new_job)
+            self.assertEqual(saved.output_artifact_version_watermark, 3)
+
+            fetched_new = uow.jobs.get_by_id(saved.id)
+            self.assertEqual(fetched_new.output_artifact_version_watermark, 3)
+
+    def test_real_desktop_app_database_upgrades_cleanly(self):
+        """
+        Verifies that the actual user database (~/.local/share/polpot/polpot.db) upgrades
+        cleanly when copied into an isolated test environment, all existing jobs are intact,
+        and new job inserts succeed.
+        """
+        import shutil
+        real_db_path = Path(os.path.expanduser("~/.local/share/polpot/polpot.db"))
+        if not real_db_path.exists():
+            self.skipTest("Real desktop database does not exist on this environment.")
+
+        copy_path = Path(self.temp_dir.name) / "copied_real_polpot.db"
+        shutil.copy(str(real_db_path), str(copy_path))
+
+        copy_mgr = SQLiteDatabaseManager(copy_path)
+        runner = SQLiteMigrationRunner(copy_mgr)
+        runner.run_migrations()
+
+        conn = copy_mgr.create_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT version FROM schema_version ORDER BY version ASC")
+            versions = [r["version"] for r in cur.fetchall()]
+            self.assertIn(3, versions)
+
+            cur.execute("PRAGMA table_info(jobs)")
+            cols = {r["name"] for r in cur.fetchall()}
+            self.assertIn("output_artifact_version_watermark", cols)
+
+            cur.execute("SELECT COUNT(*) as cnt FROM jobs")
+            cnt = cur.fetchone()["cnt"]
+            self.assertGreaterEqual(cnt, 1)
         finally:
             conn.close()
 
