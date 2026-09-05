@@ -17,6 +17,7 @@ from interfaces.desktop.controllers import (
     SettingsController,
     QuickConvertController,
     DocumentViewerController,
+    MarkdownViewerController,
 )
 from interfaces.desktop.models import (
     JobQueueModel,
@@ -24,6 +25,30 @@ from interfaces.desktop.models import (
     ApiSlotModel,
     PromptListModel,
 )
+
+
+def wire_review_workspace_sync(
+    document_viewer_controller: DocumentViewerController,
+    markdown_viewer_controller: MarkdownViewerController,
+) -> None:
+    """
+    Wires bidirectional interaction between PDF Document Viewer and Markdown Viewer:
+    1. Selecting an image in Markdown selects and centers the region in the PDF viewer.
+    2. Selecting a visual region bounding box in PDF viewer scrolls to and highlights
+       the corresponding block in the Markdown viewer.
+    Uses identity guards to prevent recursive signal loops.
+    """
+    def _on_markdown_region_selected(region_id: str, occurrence_id: str):
+        if region_id and document_viewer_controller.selectedRegionId != region_id:
+            document_viewer_controller.selectRegion(region_id)
+
+    def _on_pdf_selection_changed():
+        sel_id = document_viewer_controller.selectedRegionId
+        if sel_id and markdown_viewer_controller.highlightedRegionId != sel_id:
+            markdown_viewer_controller.selectRegion(sel_id)
+
+    markdown_viewer_controller.regionSelected.connect(_on_markdown_region_selected)
+    document_viewer_controller.selectionChanged.connect(_on_pdf_selection_changed)
 
 
 def create_app(
@@ -96,6 +121,12 @@ def create_app(
     document_viewer_controller = DocumentViewerController(
         viewer_service=container.document_viewer_service,
     )
+    markdown_viewer_controller = MarkdownViewerController(
+        viewer_service=container.markdown_viewer_service,
+    )
+
+    # Wire Bidirectional Synchronization between Document Viewer and Markdown Viewer
+    wire_review_workspace_sync(document_viewer_controller, markdown_viewer_controller)
 
     # 5. QAbstractListModel ViewModels
     job_queue_model = JobQueueModel(
@@ -123,6 +154,7 @@ def create_app(
     container.settings_controller = settings_controller
     container.quick_convert_controller = quick_convert_controller
     container.document_viewer_controller = document_viewer_controller
+    container.markdown_viewer_controller = markdown_viewer_controller
     container.job_queue_model = job_queue_model
     container.job_history_model = job_history_model
     container.api_slot_model = api_slot_model
@@ -137,6 +169,7 @@ def create_app(
     ctx.setContextProperty("settingsController", settings_controller)
     ctx.setContextProperty("quickConvertController", quick_convert_controller)
     ctx.setContextProperty("documentViewerController", document_viewer_controller)
+    ctx.setContextProperty("markdownViewerController", markdown_viewer_controller)
     ctx.setContextProperty("jobQueueModel", job_queue_model)
     ctx.setContextProperty("jobHistoryModel", job_history_model)
     ctx.setContextProperty("apiSlotModel", api_slot_model)

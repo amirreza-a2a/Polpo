@@ -34,6 +34,8 @@ from application.services.prompt_service import PromptService
 from application.services.artifact_service import ArtifactService
 from application.services.apply_review_service import ApplyReviewService
 from application.services.document_viewer_service import DocumentViewerService
+from application.services.markdown_viewer_service import MarkdownViewerService
+from infrastructure.markdown.markdown_it_parser import MarkdownItParser
 from interfaces.desktop.workers.runtime import DesktopJobRuntime
 from interfaces.desktop.workers.scheduler import DesktopJobScheduler
 
@@ -149,6 +151,13 @@ class DesktopAppContainer:
             uow_factory=self.uow_factory,
             storage=self.storage,
             doc_processor=self.doc_processor,
+        )
+
+        self.markdown_parser = MarkdownItParser()
+        self.markdown_viewer_service = MarkdownViewerService(
+            parser=self.markdown_parser,
+            uow_factory=self.uow_factory,
+            storage=self.storage,
         )
 
         # 6. Desktop Concurrent Runtime & Persistent Scheduler
