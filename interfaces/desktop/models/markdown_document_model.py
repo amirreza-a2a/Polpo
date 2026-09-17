@@ -135,6 +135,105 @@ class MarkdownDocumentModel(QAbstractListModel):
             return item["quoteChildren"]
         return None
 
+    def _node_dto_to_item(self, node: Any) -> Dict[str, Any]:
+        """Converts a MarkdownNodeDTO into a dictionary for QML model roles."""
+        seg_dicts = []
+        for s in node.segments:
+            s_dict = {
+                "segmentType": s.segment_type,
+                "textHtml": s.text_html,
+                "imageRef": self._ref_to_dict(s.image_ref) if s.image_ref else None,
+            }
+            seg_dicts.append(s_dict)
+
+        reg_dicts = [self._ref_to_dict(r) for r in node.regions]
+
+        primary_region_id = ""
+        primary_occurrence_id = ""
+        is_associated = False
+        display_order = 0
+        page_number = 0
+        image_uri = ""
+        alt_text = ""
+
+        if node.regions:
+            primary = node.regions[0]
+            primary_region_id = primary.region_id or ""
+            primary_occurrence_id = primary.occurrence_id or ""
+            is_associated = primary.is_associated
+            display_order = primary.display_order or 0
+            page_number = primary.page_number or 0
+            image_uri = self._resolve_qml_uri(primary)
+            alt_text = primary.alt_text
+
+        list_item_seg_dicts = []
+        for item_segs in node.list_item_segments:
+            sub_dicts = [
+                {
+                    "segmentType": s.segment_type,
+                    "textHtml": s.text_html,
+                    "imageRef": self._ref_to_dict(s.image_ref) if s.image_ref else None,
+                }
+                for s in item_segs
+            ]
+            list_item_seg_dicts.append(sub_dicts)
+
+        table_cell_seg_dicts = []
+        for row in node.table_cell_segments:
+            row_dicts = []
+            for col in row:
+                col_dicts = [
+                    {
+                        "segmentType": s.segment_type,
+                        "textHtml": s.text_html,
+                        "imageRef": self._ref_to_dict(s.image_ref) if s.image_ref else None,
+                    }
+                    for s in col
+                ]
+                row_dicts.append(col_dicts)
+            table_cell_seg_dicts.append(row_dicts)
+
+        quote_child_dicts = []
+        for q_child in node.quote_children:
+            q_segs = [
+                {
+                    "segmentType": s.segment_type,
+                    "textHtml": s.text_html,
+                    "imageRef": self._ref_to_dict(s.image_ref) if s.image_ref else None,
+                }
+                for s in q_child.segments
+            ]
+            quote_child_dicts.append({
+                "childType": q_child.child_type,
+                "content": q_child.content,
+                "level": q_child.level,
+                "segments": q_segs,
+            })
+
+        return {
+            "nodeId": node.node_id,
+            "nodeType": node.node_type,
+            "content": node.content,
+            "level": node.level,
+            "language": node.language,
+            "isOrdered": node.is_ordered,
+            "startIndex": node.start_index,
+            "rawMarkdown": node.raw_markdown,
+            "listItems": list(node.list_items),
+            "segments": seg_dicts,
+            "listItemSegments": list_item_seg_dicts,
+            "tableCellSegments": table_cell_seg_dicts,
+            "quoteChildren": quote_child_dicts,
+            "regions": reg_dicts,
+            "primaryRegionId": primary_region_id,
+            "primaryOccurrenceId": primary_occurrence_id,
+            "isAssociated": is_associated,
+            "displayOrder": display_order,
+            "pageNumber": page_number,
+            "imageUri": image_uri,
+            "altText": alt_text,
+        }
+
     def set_document(self, document_dto: Optional[MarkdownDocumentDTO]) -> None:
         """
         Atomically updates the model on the Qt GUI thread.
@@ -150,78 +249,8 @@ class MarkdownDocumentModel(QAbstractListModel):
         if document_dto is not None:
             self._document_dto = document_dto
             for idx, node in enumerate(document_dto.nodes):
-                seg_dicts = []
-                for s in node.segments:
-                    s_dict = {
-                        "segmentType": s.segment_type,
-                        "textHtml": s.text_html,
-                        "imageRef": self._ref_to_dict(s.image_ref) if s.image_ref else None,
-                    }
-                    seg_dicts.append(s_dict)
-
-                reg_dicts = [self._ref_to_dict(r) for r in node.regions]
-
-                primary_region_id = ""
-                primary_occurrence_id = ""
-                is_associated = False
-                display_order = 0
-                page_number = 0
-                image_uri = ""
-                alt_text = ""
-
-                if node.regions:
-                    primary = node.regions[0]
-                    primary_region_id = primary.region_id or ""
-                    primary_occurrence_id = primary.occurrence_id or ""
-                    is_associated = primary.is_associated
-                    display_order = primary.display_order or 0
-                    page_number = primary.page_number or 0
-                    image_uri = self._resolve_qml_uri(primary)
-                    alt_text = primary.alt_text
-
-                list_item_seg_dicts = []
-                for item_segs in node.list_item_segments:
-                    sub_dicts = [
-                        {
-                            "segmentType": s.segment_type,
-                            "textHtml": s.text_html,
-                            "imageRef": self._ref_to_dict(s.image_ref) if s.image_ref else None,
-                        }
-                        for s in item_segs
-                    ]
-                    list_item_seg_dicts.append(sub_dicts)
-
-                table_cell_seg_dicts = []
-                for row in node.table_cell_segments:
-                    row_dicts = []
-                    for col in row:
-                        col_dicts = [
-                            {
-                               "segmentType": s.segment_type,
-                                "textHtml": s.text_html,
-                                "imageRef": self._ref_to_dict(s.image_ref) if s.image_ref else None,
-                            }
-                            for s in col
-                        ]
-                        row_dicts.append(col_dicts)
-                    table_cell_seg_dicts.append(row_dicts)
-
-                quote_child_dicts = []
-                for q_child in node.quote_children:
-                    q_segs = [
-                        {
-                            "segmentType": s.segment_type,
-                            "textHtml": s.text_html,
-                            "imageRef": self._ref_to_dict(s.image_ref) if s.image_ref else None,
-                        }
-                        for s in q_child.segments
-                    ]
-                    quote_child_dicts.append({
-                        "childType": q_child.child_type,
-                        "content": q_child.content,
-                        "level": q_child.level,
-                        "segments": q_segs,
-                    })
+                item = self._node_dto_to_item(node)
+                self._items.append(item)
 
                 for r in node.regions:
                     if r.region_id:
@@ -229,31 +258,6 @@ class MarkdownDocumentModel(QAbstractListModel):
                             self._region_to_node_index[r.region_id] = idx
                         if r.page_number and r.region_id not in self._region_to_page_number:
                             self._region_to_page_number[r.region_id] = r.page_number
-
-                item = {
-                    "nodeId": node.node_id,
-                    "nodeType": node.node_type,
-                    "content": node.content,
-                    "level": node.level,
-                    "language": node.language,
-                    "isOrdered": node.is_ordered,
-                    "startIndex": node.start_index,
-                    "rawMarkdown": node.raw_markdown,
-                    "listItems": list(node.list_items),
-                    "segments": seg_dicts,
-                    "listItemSegments": list_item_seg_dicts,
-                    "tableCellSegments": table_cell_seg_dicts,
-                    "quoteChildren": quote_child_dicts,
-                    "regions": reg_dicts,
-                    "primaryRegionId": primary_region_id,
-                    "primaryOccurrenceId": primary_occurrence_id,
-                    "isAssociated": is_associated,
-                    "displayOrder": display_order,
-                    "pageNumber": page_number,
-                    "imageUri": image_uri,
-                    "altText": alt_text,
-                }
-                self._items.append(item)
 
             for rid, occ_refs in document_dto.region_to_occurrences.items():
                 self._region_to_occurrences[rid] = [
@@ -266,6 +270,102 @@ class MarkdownDocumentModel(QAbstractListModel):
             self._document_dto = None
 
         self.endResetModel()
+
+    @Slot(object)
+    def reconcile_document(self, document_dto: Optional[MarkdownDocumentDTO]) -> None:
+        """
+        Non-destructively reconciles the model with the canonical MarkdownDocumentDTO.
+        Identifies newly-added canonical nodes using stable nodeId and inserts them
+        via beginInsertRows() / endInsertRows() without resetting the model or losing scroll.
+        Updates in-place roles for existing nodes via dataChanged().
+        If unsupported structural changes (deletions, reordering) are detected,
+        safely falls back to set_document().
+        """
+        if document_dto is None:
+            self.set_document(None)
+            return
+
+        if not self._items:
+            self.set_document(document_dto)
+            return
+
+        old_ids = [item["nodeId"] for item in self._items]
+        new_nodes = document_dto.nodes
+        new_ids = [node.node_id for node in new_nodes]
+
+        # Verify old_ids is a strict subsequence of new_ids
+        new_id_to_idx = {nid: i for i, nid in enumerate(new_ids)}
+        prev_idx = -1
+        is_subsequence = True
+        for oid in old_ids:
+            if oid not in new_id_to_idx:
+                is_subsequence = False
+                break
+            n_idx = new_id_to_idx[oid]
+            if n_idx <= prev_idx:
+                is_subsequence = False
+                break
+            prev_idx = n_idx
+
+        if not is_subsequence:
+            # Fall back to safe reset if structural order or deletions were detected
+            self.set_document(document_dto)
+            return
+
+        # Addition-only structural synchronization (with targeted in-place updates for existing nodes)
+        old_ptr = 0
+        for new_idx, new_node in enumerate(new_nodes):
+            if old_ptr < len(self._items) and self._items[old_ptr]["nodeId"] == new_node.node_id:
+                # Existing node: check for targeted updates (e.g. image URI or content update)
+                new_item_dict = self._node_dto_to_item(new_node)
+                old_item_dict = self._items[old_ptr]
+
+                roles_changed = []
+                if old_item_dict.get("imageUri") != new_item_dict.get("imageUri"):
+                    roles_changed.append(self.ImageUriRole)
+                if old_item_dict.get("segments") != new_item_dict.get("segments"):
+                    roles_changed.append(self.SegmentsRole)
+                if old_item_dict.get("regions") != new_item_dict.get("regions"):
+                    roles_changed.append(self.RegionsRole)
+                if old_item_dict.get("content") != new_item_dict.get("content"):
+                    roles_changed.append(self.ContentRole)
+
+                if roles_changed:
+                    self._items[old_ptr] = new_item_dict
+                    m_idx = self.index(old_ptr, 0)
+                    self.dataChanged.emit(m_idx, m_idx, roles_changed)
+
+                old_ptr += 1
+            else:
+                # New canonical node to insert at old_ptr
+                new_item_dict = self._node_dto_to_item(new_node)
+                self.beginInsertRows(QModelIndex(), old_ptr, old_ptr)
+                self._items.insert(old_ptr, new_item_dict)
+                self.endInsertRows()
+                old_ptr += 1
+
+        # Canonical lookup structures rebuild from document_dto
+        self._document_dto = document_dto
+        self._region_to_node_index.clear()
+        self._region_to_occurrences.clear()
+        self._occurrence_to_node_index.clear()
+        self._region_to_page_number.clear()
+
+        for idx, node in enumerate(document_dto.nodes):
+            for r in node.regions:
+                if r.region_id:
+                    if r.region_id not in self._region_to_node_index:
+                        self._region_to_node_index[r.region_id] = idx
+                    if r.page_number and r.region_id not in self._region_to_page_number:
+                        self._region_to_page_number[r.region_id] = r.page_number
+
+        for rid, occ_refs in document_dto.region_to_occurrences.items():
+            self._region_to_occurrences[rid] = [
+                {"nodeIndex": o.node_index, "occurrenceId": o.occurrence_id}
+                for o in occ_refs
+            ]
+            for o in occ_refs:
+                self._occurrence_to_node_index[o.occurrence_id] = o.node_index
 
     def _resolve_qml_uri(self, ref: VisualRegionRefDTO) -> str:
         """Converts filesystem image_path to a QML-safe file:// URI."""

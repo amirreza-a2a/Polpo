@@ -47,6 +47,8 @@ class MarkdownViewerController(QObject):
 
     _internalDocLoaded = Signal(int, object)   # (req_id, MarkdownDocumentDTO)
     _internalDocError = Signal(int, str)       # (req_id, error_message)
+    _internalReconcileLoaded = Signal(int, object)  # (req_id, MarkdownDocumentDTO)
+    _internalReconcileError = Signal(int, str)       # (req_id, error_message)
 
     def __init__(
         self,
@@ -67,13 +69,17 @@ class MarkdownViewerController(QObject):
         self._highlighted_region_id: str = ""
         self._highlighted_occurrence_id: str = ""
         self._page_filter: int = 0
+        self._reconcile_in_flight: bool = False
 
         self._request_id: int = 0
         self._is_shutdown: bool = False
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="MarkdownViewerWorker")
+        self._last_reconcile_future = None
 
         self._internalDocLoaded.connect(self._on_internal_doc_loaded)
         self._internalDocError.connect(self._on_internal_doc_error)
+        self._internalReconcileLoaded.connect(self._on_internal_reconcile_loaded)
+        self._internalReconcileError.connect(self._on_internal_reconcile_error)
 
     # -----------------------------------------------------------------------
     # Properties
@@ -108,6 +114,10 @@ class MarkdownViewerController(QObject):
         return self._active_version
 
     activeVersion = Property(int, active_version, notify=activeVersionChanged)
+
+    @property
+    def reconcile_in_flight(self) -> bool:
+        return self._reconcile_in_flight
 
     def scale_factor(self) -> float:
         return self._scale_factor
@@ -178,6 +188,7 @@ class MarkdownViewerController(QObject):
     def loadDocument(self, job_id: int) -> None:
         """Asynchronously loads and parses the active Markdown document for job_id."""
         self._request_id += 1
+        self._reconcile_in_flight = False
         req_id = self._request_id
 
         self._is_loading = True
@@ -197,6 +208,7 @@ class MarkdownViewerController(QObject):
     def load_document_sync(self, job_id: int) -> None:
         """Synchronous loader for testing and deterministic inspection."""
         self._request_id += 1
+        self._reconcile_in_flight = False
         req_id = self._request_id
         try:
             dto = self.viewer_service.load_document(job_id)
@@ -214,6 +226,7 @@ class MarkdownViewerController(QObject):
     def clear(self) -> None:
         """Resets the controller and clears the document model."""
         self._request_id += 1
+        self._reconcile_in_flight = False
         self._model.set_document(None)
         self._has_document = False
         self._active_job_id = 0
@@ -246,6 +259,7 @@ class MarkdownViewerController(QObject):
         if self._is_shutdown:
             return
         self._is_shutdown = True
+        self._reconcile_in_flight = False
         self._request_id += 1
         try:
             self._executor.shutdown(wait=False, cancel_futures=True)
@@ -279,14 +293,27 @@ class MarkdownViewerController(QObject):
     ) -> None:
         """
         Updates the active artifact URI for all occurrences of region_id in-place.
-        Updates active document version badge if higher and notifies model.
+        Notifies presentation model.
+        If region_id is not yet present in the presentation model, triggers asynchronous
+        structural synchronization to reconcile with the canonical document artifact.
+        If region_id is already present but a structural reconciliation is currently in-flight,
+        updates the presentation model in-place and re-synchronizes document structure to prevent
+        the in-flight reconciliation from overwriting the newer artifact.
         """
         if not region_id:
             return
-        if new_version > self._active_version:
-            self._active_version = new_version
-            self.activeVersionChanged.emit()
-        self._model.update_region_artifact(region_id, new_artifact_uri, new_version)
+
+        # Invariant: update_region_artifact() is for existing presentation occurrences;
+        # structural synchronization is required when the canonical document contains
+        # a committed region occurrence that is absent from the current presentation model.
+        existing_occs = self._model.occurrencesOfRegion(region_id)
+        if existing_occs:
+            self._model.update_region_artifact(region_id, new_artifact_uri, new_version)
+            if self._reconcile_in_flight and self._has_document and self._active_job_id > 0:
+                self._sync_document_structure(self._active_job_id)
+        else:
+            if self._has_document and self._active_job_id > 0:
+                self._sync_document_structure(self._active_job_id)
 
     @Slot(str)
     @Slot(str, str)
@@ -342,9 +369,12 @@ class MarkdownViewerController(QObject):
 
     @Slot(int, object)
     def _on_internal_doc_loaded(self, req_id: int, document_dto) -> None:
+        if self._is_shutdown:
+            return
         if req_id != self._request_id:
             return  # Stale generation, drop result
 
+        self._reconcile_in_flight = False
         self._model.set_document(document_dto)
         self._active_job_id = document_dto.job_id
         self._active_version = document_dto.version
@@ -360,9 +390,12 @@ class MarkdownViewerController(QObject):
 
     @Slot(int, str)
     def _on_internal_doc_error(self, req_id: int, error_message: str) -> None:
+        if self._is_shutdown:
+            return
         if req_id != self._request_id:
             return
 
+        self._reconcile_in_flight = False
         self._model.set_document(None)
         self._has_document = False
         self._is_loading = False
@@ -370,4 +403,91 @@ class MarkdownViewerController(QObject):
 
         self.documentChanged.emit()
         self.loadingChanged.emit()
+        self.errorChanged.emit()
+
+    def _sync_document_structure(self, job_id: int) -> None:
+        """
+        Asynchronously loads the canonical document artifact and reconciles presentation
+        model structure off the Qt GUI thread.
+        """
+        if job_id <= 0 or not self._has_document or self._active_job_id != job_id:
+            return
+
+        self._request_id += 1
+        req_id = self._request_id
+        self._reconcile_in_flight = True
+
+        def _task():
+            try:
+                dto = self.viewer_service.load_document(job_id)
+                self._internalReconcileLoaded.emit(req_id, dto)
+            except Exception as e:
+                self._internalReconcileError.emit(req_id, str(e))
+
+        self._last_reconcile_future = self._executor.submit(_task)
+
+    def sync_document_structure_sync(self, job_id: int) -> None:
+        """
+        Synchronous structural synchronizer for deterministic inspection and tests.
+        """
+        if job_id <= 0 or not self._has_document or self._active_job_id != job_id:
+            return
+
+        self._request_id += 1
+        req_id = self._request_id
+        self._reconcile_in_flight = True
+        try:
+            dto = self.viewer_service.load_document(job_id)
+            self._on_internal_reconcile_loaded(req_id, dto)
+        except Exception as e:
+            self._on_internal_reconcile_error(req_id, str(e))
+
+    def wait_for_reconciliation(self, timeout: float = 3.0) -> None:
+        """Waits for any in-flight background reconciliation task to complete."""
+        if hasattr(self, "_last_reconcile_future") and self._last_reconcile_future is not None:
+            try:
+                self._last_reconcile_future.result(timeout=timeout)
+            except Exception:
+                pass
+
+    @Slot(int, object)
+    def _on_internal_reconcile_loaded(self, req_id: int, document_dto) -> None:
+        """
+        GUI-thread handler applying canonical document reconciliation.
+        Guarded against stale request IDs, closed documents, job mismatches,
+        and regressive document versions.
+        """
+        if self._is_shutdown:
+            return
+        if req_id != self._request_id:
+            return  # Stale generation, drop result
+
+        self._reconcile_in_flight = False
+
+        if not self._has_document or self._active_job_id <= 0:
+            return
+        if document_dto is None or document_dto.job_id != self._active_job_id:
+            return
+
+        if document_dto.version < self._active_version:
+            return
+
+        if document_dto.version > self._active_version:
+            self._active_version = document_dto.version
+            self.activeVersionChanged.emit()
+
+        self._model.reconcile_document(document_dto)
+
+    @Slot(int, str)
+    def _on_internal_reconcile_error(self, req_id: int, error_message: str) -> None:
+        """
+        GUI-thread handler recording reconciliation failure without resetting existing model.
+        """
+        if self._is_shutdown:
+            return
+        if req_id != self._request_id:
+            return
+
+        self._reconcile_in_flight = False
+        self._error_message = f"Failed to reconcile markdown document: {error_message}"
         self.errorChanged.emit()

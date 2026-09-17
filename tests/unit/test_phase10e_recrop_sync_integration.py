@@ -6,6 +6,7 @@
 import io
 import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -23,6 +24,7 @@ from core.entities.bounding_box import BoundingBox, CropPolicy
 from core.entities.job import Job, JobStatus
 from core.entities.prompt import Prompt, PromptType
 from core.entities.visual_region import RegionOrigin, ReviewStatus, SyncStatus, VisualRegion
+from core.exceptions.domain_exceptions import DomainError
 from infrastructure.document.pymupdf_processor import PyMuPDFDocumentProcessor
 from infrastructure.markdown.markdown_it_parser import MarkdownItParser
 from infrastructure.persistence.sqlite.connection import SQLiteDatabaseManager
@@ -48,6 +50,10 @@ class TestPhase10ERecropSyncIntegration(unittest.TestCase):
     End-to-end integration tests verifying that visual region review mutations
     trigger ApplyReviewService and update Markdown review workspace images in-place.
     """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QGuiApplication.instance() or QGuiApplication(["-platform", "offscreen"])
 
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -165,7 +171,12 @@ class TestPhase10ERecropSyncIntegration(unittest.TestCase):
         )
 
     def tearDown(self):
-        self.temp_dir.cleanup()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+        try:
+            self.temp_dir.cleanup()
+        except Exception:
+            pass
 
     def test_resize_mutation_triggers_apply_and_updates_markdown_in_place(self):
         """
@@ -231,8 +242,8 @@ class TestPhase10ERecropSyncIntegration(unittest.TestCase):
         assert f"crop_1_{self.region_id}_v2.jpg" in updated_img_uri
         assert updated_img_uri != initial_img_uri
 
-        # Verify MarkdownViewerController active version updated
-        assert md_ctrl.activeVersion == 2
+        # Verify MarkdownViewerController active document version watermark is NOT conflated with region crop version
+        assert md_ctrl.activeVersion == 1
 
         # Verify SQLite persistent state
         with self.uow_factory.create() as uow:
@@ -403,7 +414,7 @@ class TestPhase10ERecropSyncIntegration(unittest.TestCase):
         doc_ctrl.updateResize(600.0, 600.0)
         doc_ctrl.commitResize()
         doc_ctrl.apply_region_sync(self.job.id, self.region_id)
-        assert md_ctrl.activeVersion == 2
+        assert md_ctrl.activeVersion == 1
 
         # 2. Reset to AI
         doc_ctrl.selectRegion(self.region_id)
@@ -411,8 +422,8 @@ class TestPhase10ERecropSyncIntegration(unittest.TestCase):
         doc_ctrl.resetSelectedRegionToAi()
         doc_ctrl.apply_region_sync(self.job.id, self.region_id)
 
-        # Version increments to 3
-        assert md_ctrl.activeVersion == 3
+        # Active document watermark remains 1; region crop version is 3
+        assert md_ctrl.activeVersion == 1
         image_nodes = [item for item in md_ctrl.model._items if item.get("primaryRegionId") == self.region_id]
         assert len(image_nodes) == 1
         assert f"crop_1_{self.region_id}_v3.jpg" in image_nodes[0]["imageUri"]
@@ -428,4 +439,435 @@ class TestPhase10ERecropSyncIntegration(unittest.TestCase):
         assert image_nodes_after_del[0]["imageUri"] == ""
 
         doc_ctrl.shutdown()
+        md_ctrl.shutdown()
+
+    def test_manual_region_creation_inserts_into_live_markdown_model(self):
+        """
+        Test 3: End-to-end integration for NEW manual visual region:
+        1. User creates manual region via rubber-band gesture in PDF viewer.
+        2. ApplyReviewService commits crop v1 and appends token to Markdown artifact.
+        3. regionArtifactCommitted signal triggers structural synchronization.
+        4. MarkdownViewerController asynchronously reconciles model using canonical DTO.
+        5. Assertions:
+           - New region exists in SQLite (USER_MANUAL, ACCEPTED, SYNCED).
+           - New crop exists on disk.
+           - Canonical Markdown file on disk contains the new image tag.
+           - Live MarkdownDocumentModel contains the new region without modelReset.
+           - Model rowCount incremented by 1.
+           - occurrencesOfRegion returns the canonical occurrence.
+           - imageUri displays the committed crop.
+        """
+        doc_ctrl = DocumentViewerController(
+            viewer_service=self.doc_service,
+            apply_review_service=self.apply_service,
+        )
+        md_ctrl = MarkdownViewerController(viewer_service=self.md_service)
+        wire_review_workspace_sync(doc_ctrl, md_ctrl)
+
+        doc_ctrl.loadPageSync(self.job.id, 1)
+        md_ctrl.load_document_sync(self.job.id)
+
+        initial_row_count = md_ctrl.model.rowCount()
+
+        # Track signals on model to prove modelReset is NEVER emitted
+        resets = []
+        insertions = []
+        md_ctrl.model.modelAboutToBeReset.connect(lambda: resets.append("reset"))
+        md_ctrl.model.rowsInserted.connect(lambda p, f, l: insertions.append((f, l)))
+
+        # 1. User draws manual box on PDF page 1
+        doc_ctrl.startCreateManual(100.0, 100.0)
+        doc_ctrl.updateCreateManual(300.0, 300.0)
+        doc_ctrl.commitCreateManual()
+
+        new_rid = doc_ctrl.selectedRegionId
+        assert new_rid != "", "Expected selectedRegionId to be set after commitCreateManual"
+        assert new_rid != self.region_id
+
+        # 2. Wait for automatic asynchronous apply to complete and process Qt events
+        doc_ctrl.wait_for_apply()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+
+        # 3. Wait for background reconciliation task in MarkdownViewerController and process Qt events
+        md_ctrl.wait_for_reconciliation()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+
+        # 4. Invariant assertions
+        assert len(resets) == 0, "Structural reconciliation must NOT emit modelReset"
+        assert len(insertions) == 1, "Expected exactly 1 rowsInserted signal"
+        assert md_ctrl.model.rowCount() == initial_row_count + 1
+
+        # 5. Verify SQLite state
+        with self.uow_factory.create() as uow:
+            created_region = uow.visual_regions.get_by_region_id(new_rid)
+            assert created_region is not None
+            assert created_region.origin == RegionOrigin.USER_MANUAL
+            assert created_region.review_status == ReviewStatus.ACCEPTED
+            assert created_region.sync_status == SyncStatus.SYNCED
+            assert created_region.active_artifact_version == 1
+            assert f"crop_1_{new_rid}_v1.jpg" in created_region.active_artifact_uri
+
+            job_rec = uow.jobs.get_by_id(self.job.id)
+            output_bytes = self.storage.retrieve(
+                ArtifactHandle(
+                    storage_backend=StorageBackendType.LOCAL_FS,
+                    uri=job_rec.output_path,
+                    artifact_type=ArtifactType.OUTPUT_MARKDOWN,
+                    job_id=self.job.id,
+                    filename=os.path.basename(job_rec.output_path),
+                )
+            )
+            canonical_md = output_bytes.decode("utf-8")
+            assert f"crop_1_{new_rid}_v1.jpg" in canonical_md
+            assert f"region_id={new_rid}" in canonical_md
+
+        # 6. Verify live presentation model contains the new occurrence
+        occs = md_ctrl.model.occurrencesOfRegion(new_rid)
+        assert len(occs) == 1
+        assert occs[0]["occurrenceId"] == f"img_{new_rid}_img_0"
+
+        new_node_idx = md_ctrl.model.indexOfRegion(new_rid)
+        assert new_node_idx >= 0
+        item = md_ctrl.model.getNode(new_node_idx)
+        assert item is not None
+        assert item["primaryRegionId"] == new_rid
+        assert f"crop_1_{new_rid}_v1.jpg" in item["imageUri"]
+
+        doc_ctrl.shutdown()
+        md_ctrl.shutdown()
+
+    def test_multiple_new_regions_created_consecutively(self):
+        """
+        Test 4: Creating multiple new regions consecutively:
+        Both regions appear in the model at their canonical positions with correct mappings.
+        """
+        doc_ctrl = DocumentViewerController(
+            viewer_service=self.doc_service,
+            apply_review_service=self.apply_service,
+        )
+        md_ctrl = MarkdownViewerController(viewer_service=self.md_service)
+        wire_review_workspace_sync(doc_ctrl, md_ctrl)
+
+        doc_ctrl.loadPageSync(self.job.id, 1)
+        md_ctrl.load_document_sync(self.job.id)
+
+        initial_count = md_ctrl.model.rowCount()
+
+        # Region A
+        doc_ctrl.startCreateManual(50.0, 50.0)
+        doc_ctrl.updateCreateManual(150.0, 150.0)
+        doc_ctrl.commitCreateManual()
+        rid_a = doc_ctrl.selectedRegionId
+        doc_ctrl.wait_for_apply()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+        md_ctrl.wait_for_reconciliation()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+
+        assert md_ctrl.model.rowCount() == initial_count + 1
+        assert len(md_ctrl.model.occurrencesOfRegion(rid_a)) == 1
+
+        # Region B
+        doc_ctrl.startCreateManual(200.0, 200.0)
+        doc_ctrl.updateCreateManual(400.0, 400.0)
+        doc_ctrl.commitCreateManual()
+        rid_b = doc_ctrl.selectedRegionId
+        doc_ctrl.wait_for_apply()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+        md_ctrl.wait_for_reconciliation()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+
+        assert md_ctrl.model.rowCount() == initial_count + 2
+        assert len(md_ctrl.model.occurrencesOfRegion(rid_b)) == 1
+
+        # Both remain mapped and distinct
+        assert md_ctrl.model.indexOfRegion(rid_a) >= 0
+        assert md_ctrl.model.indexOfRegion(rid_b) >= 0
+        assert md_ctrl.model.indexOfRegion(rid_a) != md_ctrl.model.indexOfRegion(rid_b)
+
+        doc_ctrl.shutdown()
+        md_ctrl.shutdown()
+
+    def test_subsequent_edit_of_new_region_uses_inplace_update(self):
+        """
+        After a new manual region is reconciled into the model, a subsequent resize
+        must use the existing targeted update_region_artifact() path without inserting rows.
+        """
+        doc_ctrl = DocumentViewerController(
+            viewer_service=self.doc_service,
+            apply_review_service=self.apply_service,
+        )
+        md_ctrl = MarkdownViewerController(viewer_service=self.md_service)
+        wire_review_workspace_sync(doc_ctrl, md_ctrl)
+
+        doc_ctrl.loadPageSync(self.job.id, 1)
+        md_ctrl.load_document_sync(self.job.id)
+
+        # 1. Create new manual region
+        doc_ctrl.startCreateManual(100.0, 100.0)
+        doc_ctrl.updateCreateManual(200.0, 200.0)
+        doc_ctrl.commitCreateManual()
+        rid = doc_ctrl.selectedRegionId
+        doc_ctrl.wait_for_apply()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+        md_ctrl.wait_for_reconciliation()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+
+        count_after_create = md_ctrl.model.rowCount()
+
+        # Track model insertions during subsequent resize
+        insertions = []
+        md_ctrl.model.rowsInserted.connect(lambda p, f, l: insertions.append((f, l)))
+
+        # 2. Resize this new region
+        doc_ctrl.selectRegion(rid)
+        doc_ctrl.startResize(rid, "se", 200.0, 200.0)
+        doc_ctrl.updateResize(250.0, 250.0)
+        doc_ctrl.commitResize()
+        doc_ctrl.wait_for_apply()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+
+        # In-place update happens synchronously via dataChanged
+        for _ in range(5):
+            QGuiApplication.processEvents()
+
+        # Assert no new rows were inserted
+        assert len(insertions) == 0, "Subsequent mutation on reconciled region must NOT insert new rows"
+        assert md_ctrl.model.rowCount() == count_after_create
+
+        # Assert crop version updated to v2 in-place
+        node_idx = md_ctrl.model.indexOfRegion(rid)
+        item = md_ctrl.model.getNode(node_idx)
+        assert item is not None
+        assert f"crop_1_{rid}_v2.jpg" in item["imageUri"]
+
+        doc_ctrl.shutdown()
+        md_ctrl.shutdown()
+
+    def test_stale_structural_reconciliation_result_ignored(self):
+        """
+        Test 5: Stale reconciliation request guard:
+        If a newer request arrives or active document changes, older result is discarded.
+        """
+        md_ctrl = MarkdownViewerController(viewer_service=self.md_service)
+        md_ctrl.load_document_sync(self.job.id)
+
+        initial_count = md_ctrl.model.rowCount()
+
+        # Request A with req_id 100
+        req_id_a = md_ctrl._request_id
+        # Invalidate by advancing request_id
+        md_ctrl._request_id += 1
+
+        # Simulate late arrival of request A result
+        fake_dto = MagicMock()
+        fake_dto.job_id = self.job.id
+        fake_dto.version = 99
+        fake_dto.nodes = ()
+        fake_dto.region_to_occurrences = {}
+
+        md_ctrl._on_internal_reconcile_loaded(req_id_a, fake_dto)
+
+        # Model was NOT modified by stale result
+        assert md_ctrl.model.rowCount() == initial_count
+        assert md_ctrl.activeVersion == 1
+
+        md_ctrl.shutdown()
+
+    def test_structural_reconciliation_failure_path_preserves_model(self):
+        """
+        Test 6: Reconciliation failure handling:
+        If canonical document loading fails, existing model remains intact,
+        no phantom row is inserted, and error message is populated.
+        """
+        failing_service = MagicMock(spec=MarkdownViewerService)
+        failing_service.load_document.side_effect = DomainError("Disk read error during parse")
+
+        md_ctrl = MarkdownViewerController(viewer_service=self.md_service)
+        md_ctrl.load_document_sync(self.job.id)
+        initial_count = md_ctrl.model.rowCount()
+
+        # Switch to failing service for reconciliation
+        md_ctrl.viewer_service = failing_service
+
+        # Trigger reconciliation
+        md_ctrl.sync_document_structure_sync(self.job.id)
+
+        # Invariant: existing model is preserved
+        assert md_ctrl.model.rowCount() == initial_count
+        assert md_ctrl.hasDocument is True
+        assert "Disk read error during parse" in md_ctrl.errorMessage
+
+        md_ctrl.shutdown()
+
+    def test_reconciliation_does_not_overwrite_newer_inplace_artifact_mutation(self):
+        """
+        Concurrency Race Case B:
+        When a structural reconciliation R1 is in-flight (triggered by a new region),
+        and an existing region undergoes an in-place artifact update before R1 completes:
+        1. Existing region is immediately updated in the presentation model.
+        2. In-flight R1 is invalidated by advancing request_id and re-triggering sync R2.
+        3. When R1 completes with stale state, its payload is dropped due to generation mismatch.
+        4. When R2 completes with the latest state, the newer artifact is preserved.
+        """
+        doc_ctrl = DocumentViewerController(
+            viewer_service=self.doc_service,
+            apply_review_service=self.apply_service,
+        )
+        md_ctrl = MarkdownViewerController(viewer_service=self.md_service)
+        wire_review_workspace_sync(doc_ctrl, md_ctrl)
+
+        doc_ctrl.loadPageSync(self.job.id, 1)
+        md_ctrl.load_document_sync(self.job.id)
+
+        # Hook md_ctrl.viewer_service.load_document to pause R1 after it reads stale markdown
+        real_load_document = md_ctrl.viewer_service.load_document
+        r1_called = threading.Event()
+        r1_resume = threading.Event()
+        load_count = 0
+
+        def intercepted_load(job_id):
+            nonlocal load_count
+            load_count += 1
+            if load_count == 1:
+                # Read initial document state (where region B is still v1)
+                stale_dto = real_load_document(job_id)
+                r1_called.set()
+                r1_resume.wait(timeout=5.0)
+                return stale_dto
+            return real_load_document(job_id)
+
+        md_ctrl.viewer_service.load_document = intercepted_load
+
+        # Step 1: Create new manual region A to trigger structural reconciliation R1
+        doc_ctrl.startCreateManual(100.0, 100.0)
+        doc_ctrl.updateCreateManual(200.0, 200.0)
+        doc_ctrl.commitCreateManual()
+        rid_a = doc_ctrl.selectedRegionId
+        doc_ctrl.wait_for_apply()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+
+        # Wait until R1 starts and is paused in the background holding stale_dto
+        assert r1_called.wait(timeout=3.0), "R1 failed to start"
+        assert md_ctrl.reconcile_in_flight is True
+        req_id_r1 = md_ctrl._request_id
+
+        # Verify region B's initial state in md_ctrl
+        node_idx_b = md_ctrl.model.indexOfRegion(self.region_id)
+        assert node_idx_b >= 0
+        assert f"crop_1_{self.region_id}_v1.jpg" in md_ctrl.model.getNode(node_idx_b)["imageUri"]
+
+        # Step 2: While R1 is in-flight, mutate existing region B
+        doc_ctrl.selectRegion(self.region_id)
+        doc_ctrl.startResize(self.region_id, "se", 500.0, 500.0)
+        doc_ctrl.updateResize(600.0, 600.0)
+        doc_ctrl.commitResize()
+        doc_ctrl.wait_for_apply()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+
+        # In-place update should have immediately updated region B in presentation model
+        updated_node_b = md_ctrl.model.getNode(node_idx_b)
+        assert f"crop_1_{self.region_id}_v2.jpg" in updated_node_b["imageUri"]
+
+        # Controller detected in-flight reconciliation and re-synced (bumping request_id)
+        assert md_ctrl._request_id > req_id_r1
+        assert md_ctrl.reconcile_in_flight is True
+
+        # Step 3: Resume R1. Its stale payload (where B was still v1) must be dropped!
+        r1_resume.set()
+
+        # Wait for all background tasks to complete
+        md_ctrl.wait_for_reconciliation(timeout=3.0)
+        for _ in range(10):
+            QGuiApplication.processEvents()
+
+        # Step 4: Verify region B was NOT overwritten with stale crop v1
+        final_node_b = md_ctrl.model.getNode(node_idx_b)
+        assert f"crop_1_{self.region_id}_v2.jpg" in final_node_b["imageUri"]
+        assert f"crop_1_{self.region_id}_v1.jpg" not in final_node_b["imageUri"]
+
+        # And new region A was successfully reconciled into the model
+        assert md_ctrl.model.indexOfRegion(rid_a) >= 0
+        assert md_ctrl.reconcile_in_flight is False
+
+        doc_ctrl.shutdown()
+        md_ctrl.shutdown()
+
+    def test_region_artifact_version_does_not_conflate_with_document_version(self):
+        """
+        In-place region artifact updates must not conflate the region's crop version
+        with the document watermark version.
+        """
+        md_ctrl = MarkdownViewerController(viewer_service=self.md_service)
+        md_ctrl.load_document_sync(self.job.id)
+
+        assert md_ctrl.activeVersion == 1
+
+        # Region crop version advances to 5 in-place
+        md_ctrl.updateRegionArtifact(self.region_id, "/path/to/crop_v5.jpg", new_version=5)
+
+        # Verify model node has updated imageUri
+        node_idx = md_ctrl.model.indexOfRegion(self.region_id)
+        assert node_idx >= 0
+        assert "crop_v5.jpg" in md_ctrl.model.getNode(node_idx)["imageUri"]
+
+        # Invariant: active document version watermark is strictly decoupled from region crop version
+        assert md_ctrl.activeVersion == 1
+
+        # Only canonical document loading / reconciliation advances activeVersion
+        mock_doc = MagicMock()
+        mock_doc.job_id = self.job.id
+        mock_doc.version = 2
+        mock_doc.nodes = ()
+        mock_doc.region_to_occurrences = {}
+
+        md_ctrl._on_internal_reconcile_loaded(md_ctrl._request_id, mock_doc)
+        assert md_ctrl.activeVersion == 2
+
+        md_ctrl.shutdown()
+
+    def test_stale_document_version_is_rejected_even_if_generation_matches(self):
+        """
+        If a reconciliation payload arrives with document version strictly less than
+        the current activeVersion watermark, it must be rejected even if req_id matches.
+        """
+        md_ctrl = MarkdownViewerController(viewer_service=self.md_service)
+        md_ctrl.load_document_sync(self.job.id)
+
+        # Advance document version to 4
+        doc_v4 = MagicMock()
+        doc_v4.job_id = self.job.id
+        doc_v4.version = 4
+        doc_v4.nodes = ()
+        doc_v4.region_to_occurrences = {}
+        md_ctrl._on_internal_reconcile_loaded(md_ctrl._request_id, doc_v4)
+        assert md_ctrl.activeVersion == 4
+
+        initial_count = md_ctrl.model.rowCount()
+
+        # Simulate arrival of payload with older document version 3 and matching req_id
+        stale_v3 = MagicMock()
+        stale_v3.job_id = self.job.id
+        stale_v3.version = 3
+        stale_v3.nodes = (MagicMock(),)  # Phantom node that must NOT be applied
+        stale_v3.region_to_occurrences = {}
+
+        md_ctrl._reconcile_in_flight = True
+        md_ctrl._on_internal_reconcile_loaded(md_ctrl._request_id, stale_v3)
+
+        # Verify rejection: activeVersion unchanged, model not updated, in-flight reset
+        assert md_ctrl.activeVersion == 4
+        assert md_ctrl.model.rowCount() == initial_count
+        assert md_ctrl.reconcile_in_flight is False
+
         md_ctrl.shutdown()

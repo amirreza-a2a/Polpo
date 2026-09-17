@@ -109,6 +109,7 @@ class DocumentViewerController(QObject):
 
         self._request_id: int = 0
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="PdfViewerWorker")
+        self._last_apply_future = None
 
         # Connect internal worker signals
         self._internalPageLoaded.connect(self._on_internal_page_loaded)
@@ -428,7 +429,15 @@ class DocumentViewerController(QObject):
             except Exception as e:
                 self._internalApplyError.emit(resolved_job_id, region_id, str(e))
 
-        self._executor.submit(background_apply)
+        self._last_apply_future = self._executor.submit(background_apply)
+
+    def wait_for_apply(self, timeout: float = 3.0) -> None:
+        """Waits for any in-flight background review apply task to complete."""
+        if hasattr(self, "_last_apply_future") and self._last_apply_future is not None:
+            try:
+                self._last_apply_future.result(timeout=timeout)
+            except Exception:
+                pass
 
     def apply_region_sync(
         self, job_id: int, region_id: str
