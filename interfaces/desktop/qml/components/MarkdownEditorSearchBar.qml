@@ -182,7 +182,7 @@ Rectangle {
                 onClicked: {
                     if (controller) {
                         if (controller.isReplaceOpen) {
-                            controller.isReplaceOpen = false;
+                            controller.closeReplace();
                         } else {
                             controller.openReplace();
                         }

@@ -355,6 +355,8 @@ class MarkdownEditorController(QObject):
     def discard(self) -> None:
         """Discards uncommitted buffer modifications and reverts to last saved text."""
         self._source_text = self._saved_source_text
+        if self._headless_doc is not None and self._headless_doc.toPlainText() != self._source_text:
+            self._headless_doc.setPlainText(self._source_text)
         self._is_dirty = False
         self._has_conflict = False
         self._conflict_message = ""
@@ -371,6 +373,14 @@ class MarkdownEditorController(QObject):
         self.cursorMetricsChanged.emit()
         self.documentMetricsChanged.emit()
         self.discarded.emit()
+
+        if self._search_query:
+            self._recompute_matches()
+        else:
+            self._matches = []
+            self._search_total_matches = 0
+            self._search_match_index = 0
+            self.searchStateChanged.emit()
 
     @Slot(int)
     def notifyCanonicalDocumentAdvance(self, new_doc_version: int) -> None:
@@ -568,6 +578,12 @@ class MarkdownEditorController(QObject):
         self.searchVisibilityChanged.emit()
 
     @Slot()
+    def closeReplace(self) -> None:
+        """Closes the replace row in search drawer."""
+        self._is_replace_open = False
+        self.searchVisibilityChanged.emit()
+
+    @Slot()
     @Slot(int)
     def findNext(self, current_cursor_pos: int = -1) -> None:
         """
@@ -640,11 +656,25 @@ class MarkdownEditorController(QObject):
         cursor.setPosition(active_match[1], QTextCursor.MoveMode.KeepAnchor)
         cursor.insertText(self._replace_query)
 
+        repl_len = len(self._replace_query.encode("utf-16-le")) // 2
+        next_pos = active_match[0] + repl_len
+
         self.set_source_text(doc.toPlainText())
         self._recompute_matches()
+
         if self._search_total_matches > 0:
-            advance_pos = active_match[0] + len(self._replace_query.encode("utf-16-le")) // 2
-            self.findNext(advance_pos)
+            target_idx = 0
+            for idx, (s, e) in enumerate(self._matches):
+                if s >= next_pos:
+                    target_idx = idx
+                    break
+            self._search_match_index = target_idx + 1
+            self.searchStateChanged.emit()
+            next_match = self._matches[target_idx]
+            self.matchSelected.emit(next_match[0], next_match[1])
+        else:
+            self._search_match_index = 0
+            self.searchStateChanged.emit()
         return True
 
     @Slot(result=int)
@@ -742,6 +772,14 @@ class MarkdownEditorController(QObject):
         self.conflictChanged.emit()
         self.cursorMetricsChanged.emit()
         self.documentMetricsChanged.emit()
+
+        if self._search_query:
+            self._recompute_matches()
+        else:
+            self._matches = []
+            self._search_total_matches = 0
+            self._search_match_index = 0
+            self.searchStateChanged.emit()
 
     def _on_internal_load_error(self, req_id: int, error_msg: str) -> None:
         if req_id != self._request_id or self._is_shutdown:
