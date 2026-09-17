@@ -221,7 +221,7 @@ Item {
                     }
 
                     Shortcut {
-                        sequence: StandardKey.Save
+                        sequences: [StandardKey.Save]
                         enabled: controller && controller.isDirty && !controller.isSaving && !controller.hasConflict
                         onActivated: {
                             if (controller) {

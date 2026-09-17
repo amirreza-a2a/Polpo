@@ -58,6 +58,23 @@ def test_controller_load_source_sync(qapp, mock_editor_service):
         ctrl.shutdown()
 
 
+def test_controller_setsourcetext_metaobject_slot(qapp, mock_editor_service):
+    """Verifies that setSourceText is registered as a QMetaObject slot and invokable from QML."""
+    ctrl = MarkdownEditorController(editor_service=mock_editor_service)
+    try:
+        meta = ctrl.metaObject()
+        methods = [meta.method(i).name().data().decode("utf-8") for i in range(meta.methodCount())]
+        assert "setSourceText" in methods
+        assert "set_source_text" in methods
+
+        # Verify invokable via slot
+        ctrl.setSourceText("# New Meta Text")
+        assert ctrl.sourceText == "# New Meta Text"
+        assert ctrl.isDirty is True
+    finally:
+        ctrl.shutdown()
+
+
 def test_controller_dirty_tracking(qapp, mock_editor_service):
     ctrl = MarkdownEditorController(editor_service=mock_editor_service)
     try:

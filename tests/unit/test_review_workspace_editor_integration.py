@@ -142,3 +142,120 @@ def test_qml_review_workspace_instantiation(qapp, workspace_env):
     assert md_pane.property("currentTab") == 1
     preview_btn.clicked.emit()
     assert md_pane.property("currentTab") == 0
+
+
+def test_qml_editor_pane_save_activation_and_shortcut(qapp, workspace_env):
+    """
+    Verifies:
+    1. MarkdownEditorController.setSourceText() is invokable from QML without TypeError.
+    2. Editing TextArea updates controller.isDirty to True.
+    3. Save and Discard buttons become enabled.
+    4. Discard button clears dirty state and disables Save button.
+    5. Editing again and clicking Save triggers commit and disables Save upon completion.
+    6. No QML Shortcut warning or TypeError occurs during loading/editing.
+    """
+    import time
+    md_editor_ctrl = workspace_env["md_editor_ctrl"]
+    uow_factory = workspace_env["uow_factory"]
+    storage = workspace_env["storage"]
+    prompt_id = workspace_env["prompt_id"]
+
+    out_h = storage.store(1, ArtifactType.OUTPUT_MARKDOWN, "output_1_v1.md", b"# Initial Content\n")
+    with uow_factory.create() as uow:
+        job = uow.jobs.save(
+            Job(
+                id=None,
+                file_name="doc.pdf",
+                file_path="/tmp/doc.pdf",
+                total_pages=1,
+                prompt_id=prompt_id,
+                status=JobStatus.DONE,
+                output_path=out_h.uri,
+                output_artifact_version_watermark=1,
+            )
+        )
+        job_id = job.id
+        uow.commit()
+
+    md_editor_ctrl.load_source_sync(job_id)
+
+    engine = QQmlApplicationEngine()
+    ctx = engine.rootContext()
+    ctx.setContextProperty("markdownEditorController", md_editor_ctrl)
+
+    qml_file = Path(__file__).parent.parent.parent / "interfaces" / "desktop" / "qml" / "components" / "MarkdownEditorPane.qml"
+    engine.load(str(qml_file))
+
+    root_objs = engine.rootObjects()
+    assert len(root_objs) > 0
+    editor_root = root_objs[-1]
+
+    text_area = editor_root.findChild(QObject, "markdownSourceTextArea")
+    assert text_area is not None
+
+    save_btn = editor_root.findChild(QObject, "editorSaveButton")
+    assert save_btn is not None
+
+    discard_btn = editor_root.findChild(QObject, "editorDiscardButton")
+    assert discard_btn is not None
+
+    # Initially buffer is clean -> Save and Discard disabled
+    assert md_editor_ctrl.isDirty is False
+    assert save_btn.property("enabled") is False
+    assert discard_btn.property("enabled") is False
+
+    # Simulate typing into TextArea
+    text_area.setProperty("text", "# User Typed Content In QML")
+
+    # Invariant: isDirty must be True, Save & Discard enabled
+    assert md_editor_ctrl.isDirty is True
+    assert md_editor_ctrl.sourceText == "# User Typed Content In QML"
+    assert save_btn.property("enabled") is True
+    assert discard_btn.property("enabled") is True
+
+    # Test Discard action from QML
+    discard_btn.clicked.emit()
+    assert md_editor_ctrl.isDirty is False
+    assert save_btn.property("enabled") is False
+    assert discard_btn.property("enabled") is False
+
+    # Modify again
+    text_area.setProperty("text", "# Second Edit To Save")
+    assert md_editor_ctrl.isDirty is True
+    assert save_btn.property("enabled") is True
+
+    # Save action via button
+    save_btn.clicked.emit()
+    for _ in range(50):
+        QGuiApplication.processEvents()
+        if not md_editor_ctrl.isSaving and not md_editor_ctrl.isDirty:
+            break
+        time.sleep(0.01)
+    assert md_editor_ctrl.isDirty is False
+    assert save_btn.property("enabled") is False
+
+    # Modify again to test Ctrl+S shortcut trigger
+    text_area.setProperty("text", "# Third Edit Triggered By Shortcut")
+    assert md_editor_ctrl.isDirty is True
+    assert save_btn.property("enabled") is True
+
+    shortcuts = [obj for obj in editor_root.findChildren(QObject) if "Shortcut" in obj.metaObject().className()]
+    assert len(shortcuts) > 0
+    sc = shortcuts[0]
+    assert sc.property("enabled") is True
+
+    saving_spy = MagicMock()
+    md_editor_ctrl.savingChanged.connect(saving_spy)
+
+    # Trigger Save shortcut activation
+    sc.activated.emit()
+    saving_spy.assert_called_once()
+
+    for _ in range(50):
+        QGuiApplication.processEvents()
+        if not md_editor_ctrl.isSaving and not md_editor_ctrl.isDirty:
+            break
+        time.sleep(0.01)
+
+    assert md_editor_ctrl.isDirty is False
+    assert save_btn.property("enabled") is False

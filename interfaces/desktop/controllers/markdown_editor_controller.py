@@ -84,7 +84,13 @@ class MarkdownEditorController(QObject):
         return self._source_text
 
     @Slot(str)
+    def setSourceText(self, text: str) -> None:
+        """QML-invokable slot to update editor buffer text."""
+        self.set_source_text(text)
+
+    @Slot(str)
     def set_source_text(self, text: str) -> None:
+        """Updates buffer text and evaluates dirty state against last saved snapshot."""
         if self._source_text != text:
             self._source_text = text
             self.sourceTextChanged.emit()
@@ -93,7 +99,6 @@ class MarkdownEditorController(QObject):
                 self._is_dirty = new_dirty
                 self.dirtyChanged.emit()
 
-    setSourceText = set_source_text
     sourceText = Property(str, source_text, set_source_text, notify=sourceTextChanged)
 
     def is_dirty(self) -> bool:
