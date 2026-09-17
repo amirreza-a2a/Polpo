@@ -19,6 +19,13 @@ Item {
         }
     }
 
+    Connections {
+        target: controller
+        function onMatchSelected(start, end) {
+            sourceTextArea.select(start, end)
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -88,6 +95,20 @@ Item {
                 }
 
                 Item { Layout.fillWidth: true }
+
+                // Find Button
+                Button {
+                    id: findButton
+                    objectName: "editorFindButton"
+                    text: "Find (Ctrl+F)"
+                    implicitHeight: 28
+                    onClicked: {
+                        if (controller) {
+                            controller.openSearch()
+                            searchBar.focusSearchField()
+                        }
+                    }
+                }
 
                 // Discard Button
                 Button {
@@ -194,6 +215,17 @@ Item {
         }
 
         // =====================================================================
+        // Docked Search and Replace Drawer
+        // =====================================================================
+        MarkdownEditorSearchBar {
+            id: searchBar
+            objectName: "markdownEditorSearchBar"
+            Layout.fillWidth: true
+            controller: editorPaneRoot.controller
+            targetTextArea: sourceTextArea
+        }
+
+        // =====================================================================
         // Central Native PlainText TextArea
         // =====================================================================
         Rectangle {
@@ -239,6 +271,37 @@ Item {
                             if (controller) {
                                 controller.save()
                             }
+                        }
+                    }
+
+                    Shortcut {
+                        sequences: [StandardKey.Find]
+                        onActivated: {
+                            if (controller) {
+                                controller.openSearch()
+                                searchBar.focusSearchField()
+                            }
+                        }
+                    }
+
+                    Shortcut {
+                        sequences: [StandardKey.Replace]
+                        onActivated: {
+                            if (controller) {
+                                controller.openReplace()
+                                searchBar.focusReplaceField()
+                            }
+                        }
+                    }
+
+                    Shortcut {
+                        sequence: "Esc"
+                        enabled: controller && controller.isSearchOpen
+                        onActivated: {
+                            if (controller) {
+                                controller.closeSearch()
+                            }
+                            sourceTextArea.forceActiveFocus()
                         }
                     }
                 }

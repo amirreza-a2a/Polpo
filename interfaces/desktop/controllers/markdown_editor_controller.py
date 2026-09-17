@@ -4,7 +4,7 @@
 # ============================================================
 
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from application.services.markdown_editor_service import MarkdownEditorService
 from core.exceptions.domain_exceptions import StaleDocumentVersionError
@@ -13,6 +13,7 @@ from interfaces.desktop.qt_compat import (
     Property,
     Signal,
     Slot,
+    QTextCursor,
     QTextDocument,
 )
 from interfaces.desktop.syntax.markdown_syntax_highlighter import MarkdownSyntaxHighlighter
@@ -40,10 +41,13 @@ class MarkdownEditorController(QObject):
     activeJobChanged = Signal()
     activeVersionChanged = Signal()
     conflictChanged = Signal()
+    searchStateChanged = Signal()
+    searchVisibilityChanged = Signal()
 
     saved = Signal(int)             # (new_version)
     discarded = Signal()
     conflictDetected = Signal(str)  # (conflict_message)
+    matchSelected = Signal(int, int) # (start_utf16, end_utf16)
 
     _internalLoaded = Signal(int, str, int)          # (req_id, text, version)
     _internalLoadError = Signal(int, str)            # (req_id, error_message)
@@ -71,6 +75,17 @@ class MarkdownEditorController(QObject):
 
         self._text_document: Optional[QTextDocument] = None
         self._highlighter: Optional[MarkdownSyntaxHighlighter] = None
+        self._headless_doc: Optional[QTextDocument] = None
+
+        self._search_query: str = ""
+        self._replace_query: str = ""
+        self._search_case_sensitive: bool = False
+        self._search_whole_word: bool = False
+        self._search_match_index: int = 0
+        self._search_total_matches: int = 0
+        self._is_search_open: bool = False
+        self._is_replace_open: bool = False
+        self._matches: List[Tuple[int, int]] = []
 
         self._request_id: int = 0
         self._is_shutdown: bool = False
@@ -98,11 +113,15 @@ class MarkdownEditorController(QObject):
         """Updates buffer text and evaluates dirty state against last saved snapshot."""
         if self._source_text != text:
             self._source_text = text
+            if self._headless_doc is not None and self._headless_doc.toPlainText() != text:
+                self._headless_doc.setPlainText(text)
             self.sourceTextChanged.emit()
             new_dirty = (self._source_text != self._saved_source_text)
             if self._is_dirty != new_dirty:
                 self._is_dirty = new_dirty
                 self.dirtyChanged.emit()
+            if self._search_query:
+                self._recompute_matches()
 
     sourceText = Property(str, source_text, set_source_text, notify=sourceTextChanged)
 
@@ -145,6 +164,46 @@ class MarkdownEditorController(QObject):
         return self._conflict_message
 
     conflictMessage = Property(str, conflict_message, notify=conflictChanged)
+
+    def search_query(self) -> str:
+        return self._search_query
+
+    searchQuery = Property(str, search_query, notify=searchStateChanged)
+
+    def replace_query(self) -> str:
+        return self._replace_query
+
+    replaceQuery = Property(str, replace_query, notify=searchStateChanged)
+
+    def search_case_sensitive(self) -> bool:
+        return self._search_case_sensitive
+
+    searchCaseSensitive = Property(bool, search_case_sensitive, notify=searchStateChanged)
+
+    def search_whole_word(self) -> bool:
+        return self._search_whole_word
+
+    searchWholeWord = Property(bool, search_whole_word, notify=searchStateChanged)
+
+    def search_match_index(self) -> int:
+        return self._search_match_index
+
+    searchMatchIndex = Property(int, search_match_index, notify=searchStateChanged)
+
+    def search_total_matches(self) -> int:
+        return self._search_total_matches
+
+    searchTotalMatches = Property(int, search_total_matches, notify=searchStateChanged)
+
+    def is_search_open(self) -> bool:
+        return self._is_search_open
+
+    isSearchOpen = Property(bool, is_search_open, notify=searchVisibilityChanged)
+
+    def is_replace_open(self) -> bool:
+        return self._is_replace_open
+
+    isReplaceOpen = Property(bool, is_replace_open, notify=searchVisibilityChanged)
 
     # -----------------------------------------------------------------------
     # Operations
@@ -323,6 +382,16 @@ class MarkdownEditorController(QObject):
         self.activeVersionChanged.emit()
         self.conflictChanged.emit()
 
+        self._search_query = ""
+        self._replace_query = ""
+        self._search_match_index = 0
+        self._search_total_matches = 0
+        self._matches = []
+        self._is_search_open = False
+        self._is_replace_open = False
+        self.searchStateChanged.emit()
+        self.searchVisibilityChanged.emit()
+
     @Slot(QObject)
     def attachTextDocument(self, quick_text_doc: Optional[QObject]) -> None:
         """
@@ -339,6 +408,233 @@ class MarkdownEditorController(QObject):
             self._text_document = doc
             self._highlighter = MarkdownSyntaxHighlighter(doc)
 
+    # -----------------------------------------------------------------------
+    # Search and Replace Operations (Qt UTF-16 Coordinate Space)
+    # -----------------------------------------------------------------------
+
+    def _get_document(self) -> QTextDocument:
+        """Returns attached live QTextDocument or a synchronized headless fallback."""
+        if self._text_document is not None:
+            return self._text_document
+        if self._headless_doc is None:
+            self._headless_doc = QTextDocument()
+            self._headless_doc.setPlainText(self._source_text)
+        return self._headless_doc
+
+    def _recompute_matches(self) -> None:
+        """Finds all occurrences of search query using QTextDocument.find() in UTF-16 offsets."""
+        if not self._search_query:
+            self._matches = []
+            self._search_total_matches = 0
+            self._search_match_index = 0
+            self.searchStateChanged.emit()
+            return
+
+        doc = self._get_document()
+        flags = QTextDocument.FindFlag(0)
+        if self._search_case_sensitive:
+            flags |= QTextDocument.FindFlag.FindCaseSensitively
+        if self._search_whole_word:
+            flags |= QTextDocument.FindFlag.FindWholeWords
+
+        matches: List[Tuple[int, int]] = []
+        pos = 0
+        while True:
+            cursor = doc.find(self._search_query, pos, flags)
+            if cursor.isNull():
+                break
+            start = cursor.selectionStart()
+            end = cursor.selectionEnd()
+            matches.append((start, end))
+            pos = end
+
+        self._matches = matches
+        self._search_total_matches = len(matches)
+        if self._search_total_matches == 0:
+            self._search_match_index = 0
+        elif self._search_match_index == 0 or self._search_match_index > self._search_total_matches:
+            self._search_match_index = 1
+
+        self.searchStateChanged.emit()
+
+    @Slot(str)
+    def setSearchQuery(self, query: str) -> None:
+        """Updates search query and recomputes matches."""
+        if self._search_query != query:
+            self._search_query = query
+            self._recompute_matches()
+            if self._search_total_matches > 0 and self._search_match_index > 0:
+                active = self._matches[self._search_match_index - 1]
+                self.matchSelected.emit(active[0], active[1])
+
+    @Slot(str)
+    def setReplaceQuery(self, query: str) -> None:
+        """Updates replacement string."""
+        if self._replace_query != query:
+            self._replace_query = query
+            self.searchStateChanged.emit()
+
+    @Slot(bool)
+    def setSearchCaseSensitive(self, enabled: bool) -> None:
+        """Toggles case sensitivity and re-indexes."""
+        if self._search_case_sensitive != enabled:
+            self._search_case_sensitive = enabled
+            self._recompute_matches()
+            if self._search_total_matches > 0 and self._search_match_index > 0:
+                active = self._matches[self._search_match_index - 1]
+                self.matchSelected.emit(active[0], active[1])
+
+    @Slot(bool)
+    def setSearchWholeWord(self, enabled: bool) -> None:
+        """Toggles whole-word matching and re-indexes."""
+        if self._search_whole_word != enabled:
+            self._search_whole_word = enabled
+            self._recompute_matches()
+            if self._search_total_matches > 0 and self._search_match_index > 0:
+                active = self._matches[self._search_match_index - 1]
+                self.matchSelected.emit(active[0], active[1])
+
+    @Slot()
+    def openSearch(self) -> None:
+        """Opens search drawer."""
+        self._is_search_open = True
+        self.searchVisibilityChanged.emit()
+        if self._search_query:
+            self._recompute_matches()
+            if self._search_total_matches > 0:
+                active = self._matches[self._search_match_index - 1]
+                self.matchSelected.emit(active[0], active[1])
+
+    @Slot()
+    def openReplace(self) -> None:
+        """Opens search drawer with replace row visible."""
+        self._is_search_open = True
+        self._is_replace_open = True
+        self.searchVisibilityChanged.emit()
+        if self._search_query:
+            self._recompute_matches()
+            if self._search_total_matches > 0:
+                active = self._matches[self._search_match_index - 1]
+                self.matchSelected.emit(active[0], active[1])
+
+    @Slot()
+    def closeSearch(self) -> None:
+        """Closes search drawer."""
+        self._is_search_open = False
+        self._is_replace_open = False
+        self.searchVisibilityChanged.emit()
+
+    @Slot()
+    @Slot(int)
+    def findNext(self, current_cursor_pos: int = -1) -> None:
+        """
+        Advances to the next search match using UTF-16 code-unit offsets.
+        If current_cursor_pos >= 0 and no match is currently selected, targets the first match on or after pos.
+        Wraps around from end to beginning. Emits matchSelected(start, end).
+        """
+        if self._search_total_matches == 0:
+            return
+
+        if current_cursor_pos >= 0 and self._search_match_index == 0:
+            target_idx = 0
+            for idx, (s, e) in enumerate(self._matches):
+                if s >= current_cursor_pos:
+                    target_idx = idx
+                    break
+            self._search_match_index = target_idx + 1
+        else:
+            self._search_match_index = (self._search_match_index % self._search_total_matches) + 1
+
+        self.searchStateChanged.emit()
+        active = self._matches[self._search_match_index - 1]
+        self.matchSelected.emit(active[0], active[1])
+
+    @Slot()
+    @Slot(int)
+    def findPrevious(self, current_cursor_pos: int = -1) -> None:
+        """
+        Moves to the previous search match using UTF-16 code-unit offsets.
+        If current_cursor_pos >= 0 and no match is currently selected, targets the last match before pos.
+        Wraps around from beginning to end. Emits matchSelected(start, end).
+        """
+        if self._search_total_matches == 0:
+            return
+
+        if current_cursor_pos >= 0 and self._search_match_index == 0:
+            target_idx = self._search_total_matches - 1
+            for idx in range(self._search_total_matches - 1, -1, -1):
+                if self._matches[idx][1] <= current_cursor_pos:
+                    target_idx = idx
+                    break
+            self._search_match_index = target_idx + 1
+        else:
+            if self._search_match_index > 1:
+                self._search_match_index -= 1
+            else:
+                self._search_match_index = self._search_total_matches
+
+        self.searchStateChanged.emit()
+        active = self._matches[self._search_match_index - 1]
+        self.matchSelected.emit(active[0], active[1])
+
+    @Slot(int, int, result=bool)
+    def replaceCurrent(self, selection_start: int, selection_end: int) -> bool:
+        """
+        Replaces the active match if and only if the current selection matches the active search match.
+        If the selection does not match, re-targets the active match and returns False without modifying text.
+        """
+        if self._search_total_matches == 0 or self._search_match_index == 0:
+            return False
+
+        active_match = self._matches[self._search_match_index - 1]
+        if (selection_start, selection_end) != active_match:
+            self.matchSelected.emit(active_match[0], active_match[1])
+            return False
+
+        doc = self._get_document()
+        cursor = QTextCursor(doc)
+        cursor.setPosition(active_match[0])
+        cursor.setPosition(active_match[1], QTextCursor.MoveMode.KeepAnchor)
+        cursor.insertText(self._replace_query)
+
+        self.set_source_text(doc.toPlainText())
+        self._recompute_matches()
+        if self._search_total_matches > 0:
+            advance_pos = active_match[0] + len(self._replace_query.encode("utf-16-le")) // 2
+            self.findNext(advance_pos)
+        return True
+
+    @Slot(result=int)
+    def replaceAll(self) -> int:
+        """
+        Replaces all occurrences of the active search query using an atomic edit block on QTextDocument.
+        Guarantees all replacements collapse into a SINGLE user-level undo action in TextArea.
+        """
+        if not self._matches or not self._search_query:
+            return 0
+
+        doc = self._get_document()
+        cursor = QTextCursor(doc)
+        cursor.beginEditBlock()
+        count = len(self._matches)
+        try:
+            for s, e in reversed(self._matches):
+                c = QTextCursor(doc)
+                c.setPosition(s)
+                c.setPosition(e, QTextCursor.MoveMode.KeepAnchor)
+                c.insertText(self._replace_query)
+        finally:
+            cursor.endEditBlock()
+
+        self.set_source_text(doc.toPlainText())
+        self._recompute_matches()
+        return count
+
+    @Slot(result="QVariantList")
+    def getMatchRanges(self) -> list:
+        """Returns match intervals [[start, end], ...] in UTF-16 code units."""
+        return [[s, e] for (s, e) in self._matches]
+
     def shutdown(self) -> None:
         """Shuts down background thread executor and detaches syntax highlighter."""
         self._is_shutdown = True
@@ -346,6 +642,7 @@ class MarkdownEditorController(QObject):
             self._highlighter.setDocument(None)
             self._highlighter = None
         self._text_document = None
+        self._headless_doc = None
         self._executor.shutdown(wait=False, cancel_futures=True)
 
     # -----------------------------------------------------------------------
