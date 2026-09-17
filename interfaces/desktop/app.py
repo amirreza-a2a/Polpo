@@ -67,9 +67,18 @@ def wire_review_workspace_sync(
     def _on_document_changed():
         originating_occurrences.clear()
 
+    def _on_region_artifact_committed(
+        job_id: int, region_id: str, new_version: int, new_artifact_uri: str
+    ):
+        if markdown_viewer_controller.activeJobId == job_id:
+            markdown_viewer_controller.updateRegionArtifact(
+                region_id, new_artifact_uri, new_version
+            )
+
     markdown_viewer_controller.regionSelected.connect(_on_markdown_region_selected)
     markdown_viewer_controller.documentChanged.connect(_on_document_changed)
     document_viewer_controller.selectionChanged.connect(_on_pdf_selection_changed)
+    document_viewer_controller.regionArtifactCommitted.connect(_on_region_artifact_committed)
 
 
 def create_app(
@@ -141,6 +150,7 @@ def create_app(
     )
     document_viewer_controller = DocumentViewerController(
         viewer_service=container.document_viewer_service,
+        apply_review_service=container.apply_review_service,
     )
     markdown_viewer_controller = MarkdownViewerController(
         viewer_service=container.markdown_viewer_service,

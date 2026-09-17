@@ -272,6 +272,22 @@ class MarkdownViewerController(QObject):
     # Region Selection & Hyperlink Navigation Slots
     # -----------------------------------------------------------------------
 
+    @Slot(str, str, int)
+    @Slot(str, str)
+    def updateRegionArtifact(
+        self, region_id: str, new_artifact_uri: str, new_version: int = 1
+    ) -> None:
+        """
+        Updates the active artifact URI for all occurrences of region_id in-place.
+        Updates active document version badge if higher and notifies model.
+        """
+        if not region_id:
+            return
+        if new_version > self._active_version:
+            self._active_version = new_version
+            self.activeVersionChanged.emit()
+        self._model.update_region_artifact(region_id, new_artifact_uri, new_version)
+
     @Slot(str)
     @Slot(str, str)
     def selectRegion(self, region_id: str, occurrence_id: str = "") -> None:

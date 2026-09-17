@@ -9,6 +9,8 @@ from typing import Optional, List, Dict, Any
 
 from interfaces.desktop.qt_compat import QObject, Signal, Slot, Property, QUrl
 from application.services.document_viewer_service import DocumentViewerService
+from application.services.apply_review_service import ApplyReviewService
+from application.dto.visual_region_dto import ApplyReviewResultDTO, VisualRegionDTO
 from core.entities.bounding_box import BoundingBox
 from core.geometry.coordinates import (
     CoordinateTransformer,
@@ -35,6 +37,7 @@ class DocumentViewerController(QObject):
       - Generation-aware request token tracking: prevents slow render N from overwriting N+1.
       - Pure coordinate transformation bridging normalized S_norm to QML display items.
       - Read-only semantic projection: rejected regions are excluded from active visual overlays.
+      - Asynchronous review apply and re-crop orchestration off GUI thread.
     """
 
     # Public Qt Signals for QML Property Binding
@@ -59,18 +62,24 @@ class DocumentViewerController(QObject):
     regionDeleted = Signal(str)
 
     # Public signals for review apply and artifact regeneration (Phase 10E Review Workflow)
+    regionArtifactCommitted = Signal(int, str, int, str)  # (job_id, region_id, new_version, new_artifact_uri)
+    applyFailed = Signal(int, str, str)                    # (job_id, region_id, error_message)
 
     # Internal Qt Signals for thread-safe worker-to-GUI dispatch
     _internalPageLoaded = Signal(int, object)
     _internalPageError = Signal(int, str)
+    _internalApplyFinished = Signal(int, str, int, str)   # (job_id, region_id, new_version, new_artifact_uri)
+    _internalApplyError = Signal(int, str, str)           # (job_id, region_id, error_message)
 
     def __init__(
         self,
         viewer_service: DocumentViewerService,
+        apply_review_service: Optional[ApplyReviewService] = None,
         parent: Optional[QObject] = None,
     ):
         super().__init__(parent)
         self.viewer_service = viewer_service
+        self.apply_review_service = apply_review_service
 
         self._current_job_id: int = 0
         self._current_page: int = 1
@@ -104,6 +113,8 @@ class DocumentViewerController(QObject):
         # Connect internal worker signals
         self._internalPageLoaded.connect(self._on_internal_page_loaded)
         self._internalPageError.connect(self._on_internal_page_error)
+        self._internalApplyFinished.connect(self._on_internal_apply_finished)
+        self._internalApplyError.connect(self._on_internal_apply_error)
 
     # =========================================================================
     # QML Properties
@@ -382,6 +393,108 @@ class DocumentViewerController(QObject):
             self.loadPage(self._current_job_id, self._current_page - 1)
 
     # =========================================================================
+    # Review Apply & Re-crop Orchestration (Phase 10E Review Workflow)
+    # =========================================================================
+
+    def _trigger_async_apply(self, job_id: int, region_id: str) -> None:
+        """
+        Dispatches background recrop and markdown regeneration via ApplyReviewService.
+        Guarantees non-blocking execution off the Qt GUI thread.
+        """
+        if not self.apply_review_service or not region_id:
+            return
+
+        resolved_job_id = job_id if job_id > 0 else self._current_job_id
+        if resolved_job_id <= 0:
+            for r in self._active_regions:
+                if r.get("region_id") == region_id:
+                    resolved_job_id = r.get("job_id", 0)
+                    break
+        if resolved_job_id <= 0:
+            return
+
+        def background_apply():
+            try:
+                res = self.apply_review_service.apply_reviews(job_id=resolved_job_id, region_ids=[region_id])
+                if not res.success:
+                    self._internalApplyError.emit(
+                        resolved_job_id, region_id, res.error_message or "Apply reviews returned failure"
+                    )
+                    return
+                dto = self.viewer_service.get_region(region_id)
+                new_ver = dto.active_artifact_version if dto else 1
+                new_uri = dto.active_artifact_uri if (dto and dto.active_artifact_uri) else ""
+                self._internalApplyFinished.emit(resolved_job_id, region_id, new_ver, new_uri)
+            except Exception as e:
+                self._internalApplyError.emit(resolved_job_id, region_id, str(e))
+
+        self._executor.submit(background_apply)
+
+    def apply_region_sync(
+        self, job_id: int, region_id: str
+    ) -> Optional[ApplyReviewResultDTO]:
+        """
+        Synchronously applies review and triggers update signals.
+        Useful for unit/integration tests and deterministic headless verification.
+        """
+        if not self.apply_review_service or not region_id:
+            return None
+
+        resolved_job_id = job_id if job_id > 0 else self._current_job_id
+        if resolved_job_id <= 0:
+            for r in self._active_regions:
+                if r.get("region_id") == region_id:
+                    resolved_job_id = r.get("job_id", 0)
+                    break
+        if resolved_job_id <= 0:
+            return None
+
+        try:
+            res = self.apply_review_service.apply_reviews(job_id=resolved_job_id, region_ids=[region_id])
+            if not res.success:
+                self._on_internal_apply_error(
+                    resolved_job_id, region_id, res.error_message or "Apply reviews returned failure"
+                )
+                return res
+            dto = self.viewer_service.get_region(region_id)
+            new_ver = dto.active_artifact_version if dto else 1
+            new_uri = dto.active_artifact_uri if (dto and dto.active_artifact_uri) else ""
+            self._on_internal_apply_finished(resolved_job_id, region_id, new_ver, new_uri)
+            return res
+        except Exception as e:
+            self._on_internal_apply_error(resolved_job_id, region_id, str(e))
+            raise
+
+    def _on_internal_apply_finished(
+        self, job_id: int, region_id: str, new_version: int, new_artifact_uri: str
+    ) -> None:
+        """
+        GUI-thread slot called when background apply completes successfully.
+        Emits regionArtifactCommitted public signal and reloads page regions if matching current page.
+        """
+        if job_id == self._current_job_id:
+            self._reload_page_regions()
+            self.regionsChanged.emit()
+            if self._selected_region_id:
+                self.selectionChanged.emit()
+        self.regionArtifactCommitted.emit(job_id, region_id, new_version, new_artifact_uri)
+
+    def _on_internal_apply_error(
+        self, job_id: int, region_id: str, error_msg: str
+    ) -> None:
+        """
+        GUI-thread slot called when background apply encounters an error.
+        Emits applyFailed public signal and updates error message.
+        """
+        self._error_message = f"Failed to apply review for region {region_id}: {error_msg}"
+        self.errorChanged.emit()
+        self.applyFailed.emit(job_id, region_id, error_msg)
+
+    @Slot()
+    def shutdown(self) -> None:
+        """Explicit shutdown releasing executor resources."""
+        self._executor.shutdown(wait=False, cancel_futures=True)
+
     def _get_viewport_metrics(self) -> ViewportMetrics:
         return ViewportMetrics(
             zoom=self._zoom,
@@ -977,6 +1090,7 @@ class DocumentViewerController(QObject):
             self.editorStateChanged.emit()
             self.transientBoxChanged.emit()
             self.regionsChanged.emit()
+            self._trigger_async_apply(self._current_job_id, target_id)
         except Exception as e:
             self._error_message = f"Failed to persist drag: {str(e)}"
             self.errorChanged.emit()
@@ -1084,6 +1198,7 @@ class DocumentViewerController(QObject):
             self.editorStateChanged.emit()
             self.transientBoxChanged.emit()
             self.regionsChanged.emit()
+            self._trigger_async_apply(self._current_job_id, target_id)
         except Exception as e:
             self._error_message = f"Failed to persist resize: {str(e)}"
             self.errorChanged.emit()
@@ -1150,6 +1265,7 @@ class DocumentViewerController(QObject):
             self.transientBoxChanged.emit()
             self.selectedItemRectChanged.emit()
             self.regionsChanged.emit()
+            self._trigger_async_apply(self._current_job_id, dto.region_id)
         except Exception as e:
             self._error_message = f"Failed to create manual region: {str(e)}"
             self.errorChanged.emit()
@@ -1176,6 +1292,7 @@ class DocumentViewerController(QObject):
             self._reload_page_regions()
             self.regionDeleted.emit(target_id)
             self.regionsChanged.emit()
+            self._trigger_async_apply(self._current_job_id, target_id)
         except Exception as e:
             self._error_message = f"Failed to delete region: {str(e)}"
             self.errorChanged.emit()
@@ -1192,6 +1309,7 @@ class DocumentViewerController(QObject):
             self.regionUpdated.emit(target_id)
             self.selectionChanged.emit()
             self.regionsChanged.emit()
+            self._trigger_async_apply(self._current_job_id, target_id)
         except Exception as e:
             self._error_message = f"Failed to reset region to AI: {str(e)}"
             self.errorChanged.emit()

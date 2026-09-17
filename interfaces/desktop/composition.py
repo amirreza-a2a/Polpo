@@ -218,5 +218,7 @@ class DesktopAppContainer:
         """Shuts down the desktop scheduler, runtime, and controllers, releasing resources."""
         if hasattr(self, "markdown_viewer_controller") and self.markdown_viewer_controller:
             self.markdown_viewer_controller.shutdown()
+        if hasattr(self, "document_viewer_controller") and self.document_viewer_controller:
+            self.document_viewer_controller.shutdown()
         self.scheduler.shutdown()
         self.runtime.shutdown()

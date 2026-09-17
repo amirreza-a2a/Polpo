@@ -249,6 +249,17 @@ class DocumentViewerService:
 
         return self._to_dto(saved)
 
+    def get_region(self, region_id: str) -> Optional[VisualRegionDTO]:
+        """
+        Retrieves a single visual region by its domain UUID.
+        Returns None if the region does not exist.
+        """
+        with self.uow_factory.create() as uow:
+            region = uow.visual_regions.get_by_region_id(region_id)
+            if not region:
+                return None
+            return self._to_dto(region)
+
     def create_manual_region(
         self,
         job_id: int,

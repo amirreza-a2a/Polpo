@@ -334,3 +334,153 @@ class MarkdownDocumentModel(QAbstractListModel):
         if 0 <= index < len(self._items):
             return self._items[index]
         return None
+
+    @Slot(str, str, int)
+    @Slot(str, str)
+    def update_region_artifact(
+        self, region_id: str, new_artifact_uri: str, new_version: int = 1
+    ) -> None:
+        """
+        Updates the active artifact URI for all occurrences of region_id in-place.
+        Emits targeted dataChanged signals for modified node rows without model reset.
+        """
+        if not region_id:
+            return
+
+        if new_artifact_uri:
+            qml_uri = (
+                new_artifact_uri
+                if new_artifact_uri.startswith("file:")
+                else QUrl.fromLocalFile(new_artifact_uri).toString()
+            )
+        else:
+            qml_uri = ""
+
+        affected_indices = set()
+        for occ in self._region_to_occurrences.get(region_id, []):
+            affected_indices.add(occ["nodeIndex"])
+        if region_id in self._region_to_node_index:
+            affected_indices.add(self._region_to_node_index[region_id])
+
+        if not affected_indices:
+            for idx, item in enumerate(self._items):
+                if item.get("primaryRegionId") == region_id or any(
+                    r.get("regionId") == region_id for r in item.get("regions", [])
+                ):
+                    affected_indices.add(idx)
+
+        for node_idx in sorted(affected_indices):
+            if node_idx < 0 or node_idx >= len(self._items):
+                continue
+            item = self._items[node_idx]
+            modified = False
+
+            if item.get("primaryRegionId") == region_id:
+                item["imageUri"] = qml_uri
+                modified = True
+
+            new_regions = []
+            for r in item.get("regions", []):
+                if r.get("regionId") == region_id:
+                    new_r = dict(r)
+                    new_r["imageUri"] = qml_uri
+                    new_r["imagePath"] = new_artifact_uri
+                    new_regions.append(new_r)
+                    modified = True
+                else:
+                    new_regions.append(r)
+            if modified:
+                item["regions"] = new_regions
+
+            if item.get("segments"):
+                new_segs = []
+                for s in item["segments"]:
+                    img_ref = s.get("imageRef")
+                    if img_ref and img_ref.get("regionId") == region_id:
+                        new_img_ref = dict(img_ref)
+                        new_img_ref["imageUri"] = qml_uri
+                        new_img_ref["imagePath"] = new_artifact_uri
+                        new_s = dict(s)
+                        new_s["imageRef"] = new_img_ref
+                        new_segs.append(new_s)
+                        modified = True
+                    else:
+                        new_segs.append(s)
+                item["segments"] = new_segs
+
+            if item.get("listItemSegments"):
+                new_list_items = []
+                for item_segs in item["listItemSegments"]:
+                    new_sub_segs = []
+                    for s in item_segs:
+                        img_ref = s.get("imageRef")
+                        if img_ref and img_ref.get("regionId") == region_id:
+                            new_img_ref = dict(img_ref)
+                            new_img_ref["imageUri"] = qml_uri
+                            new_img_ref["imagePath"] = new_artifact_uri
+                            new_s = dict(s)
+                            new_s["imageRef"] = new_img_ref
+                            new_sub_segs.append(new_s)
+                            modified = True
+                        else:
+                            new_sub_segs.append(s)
+                    new_list_items.append(new_sub_segs)
+                item["listItemSegments"] = new_list_items
+
+            if item.get("tableCellSegments"):
+                new_table = []
+                for row in item["tableCellSegments"]:
+                    new_row = []
+                    for col in row:
+                        new_col = []
+                        for s in col:
+                            img_ref = s.get("imageRef")
+                            if img_ref and img_ref.get("regionId") == region_id:
+                                new_img_ref = dict(img_ref)
+                                new_img_ref["imageUri"] = qml_uri
+                                new_img_ref["imagePath"] = new_artifact_uri
+                                new_s = dict(s)
+                                new_s["imageRef"] = new_img_ref
+                                new_col.append(new_s)
+                                modified = True
+                            else:
+                                new_col.append(s)
+                        new_row.append(new_col)
+                    new_table.append(new_row)
+                item["tableCellSegments"] = new_table
+
+            if item.get("quoteChildren"):
+                new_quote_children = []
+                for q_child in item["quoteChildren"]:
+                    new_q_segs = []
+                    for s in q_child.get("segments", []):
+                        img_ref = s.get("imageRef")
+                        if img_ref and img_ref.get("regionId") == region_id:
+                            new_img_ref = dict(img_ref)
+                            new_img_ref["imageUri"] = qml_uri
+                            new_img_ref["imagePath"] = new_artifact_uri
+                            new_s = dict(s)
+                            new_s["imageRef"] = new_img_ref
+                            new_q_segs.append(new_s)
+                            modified = True
+                        else:
+                            new_q_segs.append(s)
+                    new_qc = dict(q_child)
+                    new_qc["segments"] = new_q_segs
+                    new_quote_children.append(new_qc)
+                item["quoteChildren"] = new_quote_children
+
+            if modified:
+                model_idx = self.index(node_idx, 0)
+                self.dataChanged.emit(
+                    model_idx,
+                    model_idx,
+                    [
+                        self.ImageUriRole,
+                        self.SegmentsRole,
+                        self.ListItemSegmentsRole,
+                        self.TableCellSegmentsRole,
+                        self.QuoteChildrenRole,
+                        self.RegionsRole,
+                    ],
+                )
