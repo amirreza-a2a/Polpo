@@ -735,6 +735,10 @@ Good candidates include:
 * why a dependency direction is enforced;
 * why a recovery path handles stale jobs.
 
+### 20.5 Agent Skills Routing Guide
+
+For selecting and sequencing installed agent skills during development workflows, refer to [`docs/agents/skills.md`](docs/agents/skills.md).
+
 ---
 
 ## 21. Compatibility Code Must Be Explicit
