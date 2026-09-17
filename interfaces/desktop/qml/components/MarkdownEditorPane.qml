@@ -13,6 +13,12 @@ Item {
 
     property var controller: typeof markdownEditorController !== "undefined" ? markdownEditorController : null
 
+    onControllerChanged: {
+        if (controller && sourceTextArea && sourceTextArea.textDocument) {
+            controller.attachTextDocument(sourceTextArea.textDocument)
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -217,6 +223,12 @@ Item {
                     onTextChanged: {
                         if (controller && text !== controller.sourceText) {
                             controller.setSourceText(text)
+                        }
+                    }
+
+                    Component.onCompleted: {
+                        if (controller && textDocument) {
+                            controller.attachTextDocument(textDocument)
                         }
                     }
 

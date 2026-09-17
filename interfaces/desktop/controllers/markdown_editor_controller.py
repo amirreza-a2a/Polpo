@@ -13,7 +13,9 @@ from interfaces.desktop.qt_compat import (
     Property,
     Signal,
     Slot,
+    QTextDocument,
 )
+from interfaces.desktop.syntax.markdown_syntax_highlighter import MarkdownSyntaxHighlighter
 
 
 class MarkdownEditorController(QObject):
@@ -66,6 +68,9 @@ class MarkdownEditorController(QObject):
         self._active_version: int = 0
         self._has_conflict: bool = False
         self._conflict_message: str = ""
+
+        self._text_document: Optional[QTextDocument] = None
+        self._highlighter: Optional[MarkdownSyntaxHighlighter] = None
 
         self._request_id: int = 0
         self._is_shutdown: bool = False
@@ -318,9 +323,29 @@ class MarkdownEditorController(QObject):
         self.activeVersionChanged.emit()
         self.conflictChanged.emit()
 
+    @Slot(QObject)
+    def attachTextDocument(self, quick_text_doc: Optional[QObject]) -> None:
+        """
+        Attaches MarkdownSyntaxHighlighter to the underlying QTextDocument of the QML TextArea.
+        Attachment is strictly idempotent and prevents duplicate highlighters.
+        """
+        if self._highlighter is not None:
+            self._highlighter.setDocument(None)
+            self._highlighter = None
+            self._text_document = None
+
+        if quick_text_doc is not None and hasattr(quick_text_doc, "textDocument"):
+            doc = quick_text_doc.textDocument()
+            self._text_document = doc
+            self._highlighter = MarkdownSyntaxHighlighter(doc)
+
     def shutdown(self) -> None:
-        """Shuts down background thread executor."""
+        """Shuts down background thread executor and detaches syntax highlighter."""
         self._is_shutdown = True
+        if self._highlighter is not None:
+            self._highlighter.setDocument(None)
+            self._highlighter = None
+        self._text_document = None
         self._executor.shutdown(wait=False, cancel_futures=True)
 
     # -----------------------------------------------------------------------
