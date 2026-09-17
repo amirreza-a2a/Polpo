@@ -93,6 +93,7 @@ class DocumentViewerService:
         # Use cached render if it exists
         if self.storage.exists(render_handle):
             jpeg_bytes = self.storage.retrieve(render_handle)
+            image_uri = self.storage.resolve_uri(render_handle)
         else:
             try:
                 jpeg_bytes = self.doc_processor.render_page_to_jpeg(
@@ -110,6 +111,7 @@ class DocumentViewerService:
                 data=jpeg_bytes,
                 mime_type="image/jpeg",
             )
+            image_uri = render_handle.uri
 
         raster_w, raster_h = self.doc_processor.get_image_dimensions(jpeg_bytes)
 
@@ -119,7 +121,7 @@ class DocumentViewerService:
             total_pages=total_pages,
             raster_width=raster_w,
             raster_height=raster_h,
-            image_uri=render_handle.uri,
+            image_uri=image_uri,
             dpi=target_dpi,
         )
 

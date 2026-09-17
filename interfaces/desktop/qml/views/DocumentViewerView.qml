@@ -315,6 +315,12 @@ Item {
                     asynchronous: true
                     cache: false
 
+                    onStatusChanged: {
+                        if (status === Image.Error) {
+                            console.warn("[DocumentViewerView] Page image load error for source:", source);
+                        }
+                    }
+
                     // Semantic Bounding Box Overlay sharing the exact same scene transform
                     BoundingBoxOverlay {
                         id: regionOverlay
@@ -327,11 +333,33 @@ Item {
                 }
             }
 
+            // Page Image Load Error Display
+            Rectangle {
+                anchors.centerIn: parent
+                width: Math.min(parent.width - 40, 360)
+                height: 54
+                radius: 6
+                color: Qt.rgba(0.85, 0.02, 0.16, 0.9)
+                visible: pageImage.status === Image.Error && pageImage.source !== ""
+
+                RowLayout {
+                    anchors.centerIn: parent
+                    spacing: 8
+
+                    Text {
+                        text: "Failed to load page image texture"
+                        color: "#ffffff"
+                        font.pixelSize: 12
+                        font.bold: true
+                    }
+                }
+            }
+
             // Loading Indicator
             Rectangle {
                 anchors.fill: parent
                 color: Qt.rgba(0, 0, 0, 0.6)
-                visible: controller ? controller.isLoading : false
+                visible: (controller ? controller.isLoading : false) || (pageImage.status === Image.Loading && pageImage.source !== "")
 
                 ColumnLayout {
                     anchors.centerIn: parent

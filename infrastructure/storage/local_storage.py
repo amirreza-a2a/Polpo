@@ -46,8 +46,20 @@ class LocalStorageAdapter(IArtifactStorage):
         if not file_path.is_relative_to(job_dir):
             raise DomainError(f"Security error: Artifact path '{filename}' escapes job directory.")
 
-        with open(file_path, "wb") as f:
-            f.write(data)
+        temp_file = job_dir / f".{clean_name}.{os.getpid()}.{time.time_ns()}.tmp"
+        try:
+            with open(temp_file, "wb") as f:
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_file, file_path)
+        except Exception:
+            if temp_file.exists():
+                try:
+                    temp_file.unlink()
+                except OSError:
+                    pass
+            raise
 
         uri = f"file://{file_path}"
         return ArtifactHandle(
@@ -79,6 +91,13 @@ class LocalStorageAdapter(IArtifactStorage):
             return self._resolve_path(handle).exists()
         except Exception:
             return False
+
+    def resolve_uri(self, handle: ArtifactHandle) -> str:
+        """
+        Returns the canonical file URI for an existing or addressed artifact handle.
+        """
+        file_path = self._resolve_path(handle)
+        return f"file://{file_path}"
 
     def delete(self, handle: ArtifactHandle) -> bool:
         try:

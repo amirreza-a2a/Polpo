@@ -36,6 +36,13 @@ class IArtifactStorage(ABC):
         pass
 
     @abstractmethod
+    def resolve_uri(self, handle: ArtifactHandle) -> str:
+        """
+        Returns the canonical consumer URI for an existing artifact.
+        """
+        pass
+
+    @abstractmethod
     def delete(self, handle: ArtifactHandle) -> bool:
         pass
 
