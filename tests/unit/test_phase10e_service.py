@@ -384,6 +384,25 @@ def test_load_document_success():
     assert "a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d" in doc_dto.region_to_occurrences
 
 
+def test_load_document_legacy_unversioned_canonical_path():
+    md_content = b"# Title\n\nSome body text."
+    storage = MockStorage({"output_42.md": md_content})
+
+    job = Job(id=42, file_path="/p", file_name="f", status=JobStatus.DONE, output_path="/data/artifacts/job_42/output_42.md")
+    job_repo = MockJobRepo([job])
+    region_repo = MockVisualRegionRepo([])
+    uow = MockUnitOfWork(job_repo, region_repo)
+    factory = MockUowFactory(uow)
+    parser = MarkdownItParser()
+
+    service = MarkdownViewerService(parser=parser, uow_factory=factory, storage=storage)
+    doc_dto = service.load_document(42)
+
+    assert doc_dto.job_id == 42
+    assert doc_dto.version == 1
+    assert len(doc_dto.nodes) == 2
+
+
 def test_load_document_failures():
     job_repo = MockJobRepo([])
     region_repo = MockVisualRegionRepo([])

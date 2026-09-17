@@ -107,9 +107,8 @@ class MarkdownViewerService:
 
             active_regions = uow.visual_regions.get_by_job_id(job_id)
 
-        # Extract version number from output path (e.g. output_123_v2.md)
-        ver_match = re.search(r"_v(\d+)\.md$", job.output_path)
-        version = int(ver_match.group(1)) if ver_match else 1
+        # Extract version number from canonical job domain property
+        version = job.active_markdown_version or 1
 
         filename = os.path.basename(job.output_path)
         output_handle = ArtifactHandle(
