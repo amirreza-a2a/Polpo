@@ -74,6 +74,11 @@ class Job:
     def is_terminal(self) -> bool:
         return self.status in (JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELLED)
 
+    @property
+    def active_markdown_version(self) -> int:
+        from core.markdown.version import parse_canonical_markdown_version
+        return parse_canonical_markdown_version(self.output_path)
+
 
 @dataclass
 class Pipeline2Job:

@@ -21,8 +21,16 @@ from core.markdown.ast import (
     ThematicBreakBlock,
 )
 from core.markdown.resolver import resolve_image_regions
+from core.markdown.version import (
+    CanonicalMarkdownSnapshot,
+    capture_canonical_markdown_snapshot,
+    parse_canonical_markdown_version,
+)
 
 __all__ = [
+    "CanonicalMarkdownSnapshot",
+    "capture_canonical_markdown_snapshot",
+    "parse_canonical_markdown_version",
     "EMPTY_METADATA",
     "BlockType",
     "BlockquoteBlock",

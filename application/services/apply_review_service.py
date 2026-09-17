@@ -18,7 +18,13 @@ from application.ports.unit_of_work import IUnitOfWorkFactory
 from core.entities.artifact import ArtifactHandle, ArtifactType, StorageBackendType
 from core.entities.bounding_box import BoundingBox, CropPolicy
 from core.entities.visual_region import RegionOrigin, ReviewStatus, SyncStatus, VisualRegion
-from core.exceptions.domain_exceptions import ArtifactNotFoundError, DomainError, EntityNotFoundError
+from core.exceptions.domain_exceptions import (
+    ArtifactNotFoundError,
+    DomainError,
+    EntityNotFoundError,
+    StaleDocumentVersionError,
+)
+from core.markdown import capture_canonical_markdown_snapshot, parse_canonical_markdown_version
 
 
 class ApplyReviewService:
@@ -81,12 +87,7 @@ class ApplyReviewService:
 
     def _parse_job_md_version(self, output_path: Optional[str]) -> int:
         """Extracts the active version number from output markdown URI or returns 0 if none exists."""
-        if not output_path:
-            return 0
-        match = re.search(r"_v(\d+)\.md$", output_path)
-        if match:
-            return int(match.group(1))
-        return 1
+        return parse_canonical_markdown_version(output_path)
 
     def _execute_apply(
         self,
@@ -99,6 +100,8 @@ class ApplyReviewService:
             if not job:
                 raise EntityNotFoundError("Job", job_id)
             all_regions = uow.visual_regions.get_by_job_id(job_id)
+
+        base_snapshot = capture_canonical_markdown_snapshot(job.output_path)
 
         target_set: Optional[Set[str]] = set(region_ids) if region_ids is not None else None
 
@@ -138,7 +141,20 @@ class ApplyReviewService:
             if not job_record:
                 raise EntityNotFoundError("Job", job_id)
 
-            curr_active_md_ver = self._parse_job_md_version(job_record.output_path)
+            # OCC Check 1: verify job.output_path matches base_snapshot
+            curr_snap = capture_canonical_markdown_snapshot(job_record.output_path)
+            if (curr_snap.version != base_snapshot.version) or (curr_snap.output_path != base_snapshot.output_path):
+                raise StaleDocumentVersionError(
+                    job_id=job_id,
+                    base_version=base_snapshot.version,
+                    current_version=curr_snap.version,
+                    message=(
+                        f"Canonical markdown document was modified concurrently before watermark reservation "
+                        f"(base v{base_snapshot.version} vs current v{curr_snap.version})"
+                    ),
+                )
+
+            curr_active_md_ver = base_snapshot.version
             watermark_md = max(job_record.output_artifact_version_watermark, curr_active_md_ver)
             reserved_md_version = watermark_md + 1
             job_record.output_artifact_version_watermark = reserved_md_version
@@ -209,80 +225,192 @@ class ApplyReviewService:
             staged_crops[region.region_id] = (staged_handle, target_version)
 
         # 5. Regenerate and Stage Immutable Versioned Markdown using reserved_md_version
-        current_md_version = curr_active_md_ver
         target_md_version = reserved_md_version
+        canonical_text: Optional[str] = None
 
-        assembled_pages: List[str] = []
-        total_pages = max(job.total_pages or 1, max((r.page_number for r in all_regions), default=1))
+        if base_snapshot.output_path:
+            try:
+                base_handle = ArtifactHandle(
+                    storage_backend=StorageBackendType.LOCAL_FS,
+                    uri=base_snapshot.output_path,
+                    artifact_type=ArtifactType.OUTPUT_MARKDOWN,
+                    job_id=job.id,
+                    filename=os.path.basename(base_snapshot.output_path),
+                )
+                if self.storage.exists(base_handle):
+                    canonical_text = self.storage.retrieve(base_handle).decode("utf-8")
+            except Exception:
+                canonical_text = None
 
-        for p in range(1, total_pages + 1):
-            page_text = f"<!-- Page {p} -->\n"
-            candidate_handles = []
-            if current_md_version > 0:
-                candidate_handles.append(ArtifactHandle(StorageBackendType.LOCAL_FS, "", ArtifactType.OUTPUT_MARKDOWN, job.id, f"page_{p}_v{current_md_version}.md"))
-            candidate_handles.append(ArtifactHandle(StorageBackendType.LOCAL_FS, "", ArtifactType.OUTPUT_MARKDOWN, job.id, f"page_{p}.md"))
+        if canonical_text is not None:
+            updated_md = canonical_text
 
-            for ch in candidate_handles:
-                try:
-                    if self.storage.exists(ch):
-                        page_text = self.storage.retrieve(ch).decode("utf-8")
-                        break
-                except Exception:
-                    pass
+            for r in rejected_regions:
+                tag_pattern_1 = re.compile(rf"!\[\[[^\]]*{re.escape(r.region_id)}[^\]]*\]\]\s*", re.MULTILINE)
+                tag_pattern_2 = re.compile(rf"!\[\[crop_{job_id}_p{r.page_number}_{r.display_order}\.jpg[^\]]*\]\]\s*", re.MULTILINE)
+                updated_md = tag_pattern_1.sub("", updated_md)
+                updated_md = tag_pattern_2.sub("", updated_md)
 
-            page_regions = sorted(
-                [r for r in all_regions if r.page_number == p],
-                key=lambda x: x.display_order,
-            )
-
-            for r in page_regions:
+            for r in all_regions:
                 if r.is_deleted:
-                    # Remove all image tags matching this rejected region
-                    tag_pattern_1 = re.compile(rf"!\[\[[^\]]*{re.escape(r.region_id)}[^\]]*\]\]\s*", re.MULTILINE)
-                    tag_pattern_2 = re.compile(rf"!\[\[crop_{job_id}_p{p}_{r.display_order}\.jpg[^\]]*\]\]\s*", re.MULTILINE)
-                    page_text = tag_pattern_1.sub("", page_text)
-                    page_text = tag_pattern_2.sub("", page_text)
+                    continue
+
+                if r.region_id in staged_crops:
+                    _, v = staged_crops[r.region_id]
+                    active_filename = f"crop_{job_id}_{r.region_id}_v{v}.jpg"
+                elif r.active_artifact_uri:
+                    active_filename = os.path.basename(r.active_artifact_uri)
                 else:
-                    # Active region
-                    if r.region_id in staged_crops:
-                        _, v = staged_crops[r.region_id]
-                        active_filename = f"crop_{job_id}_{r.region_id}_v{v}.jpg"
-                    elif r.active_artifact_uri:
-                        active_filename = os.path.basename(r.active_artifact_uri)
+                    active_filename = f"crop_{job_id}_{r.region_id}_v{r.active_artifact_version}.jpg"
+
+                new_token = f"![[{active_filename}|region_id={r.region_id}]]"
+
+                tag_pattern_1 = re.compile(rf"!\[\[[^\]]*{re.escape(r.region_id)}[^\]]*\]\]")
+                tag_pattern_2 = re.compile(rf"!\[\[crop_{job_id}_p{r.page_number}_{r.display_order}\.jpg[^\]]*\]\]")
+
+                if tag_pattern_1.search(updated_md):
+                    updated_md = tag_pattern_1.sub(new_token, updated_md, count=1)
+                elif tag_pattern_2.search(updated_md):
+                    updated_md = tag_pattern_2.sub(new_token, updated_md, count=1)
+                else:
+                    page_marker = f"<!-- Page {r.page_number} -->"
+                    if page_marker in updated_md:
+                        p_idx = updated_md.find(page_marker)
+                        after_p = updated_md[p_idx + len(page_marker):]
+                        next_marker_match = re.search(r"\n<!-- Page \d+ -->", after_p)
+                        if next_marker_match:
+                            insert_pos = p_idx + len(page_marker) + next_marker_match.start()
+                            updated_md = updated_md[:insert_pos].rstrip() + f"\n\n{new_token}\n\n" + updated_md[insert_pos:].lstrip()
+                        else:
+                            updated_md = updated_md.rstrip() + f"\n\n{new_token}\n"
                     else:
-                        active_filename = f"crop_{job_id}_{r.region_id}_v{r.active_artifact_version}.jpg"
+                        updated_md = updated_md.rstrip() + f"\n\n{new_token}\n"
 
-                    new_token = f"![[{active_filename}|region_id={r.region_id}]]"
+            output_content = updated_md
 
-                    tag_pattern_1 = re.compile(rf"!\[\[[^\]]*{re.escape(r.region_id)}[^\]]*\]\]")
-                    tag_pattern_2 = re.compile(rf"!\[\[crop_{job_id}_p{p}_{r.display_order}\.jpg[^\]]*\]\]")
+            # If page-level artifacts exist, update page_{p}_v{target_md_version}.md for consistency
+            total_pages = max(job.total_pages or 1, max((r.page_number for r in all_regions), default=1))
+            for p in range(1, total_pages + 1):
+                candidate_handles = []
+                if base_snapshot.version > 0:
+                    candidate_handles.append(ArtifactHandle(StorageBackendType.LOCAL_FS, "", ArtifactType.OUTPUT_MARKDOWN, job.id, f"page_{p}_v{base_snapshot.version}.md"))
+                candidate_handles.append(ArtifactHandle(StorageBackendType.LOCAL_FS, "", ArtifactType.OUTPUT_MARKDOWN, job.id, f"page_{p}.md"))
 
-                    if tag_pattern_1.search(page_text):
-                        page_text = tag_pattern_1.sub(new_token, page_text, count=1)
-                    elif tag_pattern_2.search(page_text):
-                        page_text = tag_pattern_2.sub(new_token, page_text, count=1)
+                p_handle = None
+                for ch in candidate_handles:
+                    if self.storage.exists(ch):
+                        p_handle = ch
+                        break
+
+                if p_handle:
+                    try:
+                        p_text = self.storage.retrieve(p_handle).decode("utf-8")
+                        for r in rejected_regions:
+                            if r.page_number == p:
+                                tag_pattern_1 = re.compile(rf"!\[\[[^\]]*{re.escape(r.region_id)}[^\]]*\]\]\s*", re.MULTILINE)
+                                tag_pattern_2 = re.compile(rf"!\[\[crop_{job_id}_p{p}_{r.display_order}\.jpg[^\]]*\]\]\s*", re.MULTILINE)
+                                p_text = tag_pattern_1.sub("", p_text)
+                                p_text = tag_pattern_2.sub("", p_text)
+
+                        for r in all_regions:
+                            if r.is_deleted or r.page_number != p:
+                                continue
+                            if r.region_id in staged_crops:
+                                _, v = staged_crops[r.region_id]
+                                active_filename = f"crop_{job_id}_{r.region_id}_v{v}.jpg"
+                            elif r.active_artifact_uri:
+                                active_filename = os.path.basename(r.active_artifact_uri)
+                            else:
+                                active_filename = f"crop_{job_id}_{r.region_id}_v{r.active_artifact_version}.jpg"
+
+                            new_token = f"![[{active_filename}|region_id={r.region_id}]]"
+                            tag_pattern_1 = re.compile(rf"!\[\[[^\]]*{re.escape(r.region_id)}[^\]]*\]\]")
+                            tag_pattern_2 = re.compile(rf"!\[\[crop_{job_id}_p{p}_{r.display_order}\.jpg[^\]]*\]\]")
+
+                            if tag_pattern_1.search(p_text):
+                                p_text = tag_pattern_1.sub(new_token, p_text, count=1)
+                            elif tag_pattern_2.search(p_text):
+                                p_text = tag_pattern_2.sub(new_token, p_text, count=1)
+                            else:
+                                p_text = p_text.rstrip() + f"\n\n{new_token}\n"
+
+                        self.storage.store(
+                            job_id=job_id,
+                            artifact_type=ArtifactType.OUTPUT_MARKDOWN,
+                            filename=f"page_{p}_v{target_md_version}.md",
+                            data=p_text.encode("utf-8"),
+                            mime_type="text/markdown",
+                        )
+                    except Exception:
+                        pass
+        else:
+            assembled_pages: List[str] = []
+            total_pages = max(job.total_pages or 1, max((r.page_number for r in all_regions), default=1))
+
+            for p in range(1, total_pages + 1):
+                page_text = f"<!-- Page {p} -->\n"
+                candidate_handles = []
+                if base_snapshot.version > 0:
+                    candidate_handles.append(ArtifactHandle(StorageBackendType.LOCAL_FS, "", ArtifactType.OUTPUT_MARKDOWN, job.id, f"page_{p}_v{base_snapshot.version}.md"))
+                candidate_handles.append(ArtifactHandle(StorageBackendType.LOCAL_FS, "", ArtifactType.OUTPUT_MARKDOWN, job.id, f"page_{p}.md"))
+
+                for ch in candidate_handles:
+                    try:
+                        if self.storage.exists(ch):
+                            page_text = self.storage.retrieve(ch).decode("utf-8")
+                            break
+                    except Exception:
+                        pass
+
+                page_regions = sorted(
+                    [r for r in all_regions if r.page_number == p],
+                    key=lambda x: x.display_order,
+                )
+
+                for r in page_regions:
+                    if r.is_deleted:
+                        tag_pattern_1 = re.compile(rf"!\[\[[^\]]*{re.escape(r.region_id)}[^\]]*\]\]\s*", re.MULTILINE)
+                        tag_pattern_2 = re.compile(rf"!\[\[crop_{job_id}_p{p}_{r.display_order}\.jpg[^\]]*\]\]\s*", re.MULTILINE)
+                        page_text = tag_pattern_1.sub("", page_text)
+                        page_text = tag_pattern_2.sub("", page_text)
                     else:
-                        # Append if not present in text (e.g. manual region)
-                        page_text = page_text.rstrip() + f"\n\n{new_token}\n"
+                        if r.region_id in staged_crops:
+                            _, v = staged_crops[r.region_id]
+                            active_filename = f"crop_{job_id}_{r.region_id}_v{v}.jpg"
+                        elif r.active_artifact_uri:
+                            active_filename = os.path.basename(r.active_artifact_uri)
+                        else:
+                            active_filename = f"crop_{job_id}_{r.region_id}_v{r.active_artifact_version}.jpg"
 
-            # Stage updated versioned page markdown (never overwriting old page version)
-            self.storage.store(
-                job_id=job_id,
-                artifact_type=ArtifactType.OUTPUT_MARKDOWN,
-                filename=f"page_{p}_v{target_md_version}.md",
-                data=page_text.encode("utf-8"),
-                mime_type="text/markdown",
-            )
-            assembled_pages.append(page_text)
+                        new_token = f"![[{active_filename}|region_id={r.region_id}]]"
 
-        unified_md = self.doc_processor.unify_markdown("\n".join(assembled_pages))
+                        tag_pattern_1 = re.compile(rf"!\[\[[^\]]*{re.escape(r.region_id)}[^\]]*\]\]")
+                        tag_pattern_2 = re.compile(rf"!\[\[crop_{job_id}_p{p}_{r.display_order}\.jpg[^\]]*\]\]")
+
+                        if tag_pattern_1.search(page_text):
+                            page_text = tag_pattern_1.sub(new_token, page_text, count=1)
+                        elif tag_pattern_2.search(page_text):
+                            page_text = tag_pattern_2.sub(new_token, page_text, count=1)
+                        else:
+                            page_text = page_text.rstrip() + f"\n\n{new_token}\n"
+
+                self.storage.store(
+                    job_id=job_id,
+                    artifact_type=ArtifactType.OUTPUT_MARKDOWN,
+                    filename=f"page_{p}_v{target_md_version}.md",
+                    data=page_text.encode("utf-8"),
+                    mime_type="text/markdown",
+                )
+                assembled_pages.append(page_text)
+
+            output_content = self.doc_processor.unify_markdown("\n".join(assembled_pages))
 
         # Stage updated versioned output markdown (never overwriting old output version)
         output_handle = self.storage.store(
             job_id=job_id,
             artifact_type=ArtifactType.OUTPUT_MARKDOWN,
             filename=f"output_{job_id}_v{target_md_version}.md",
-            data=unified_md.encode("utf-8"),
+            data=output_content.encode("utf-8"),
             mime_type="text/markdown",
         )
 
@@ -298,6 +426,19 @@ class ApplyReviewService:
             job_record = uow.jobs.get_by_id(job_id)
             if not job_record:
                 raise EntityNotFoundError("Job", job_id)
+
+            # OCC Check 2: verify current canonical document version and output_path still match base_snapshot
+            final_snap = capture_canonical_markdown_snapshot(job_record.output_path)
+            if (final_snap.version != base_snapshot.version) or (final_snap.output_path != base_snapshot.output_path):
+                raise StaleDocumentVersionError(
+                    job_id=job_id,
+                    base_version=base_snapshot.version,
+                    current_version=final_snap.version,
+                    message=(
+                        f"Canonical markdown document was modified concurrently before final commit "
+                        f"(base v{base_snapshot.version} vs current v{final_snap.version})"
+                    ),
+                )
 
             for region in all_regions:
                 if region.region_id in staged_crops:

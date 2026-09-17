@@ -44,3 +44,16 @@ class CredentialConsistencyError(DomainError):
     """Raised when credential storage and database metadata fail to reconcile consistently."""
     def __init__(self, message: str):
         super().__init__(message)
+
+
+class StaleDocumentVersionError(DomainError):
+    """Raised when an operation attempts to commit a canonical document based on an outdated version or path."""
+    def __init__(self, job_id: int, base_version: int, current_version: int, message: str = ""):
+        msg = message or (
+            f"Cannot commit document for job {job_id}: base version {base_version} "
+            f"is stale (active canonical version is {current_version})."
+        )
+        super().__init__(msg)
+        self.job_id = job_id
+        self.base_version = base_version
+        self.current_version = current_version
