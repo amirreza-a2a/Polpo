@@ -78,8 +78,9 @@ class MarkdownEditorService:
             EntityNotFoundError: If the job does not exist.
             DomainError: If pre-commit file validation fails.
         """
-        # 1. Durable Watermark Reservation & OCC Check 1
+        # 1. Durable Watermark Reservation & OCC Check 1 (BEGIN IMMEDIATE)
         with self.uow_factory.create() as uow:
+            uow.begin_immediate()
             job = uow.jobs.get_by_id(job_id)
             if not job:
                 raise EntityNotFoundError("Job", job_id)
@@ -116,8 +117,9 @@ class MarkdownEditorService:
         if not self.storage.exists(output_handle):
             raise DomainError(f"Pre-commit invariant failed: Staged markdown '{filename}' missing from disk.")
 
-        # 4. Final OCC Check 2 & SQLite Pointer Commit
+        # 4. Final OCC Check 2 & SQLite Pointer Commit (BEGIN IMMEDIATE)
         with self.uow_factory.create() as uow:
+            uow.begin_immediate()
             job_record = uow.jobs.get_by_id(job_id)
             if not job_record:
                 raise EntityNotFoundError("Job", job_id)

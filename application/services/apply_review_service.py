@@ -134,9 +134,10 @@ class ApplyReviewService:
                 success=True,
             )
 
-        # 2. DURABLE WATERMARK RESERVATION (Committed to SQLite BEFORE staging!)
+        # 2. DURABLE WATERMARK RESERVATION (BEGIN IMMEDIATE committed to SQLite BEFORE staging!)
         reserved_crop_versions: Dict[str, int] = {}
         with self.uow_factory.create() as uow:
+            uow.begin_immediate()
             job_record = uow.jobs.get_by_id(job_id)
             if not job_record:
                 raise EntityNotFoundError("Job", job_id)
@@ -423,6 +424,7 @@ class ApplyReviewService:
 
         # 7. SQLite-Authoritative Active State Commit (BEGIN IMMEDIATE)
         with self.uow_factory.create() as uow:
+            uow.begin_immediate()
             job_record = uow.jobs.get_by_id(job_id)
             if not job_record:
                 raise EntityNotFoundError("Job", job_id)

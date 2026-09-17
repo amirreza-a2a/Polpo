@@ -58,6 +58,18 @@ class SQLiteUnitOfWork(IUnitOfWork):
         if self._conn and self._conn.in_transaction:
             self._conn.execute("ROLLBACK")
 
+    def begin_immediate(self) -> None:
+        """
+        Explicitly starts an IMMEDIATE transaction on the active connection.
+        Acquires SQLite RESERVED lock immediately to serialize write-sensitive
+        read-modify-write workflows (e.g. version watermark allocation).
+        """
+        if not self._conn:
+            raise RuntimeError("Cannot begin immediate transaction: connection is not open.")
+        if self._conn.in_transaction:
+            raise RuntimeError("Cannot begin immediate transaction: a transaction is already active.")
+        self._conn.execute("BEGIN IMMEDIATE")
+
 
 class SQLiteUnitOfWorkFactory(IUnitOfWorkFactory):
     def __init__(self, db_manager: SQLiteDatabaseManager):

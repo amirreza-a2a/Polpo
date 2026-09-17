@@ -41,6 +41,13 @@ class IUnitOfWork(ABC):
     def rollback(self) -> None:
         pass
 
+    def begin_immediate(self) -> None:
+        """
+        Starts an explicit IMMEDIATE transaction to acquire a write lock immediately.
+        Default no-op for test doubles; overridden by concrete transactional units.
+        """
+        pass
+
 
 class IUnitOfWorkFactory(ABC):
     """Factory interface for producing scoped IUnitOfWork instances."""

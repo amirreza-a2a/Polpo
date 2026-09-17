@@ -191,6 +191,77 @@ class TestSQLiteConcurrency(unittest.TestCase):
         self.assertEqual(reader_errors, [])
         self.assertGreater(len(read_counts), 0)
 
+    def test_uow_begin_immediate_lifecycle(self):
+        """Verifies begin_immediate acquires an immediate transaction and enforces single-transaction rules."""
+        with self.uow_factory.create() as uow:
+            self.assertFalse(uow._conn.in_transaction)
+            uow.begin_immediate()
+            self.assertTrue(uow._conn.in_transaction)
+
+            # Re-calling begin_immediate while active transaction exists raises RuntimeError
+            with self.assertRaises(RuntimeError):
+                uow.begin_immediate()
+
+            uow.commit()
+            self.assertFalse(uow._conn.in_transaction)
+
+    def test_concurrent_canonical_version_reservation_serialized(self):
+        """
+        Launches 10 concurrent worker threads attempting to reserve consecutive canonical
+        version watermarks on the same job using uow.begin_immediate().
+        Verifies all allocations are strictly serialized with zero duplicates and zero collisions.
+        """
+        with self.uow_factory.create() as uow:
+            job = uow.jobs.save(
+                Job(
+                    id=None,
+                    file_name="test.pdf",
+                    file_path="/tmp/test.pdf",
+                    total_pages=1,
+                    status=JobStatus.DONE,
+                    output_artifact_version_watermark=0,
+                )
+            )
+            job_id = job.id
+            uow.commit()
+
+        num_threads = 10
+        barrier = threading.Barrier(num_threads)
+        allocated_versions: List[int] = []
+        alloc_lock = threading.Lock()
+        thread_errors: List[Exception] = []
+
+        def reservation_worker():
+            barrier.wait()
+            try:
+                with self.uow_factory.create() as uow:
+                    uow.begin_immediate()
+                    j = uow.jobs.get_by_id(job_id)
+                    next_ver = j.output_artifact_version_watermark + 1
+                    j.output_artifact_version_watermark = next_ver
+                    uow.jobs.save(j)
+                    uow.commit()
+                    with alloc_lock:
+                        allocated_versions.append(next_ver)
+            except Exception as e:
+                with alloc_lock:
+                    thread_errors.append(e)
+
+        threads = [threading.Thread(target=reservation_worker) for _ in range(num_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(thread_errors, [])
+        self.assertEqual(len(allocated_versions), num_threads)
+        # Verify all 10 allocated versions are distinct (1 through 10)
+        self.assertEqual(sorted(allocated_versions), list(range(1, num_threads + 1)))
+
+        with self.uow_factory.create() as uow:
+            final_job = uow.jobs.get_by_id(job_id)
+            self.assertEqual(final_job.output_artifact_version_watermark, num_threads)
+
 
 if __name__ == "__main__":
     unittest.main()
