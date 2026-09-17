@@ -26,6 +26,9 @@ ApplicationWindow {
         if (typeof markdownViewerController !== "undefined" && markdownViewerController) {
             markdownViewerController.loadDocument(jobId);
         }
+        if (typeof markdownEditorController !== "undefined" && markdownEditorController) {
+            markdownEditorController.loadSource(jobId);
+        }
         sidebar.currentTab = 6;
         stackLayout.currentIndex = 6;
     }

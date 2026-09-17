@@ -18,6 +18,7 @@ from interfaces.desktop.controllers import (
     QuickConvertController,
     DocumentViewerController,
     MarkdownViewerController,
+    MarkdownEditorController,
 )
 from interfaces.desktop.models import (
     JobQueueModel,
@@ -30,13 +31,16 @@ from interfaces.desktop.models import (
 def wire_review_workspace_sync(
     document_viewer_controller: DocumentViewerController,
     markdown_viewer_controller: MarkdownViewerController,
+    markdown_editor_controller: Optional[MarkdownEditorController] = None,
 ) -> None:
     """
-    Wires bidirectional interaction between PDF Document Viewer and Markdown Viewer:
+    Wires bidirectional interaction between PDF Document Viewer, Markdown Viewer, and Markdown Editor:
     1. Selecting an image in Markdown selects and centers the region in the PDF viewer,
        tracking the exact occurrence ID.
     2. Selecting a visual region bounding box in PDF viewer scrolls to and highlights
        that exact occurrence in Markdown if known, or falls back to primary occurrence.
+    3. Saving in Markdown Editor immediately refreshes the rendered Markdown Viewer.
+    4. Advancing canonical document version in Markdown Viewer notifies the Markdown Editor.
     Uses identity guards to prevent recursive signal loops.
     """
     originating_occurrences: Dict[str, str] = {}
@@ -79,6 +83,19 @@ def wire_review_workspace_sync(
     markdown_viewer_controller.documentChanged.connect(_on_document_changed)
     document_viewer_controller.selectionChanged.connect(_on_pdf_selection_changed)
     document_viewer_controller.regionArtifactCommitted.connect(_on_region_artifact_committed)
+
+    if markdown_editor_controller is not None:
+        def _on_editor_saved(new_version: int):
+            active_job = markdown_editor_controller.activeJobId
+            if active_job > 0:
+                markdown_viewer_controller.loadDocument(active_job)
+
+        def _on_viewer_version_changed():
+            active_ver = markdown_viewer_controller.activeVersion
+            markdown_editor_controller.notifyCanonicalDocumentAdvance(active_ver)
+
+        markdown_editor_controller.saved.connect(_on_editor_saved)
+        markdown_viewer_controller.activeVersionChanged.connect(_on_viewer_version_changed)
 
 
 def create_app(
@@ -155,9 +172,16 @@ def create_app(
     markdown_viewer_controller = MarkdownViewerController(
         viewer_service=container.markdown_viewer_service,
     )
+    markdown_editor_controller = MarkdownEditorController(
+        editor_service=container.markdown_editor_service,
+    )
 
-    # Wire Bidirectional Synchronization between Document Viewer and Markdown Viewer
-    wire_review_workspace_sync(document_viewer_controller, markdown_viewer_controller)
+    # Wire Bidirectional Synchronization between Document Viewer, Markdown Viewer, and Markdown Editor
+    wire_review_workspace_sync(
+        document_viewer_controller,
+        markdown_viewer_controller,
+        markdown_editor_controller,
+    )
 
     # 5. QAbstractListModel ViewModels
     job_queue_model = JobQueueModel(
@@ -186,6 +210,7 @@ def create_app(
     container.quick_convert_controller = quick_convert_controller
     container.document_viewer_controller = document_viewer_controller
     container.markdown_viewer_controller = markdown_viewer_controller
+    container.markdown_editor_controller = markdown_editor_controller
     container.job_queue_model = job_queue_model
     container.job_history_model = job_history_model
     container.api_slot_model = api_slot_model
@@ -201,6 +226,7 @@ def create_app(
     ctx.setContextProperty("quickConvertController", quick_convert_controller)
     ctx.setContextProperty("documentViewerController", document_viewer_controller)
     ctx.setContextProperty("markdownViewerController", markdown_viewer_controller)
+    ctx.setContextProperty("markdownEditorController", markdown_editor_controller)
     ctx.setContextProperty("jobQueueModel", job_queue_model)
     ctx.setContextProperty("jobHistoryModel", job_history_model)
     ctx.setContextProperty("apiSlotModel", api_slot_model)
