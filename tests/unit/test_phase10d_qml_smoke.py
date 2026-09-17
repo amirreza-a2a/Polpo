@@ -213,17 +213,18 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
         """
         canonical_handles = ["nw", "n", "ne", "w", "e", "sw", "s", "se"]
 
-        # Initially no selection -> zero handles exist in scene graph
+        # Initially no selection -> selectionManipulator is hidden
         self.app.processEvents()
-        for h in canonical_handles:
-            handle_item = find_quick_item(self.view_root, f"handle_{h}")
-            self.assertIsNone(handle_item, f"Handle '{h}' must not exist when no region is selected")
+        manipulator = find_quick_item(self.view_root, "selectionManipulator")
+        self.assertIsNotNone(manipulator)
+        self.assertFalse(manipulator.property("visible"), "selectionManipulator must be hidden when no region is selected")
 
         # Select the region in the controller
         self.controller.selectRegion("test-r1")
         self.app.processEvents()
 
-        # All 8 handles must now exist as instantiated QML visual delegates
+        # Manipulator and all 8 handles must now be visible
+        self.assertTrue(manipulator.property("visible"), "selectionManipulator must be visible when region is selected")
         for h in canonical_handles:
             handle_item = find_quick_item(self.view_root, f"handle_{h}")
             self.assertIsNotNone(handle_item, f"Handle delegate 'handle_{h}' must instantiate at runtime")
@@ -236,13 +237,11 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
             self.assertIsNotNone(handle_area, f"MouseArea 'handleArea_{h}' must exist for handle '{h}'")
             self.assertTrue(handle_area.property("enabled"))
 
-        # Deselect region -> handles must be cleanly destroyed/removed from QML scene
+        # Deselect region -> selectionManipulator must be hidden
         self.controller.clearSelection()
         self.app.processEvents()
 
-        for h in canonical_handles:
-            handle_item = find_quick_item(self.view_root, f"handle_{h}")
-            self.assertIsNone(handle_item, f"Handle '{h}' must be destroyed when region is deselected")
+        self.assertFalse(manipulator.property("visible"), "selectionManipulator must be hidden when region is deselected")
 
         # Verify no QML critical errors or warnings were logged during handle lifecycle
         critical_errors = [
@@ -362,15 +361,17 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
 
         box_rect = find_quick_item(self.view_root, "boxRect_test-r1")
         self.assertIsNotNone(box_rect)
-        if hasattr(box_rect, "childAt"):
+        manipulator = find_quick_item(self.view_root, "selectionManipulator")
+        target_container = manipulator if manipulator is not None else box_rect
+        if hasattr(target_container, "childAt"):
             # nw handle is at (0, 0)
-            handle_child = box_rect.childAt(0.0, 0.0)
+            handle_child = target_container.childAt(0.0, 0.0)
             self.assertIsNotNone(handle_child)
             self.assertEqual(handle_child.objectName(), "handle_nw")
-            # center of box (80, 80) is bodyDragArea
-            body_child = box_rect.childAt(80.0, 80.0)
+            # center of box (80, 80) is bodyDragArea / manipulatorDragArea
+            body_child = target_container.childAt(80.0, 80.0)
             self.assertIsNotNone(body_child)
-            self.assertEqual(body_child.objectName(), "bodyDragArea_test-r1")
+            self.assertIn(body_child.objectName(), ["bodyDragArea_test-r1", "manipulatorDragArea"])
 
         # 6. Verify panZoomArea captures margin gestures
         pan_zoom_area = find_quick_item(self.view_root, "panZoomArea")

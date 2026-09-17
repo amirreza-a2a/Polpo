@@ -11,9 +11,36 @@ import "../components"
 Item {
     id: viewerViewRoot
     objectName: "documentViewerView"
-    anchors.fill: parent
 
-    property var controller: documentViewerController
+    property var controller: typeof documentViewerController !== "undefined" ? documentViewerController : null
+
+    onVisibleChanged: {
+        if (visible && viewportArea) {
+            viewportArea.syncViewportAndScene();
+        }
+    }
+
+    onControllerChanged: {
+        if (viewportArea) {
+            viewportArea.syncViewportAndScene();
+        }
+    }
+
+    Connections {
+        target: viewerViewRoot.controller
+        function onPageChanged() {
+            if (viewportArea) {
+                viewportArea.syncViewportAndScene();
+            }
+        }
+        function onInteractionModeChanged() {
+            var ctrl = viewerViewRoot.controller;
+            if (ctrl) {
+                panSelectBtn.checked = (ctrl.interactionMode === "pan_select");
+                createRegionBtn.checked = (ctrl.interactionMode === "create_region");
+            }
+        }
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -22,118 +49,179 @@ Item {
         // =====================================================================
         // Top Toolbar: Navigation, Zoom & Metrics
         // =====================================================================
+        // =====================================================================
+        // Top Toolbar: Responsive Two-Tier Layout (Tier 1: Nav/Zoom, Tier 2: Modes/Edit)
+        // =====================================================================
         Rectangle {
+            id: toolbarContainer
+            objectName: "toolbarContainer"
             Layout.fillWidth: true
-            Layout.preferredHeight: 52
+            implicitHeight: toolbarContent.implicitHeight + 12
             color: "#1e1e24"
             border.color: "#2a2a35"
             border.width: 1
 
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 16
-                anchors.rightMargin: 16
-                spacing: 12
+            ColumnLayout {
+                id: toolbarContent
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 6
+                spacing: 6
 
-                // Page Navigation
-                Button {
-                    text: "< Prev"
-                    enabled: controller && controller.currentPage > 1 && !controller.isLoading
-                    onClicked: controller.previousPage()
+                // Tier 1: Document Navigation, Zoom & Metrics
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: 6
+
+                    // Page Navigation Group
+                    RowLayout {
+                        spacing: 4
+                        Button {
+                            text: "<"
+                            implicitWidth: 32
+                            enabled: controller && controller.currentPage > 1 && !controller.isLoading
+                            onClicked: controller.previousPage()
+                        }
+
+                        Text {
+                            text: controller ? "p. " + controller.currentPage + " / " + Math.max(1, controller.totalPages) : "p. 1 / 1"
+                            color: "#f0f0f0"
+                            font.pixelSize: 12
+                            font.bold: true
+                            verticalAlignment: Text.AlignVCenter
+                        }
+
+                        Button {
+                            text: ">"
+                            implicitWidth: 32
+                            enabled: controller && controller.currentPage < controller.totalPages && !controller.isLoading
+                            onClicked: controller.nextPage()
+                        }
+                    }
+
+                    // Zoom Controls Group
+                    RowLayout {
+                        spacing: 4
+                        Button {
+                            text: "-"
+                            implicitWidth: 28
+                            enabled: controller && controller.zoom > 0.2
+                            onClicked: controller.setZoom(controller.zoom - 0.15)
+                        }
+
+                        Text {
+                            text: controller ? Math.round(controller.zoom * 100) + "%" : "100%"
+                            color: "#e0e0e0"
+                            font.pixelSize: 11
+                            Layout.preferredWidth: 36
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+
+                        Button {
+                            text: "+"
+                            implicitWidth: 28
+                            enabled: controller && controller.zoom < 5.0
+                            onClicked: controller.setZoom(controller.zoom + 0.15)
+                        }
+
+                        Button {
+                            text: "Fit"
+                            implicitWidth: 42
+                            enabled: controller && !controller.isLoading
+                            onClicked: controller.fitToPage()
+                        }
+
+                        Button {
+                            text: "1:1"
+                            implicitWidth: 38
+                            enabled: controller && (controller.zoom !== 1.0 || controller.panX !== 0 || controller.panY !== 0)
+                            onClicked: controller.resetView()
+                        }
+                    }
+
+                    // Region Count Badge
+                    Rectangle {
+                        height: 24
+                        width: regionCountText.implicitWidth + 12
+                        radius: 12
+                        color: "#283044"
+                        border.color: "#00b4d8"
+                        visible: controller !== null
+
+                        Text {
+                            id: regionCountText
+                            anchors.centerIn: parent
+                            text: controller ? controller.activeRegions.length + " Regions" : "0 Regions"
+                            color: "#00b4d8"
+                            font.pixelSize: 10
+                            font.bold: true
+                        }
+                    }
                 }
 
-                Text {
-                    text: controller ? "Page " + controller.currentPage + " / " + Math.max(1, controller.totalPages) : "Page 1 / 1"
-                    color: "#f0f0f0"
-                    font.pixelSize: 13
-                    font.bold: true
-                }
+                // Tier 2: Pointer Tool Modes & Region Review Controls
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: 6
 
-                Button {
-                    text: "Next >"
-                    enabled: controller && controller.currentPage < controller.totalPages && !controller.isLoading
-                    onClicked: controller.nextPage()
-                }
+                    ButtonGroup {
+                        id: modeButtonGroup
+                    }
 
-                Rectangle {
-                    width: 1
-                    Layout.preferredHeight: 24
-                    color: "#3a3a48"
-                }
+                    Button {
+                        id: panSelectBtn
+                        objectName: "panSelectButton"
+                        text: "Pan / Select"
+                        checkable: true
+                        checked: controller ? controller.interactionMode === "pan_select" : true
+                        ButtonGroup.group: modeButtonGroup
+                        enabled: controller && !controller.isLoading
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 400
+                        ToolTip.text: "Pan canvas (drag) & Select/resize regions"
+                        onClicked: {
+                            if (controller) controller.setInteractionMode("pan_select");
+                        }
+                    }
 
-                // Zoom Controls
-                Button {
-                    text: "-"
-                    enabled: controller && controller.zoom > 0.2
-                    onClicked: controller.setZoom(controller.zoom - 0.15)
-                }
+                    Button {
+                        id: createRegionBtn
+                        objectName: "createRegionButton"
+                        text: "+ New Region"
+                        checkable: true
+                        checked: controller ? controller.interactionMode === "create_region" : false
+                        ButtonGroup.group: modeButtonGroup
+                        enabled: controller && !controller.isLoading
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 400
+                        ToolTip.text: "Create region: drag anywhere on page to draw a new box"
+                        onClicked: {
+                            if (controller) controller.setInteractionMode("create_region");
+                        }
+                    }
 
-                Text {
-                    text: controller ? Math.round(controller.zoom * 100) + "%" : "100%"
-                    color: "#e0e0e0"
-                    font.pixelSize: 12
-                    Layout.preferredWidth: 44
-                    horizontalAlignment: Text.AlignHCenter
-                }
+                    Button {
+                        id: deleteRegionBtn
+                        objectName: "deleteRegionButton"
+                        text: "Delete Region"
+                        enabled: controller && controller.hasSelection && !controller.isLoading
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 400
+                        ToolTip.text: "Delete selected visual region"
+                        onClicked: controller.deleteSelectedRegion()
+                    }
 
-                Button {
-                    text: "+"
-                    enabled: controller && controller.zoom < 5.0
-                    onClicked: controller.setZoom(controller.zoom + 0.15)
-                }
-
-                Button {
-                    text: "Fit to Page"
-                    enabled: controller && !controller.isLoading
-                    onClicked: controller.fitToPage()
-                }
-
-                Button {
-                    text: "Reset 100%"
-                    enabled: controller && (controller.zoom !== 1.0 || controller.panX !== 0 || controller.panY !== 0)
-                    onClicked: controller.resetView()
-                }
-
-                Rectangle {
-                    width: 1
-                    Layout.preferredHeight: 24
-                    color: "#3a3a48"
-                }
-
-                // Phase 10D Review & Editing Controls
-                Button {
-                    id: deleteRegionBtn
-                    objectName: "deleteRegionButton"
-                    text: "Delete Region"
-                    enabled: controller && controller.hasSelection && !controller.isLoading
-                    onClicked: controller.deleteSelectedRegion()
-                }
-
-                Button {
-                    id: resetToAiBtn
-                    objectName: "resetToAiButton"
-                    text: "Reset to AI"
-                    enabled: controller && controller.canResetSelectedToAi && !controller.isLoading
-                    onClicked: controller.resetSelectedRegionToAi()
-                }
-
-                Item { Layout.fillWidth: true }
-
-                // Region Count Badge
-                Rectangle {
-                    Layout.preferredHeight: 26
-                    Layout.preferredWidth: regionCountText.implicitWidth + 16
-                    radius: 13
-                    color: "#283044"
-                    border.color: "#00b4d8"
-
-                    Text {
-                        id: regionCountText
-                        anchors.centerIn: parent
-                        text: controller ? controller.activeRegions.length + " Regions" : "0 Regions"
-                        color: "#00b4d8"
-                        font.pixelSize: 11
-                        font.bold: true
+                    Button {
+                        id: resetToAiBtn
+                        objectName: "resetToAiButton"
+                        text: "Reset to AI"
+                        enabled: controller && controller.canResetSelectedToAi && !controller.isLoading
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 400
+                        ToolTip.text: "Reset selected region back to original AI detected bounds"
+                        onClicked: controller.resetSelectedRegionToAi()
                     }
                 }
             }
@@ -151,14 +239,18 @@ Item {
             clip: true
 
             function syncViewportAndScene() {
-                if (controller && width > 0 && height > 0) {
-                    controller.setViewportDimensions(width, height);
-                    controller.setItemDimensions(width, height);
+                var ctrl = viewerViewRoot.controller;
+                if (ctrl && width >= 50 && height >= 50) {
+                    ctrl.setViewportDimensions(width, height);
+                    ctrl.setItemDimensions(width, height);
                 }
             }
 
             onWidthChanged: syncViewportAndScene()
             onHeightChanged: syncViewportAndScene()
+            onVisibleChanged: {
+                if (visible) syncViewportAndScene()
+            }
             Component.onCompleted: syncViewportAndScene()
 
             // Viewport Canvas Pan & Zoom Mouse Interaction (for margin space & wheel)
@@ -168,6 +260,10 @@ Item {
                 anchors.fill: parent
                 hoverEnabled: true
                 acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+                cursorShape: {
+                    if (!controller || controller.zoom <= 1.0) return Qt.ArrowCursor;
+                    return pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor;
+                }
 
                 property real lastX: 0
                 property real lastY: 0

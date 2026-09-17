@@ -107,7 +107,10 @@ ApplicationWindow {
                 ApiKeyView {}
                 PromptEditorView {}
                 SettingsView {}
-                ReviewWorkspaceView {}
+                ReviewWorkspaceView {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                }
             }
         }
     }

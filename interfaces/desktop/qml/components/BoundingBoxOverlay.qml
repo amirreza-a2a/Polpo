@@ -14,6 +14,7 @@ Item {
     property var controller: null
     property var viewportArea: null
     property string fitMode: "preserve_aspect_fit"
+    readonly property real panDragThreshold: 4.0 // Viewport pixels before canvas pan engages
 
     // Converts local coordinates within an item to viewport space
     function mapToViewport(localX, localY, item) {
@@ -27,12 +28,10 @@ Item {
         return { x: (itemPt.x * zoom) - panX, y: (itemPt.y * zoom) - panY };
     }
 
-    // Trigger re-computation on dimensions change, active regions change, or transient editing
+    // Trigger re-computation only on dimensions change, active regions change, or fitMode change
     property var overlayItems: {
         if (!controller || width <= 0 || height <= 0) return [];
         var _active = controller.activeRegions;
-        var _sel = controller.selectedRegionId;
-        var _trans = controller.transientBox;
         return controller.getOverlayRects(width, height, fitMode);
     }
 
@@ -58,50 +57,94 @@ Item {
         height: overlayRoot.displayedRect ? (overlayRoot.displayedRect.height || 0) : 0
         z: 0
         hoverEnabled: true
-        cursorShape: (controller && controller.editorState === "creating") ? Qt.CrossCursor : Qt.ArrowCursor
+        cursorShape: {
+            if (controller && controller.interactionMode === "create_region") {
+                return Qt.CrossCursor;
+            }
+            if (!controller || controller.zoom <= 1.0) {
+                return Qt.ArrowCursor;
+            }
+            return isPanDragging ? Qt.ClosedHandCursor : Qt.OpenHandCursor;
+        }
         acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
 
-        property real lastPanX: 0
-        property real lastPanY: 0
-        property bool isPanning: false
+        property real startStationaryX: 0
+        property real startStationaryY: 0
+        property real lastStationaryX: 0
+        property real lastStationaryY: 0
+        property bool isPanDragging: false
 
         onPressed: function(mouse) {
+            var stationaryPt = overlayRoot.mapToViewport(mouse.x, mouse.y, emptyArea);
+            startStationaryX = stationaryPt.x;
+            startStationaryY = stationaryPt.y;
+            lastStationaryX = stationaryPt.x;
+            lastStationaryY = stationaryPt.y;
+            isPanDragging = false;
+
             if (mouse.button === Qt.RightButton || mouse.button === Qt.MiddleButton) {
-                isPanning = true;
-                lastPanX = mouse.x;
-                lastPanY = mouse.y;
+                isPanDragging = true;
             } else if (mouse.button === Qt.LeftButton && controller) {
-                isPanning = false;
-                var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, emptyArea);
-                controller.startCreateManual(vpPt.x, vpPt.y);
+                if (controller.interactionMode === "create_region") {
+                    var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, emptyArea);
+                    controller.startCreateManual(vpPt.x, vpPt.y);
+                }
+                // In pan_select mode, do not pan or deselect on press; wait for drag or release.
             }
         }
 
         onPositionChanged: function(mouse) {
-            if (isPanning && controller) {
-                var dx = mouse.x - lastPanX;
-                var dy = mouse.y - lastPanY;
-                controller.panBy(-dx, -dy);
-                lastPanX = mouse.x;
-                lastPanY = mouse.y;
-            } else if (pressed && controller && controller.editorState === "creating") {
-                var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, emptyArea);
-                controller.updateCreateManual(vpPt.x, vpPt.y);
+            var stationaryPt = overlayRoot.mapToViewport(mouse.x, mouse.y, emptyArea);
+
+            if (controller && controller.interactionMode === "create_region") {
+                if (pressed && controller.editorState === "creating") {
+                    var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, emptyArea);
+                    controller.updateCreateManual(vpPt.x, vpPt.y);
+                }
+                return;
+            }
+
+            // In pan_select mode (or right/middle button pan in either mode):
+            if (pressed && controller) {
+                if (!isPanDragging) {
+                    var distX = stationaryPt.x - startStationaryX;
+                    var distY = stationaryPt.y - startStationaryY;
+                    if ((distX * distX + distY * distY) >= (overlayRoot.panDragThreshold * overlayRoot.panDragThreshold)) {
+                        isPanDragging = true;
+                        lastStationaryX = stationaryPt.x;
+                        lastStationaryY = stationaryPt.y;
+                    }
+                }
+
+                if (isPanDragging) {
+                    var dx = stationaryPt.x - lastStationaryX;
+                    var dy = stationaryPt.y - lastStationaryY;
+                    controller.panBy(-dx, -dy);
+                    lastStationaryX = stationaryPt.x;
+                    lastStationaryY = stationaryPt.y;
+                }
             }
         }
 
         onReleased: function(mouse) {
-            if (isPanning) {
-                isPanning = false;
-            } else if (mouse.button === Qt.LeftButton && controller && controller.editorState === "creating") {
-                controller.commitCreateManual();
+            if (controller && controller.interactionMode === "create_region") {
+                if (mouse.button === Qt.LeftButton && controller.editorState === "creating") {
+                    controller.commitCreateManual();
+                }
+            } else if (controller && controller.interactionMode === "pan_select") {
+                if (mouse.button === Qt.LeftButton) {
+                    if (!isPanDragging) {
+                        // Click without drag: deselect
+                        controller.clearSelection();
+                    }
+                }
             }
+            isPanDragging = false;
         }
 
         onCanceled: function() {
-            if (isPanning) {
-                isPanning = false;
-            } else if (controller && controller.editorState === "creating") {
+            isPanDragging = false;
+            if (controller && controller.editorState === "creating") {
                 controller.cancelCreateManual();
             }
         }
@@ -120,6 +163,7 @@ Item {
     // =========================================================================
     Repeater {
         id: regionRepeater
+        objectName: "regionRepeater"
         model: overlayRoot.overlayItems
 
         delegate: Rectangle {
@@ -129,7 +173,7 @@ Item {
             y: modelData.y
             width: modelData.width
             height: modelData.height
-            z: modelData.is_selected ? 5 : 1
+            z: boxRect.isSelected ? 5 : 1
 
             property string regionId: modelData.region_id
             property bool isSelected: controller ? controller.selectedRegionId === regionId : (modelData.is_selected || false)
@@ -177,7 +221,13 @@ Item {
                 z: 1
                 hoverEnabled: true
                 acceptedButtons: Qt.LeftButton
-                cursorShape: boxRect.isSelected ? Qt.SizeAllCursor : Qt.PointingHandCursor
+                enabled: controller ? controller.interactionMode === "pan_select" : true
+                cursorShape: {
+                    if (controller && controller.interactionMode === "create_region") {
+                        return Qt.CrossCursor;
+                    }
+                    return boxRect.isSelected ? Qt.SizeAllCursor : Qt.PointingHandCursor;
+                }
 
                 ToolTip.visible: bodyDragArea.containsMouse && !bodyDragArea.pressed
                 ToolTip.delay: 400
@@ -213,70 +263,502 @@ Item {
                     }
                 }
             }
+        }
+    }
 
-            // 8 Resize Handles (rendered exclusively for the currently selected region)
-            Repeater {
-                id: handlesRepeater
-                model: boxRect.isSelected && controller ? controller.getHandleRects(0, 0, boxRect.width, boxRect.height, 8.0) : []
+    // =========================================================================
+    // Permanent Selection Manipulator & 8 Static Resize Handles (Architecture A)
+    // =========================================================================
+    Item {
+        id: selectionManipulator
+        objectName: "selectionManipulator"
+        property var controller: overlayRoot.controller
+        visible: Boolean(controller && controller.hasSelection && controller.selectedItemRect && controller.selectedItemRect.width > 0)
+        x: controller && controller.selectedItemRect ? (controller.selectedItemRect.x || 0) : 0
+        y: controller && controller.selectedItemRect ? (controller.selectedItemRect.y || 0) : 0
+        width: controller && controller.selectedItemRect ? (controller.selectedItemRect.width || 0) : 0
+        height: controller && controller.selectedItemRect ? (controller.selectedItemRect.height || 0) : 0
+        z: 15
 
-                delegate: Rectangle {
-                    id: handleItem
-                    objectName: "handle_" + modelData.handle
-                    x: modelData.x
-                    y: modelData.y
-                    width: modelData.width
-                    height: modelData.height
-                    color: "#ffffff"
-                    border.color: "#0077b6"
-                    border.width: 1
-                    radius: 1
-                    z: 10
+                // Visual selection highlight border
+        Rectangle {
+            anchors.fill: parent
+            color: "transparent"
+            border.color: "#00f0ff"
+            border.width: 2
+            radius: 2
+        }
 
-                    property string handleType: modelData.handle
+        // Body Drag Interaction for Selected Region
+        MouseArea {
+            id: manipulatorDragArea
+            objectName: "manipulatorDragArea"
+            anchors.fill: parent
+            z: 1
+            hoverEnabled: true
+            acceptedButtons: Qt.LeftButton
+            enabled: controller ? controller.interactionMode === "pan_select" : false
+            cursorShape: (controller && controller.interactionMode === "create_region") ? Qt.CrossCursor : Qt.SizeAllCursor
 
-                    property var handleCursor: {
-                        var h = modelData.handle;
-                        if (h === "nw" || h === "se") return Qt.SizeFDiagCursor;
-                        if (h === "ne" || h === "sw") return Qt.SizeBDiagCursor;
-                        if (h === "n" || h === "s") return Qt.SizeVerCursor;
-                        if (h === "w" || h === "e") return Qt.SizeHorCursor;
-                        return Qt.ArrowCursor;
+            ToolTip.visible: manipulatorDragArea.containsMouse && !manipulatorDragArea.pressed && controller && controller.selectedRegion
+            ToolTip.delay: 400
+            ToolTip.text: {
+                var sel = controller ? controller.selectedRegion : null;
+                if (!sel) return "";
+                return "Region ID: " + (sel.region_id || "") + "\n" +
+                       "Origin: " + (sel.origin || "") + "\n" +
+                       "Status: " + (sel.review_status || "") + "\n" +
+                       "BBox: [" + (sel.effective_ymin || 0) + ", " + (sel.effective_xmin || 0) +
+                       ", " + (sel.effective_ymax || 0) + ", " + (sel.effective_xmax || 0) + "]";
+            }
+
+            onPressed: function(mouse) {
+                if (mouse.button === Qt.LeftButton && controller) {
+                    var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, manipulatorDragArea);
+                    controller.startDrag(controller.selectedRegionId, vpPt.x, vpPt.y);
+                }
+            }
+
+            onPositionChanged: function(mouse) {
+                if (pressed && controller && controller.editorState === "dragging") {
+                    var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, manipulatorDragArea);
+                    controller.updateDrag(vpPt.x, vpPt.y);
+                }
+            }
+
+            onReleased: function(mouse) {
+                if (mouse.button === Qt.LeftButton && controller && controller.editorState === "dragging") {
+                    controller.commitDrag();
+                }
+            }
+
+            onCanceled: function() {
+                if (controller && controller.editorState === "dragging") {
+                    controller.cancelDrag();
+                }
+            }
+        }
+
+        // 8 Static Resize Handles (permanent QML Items; zero Repeater recreations)
+        // 1. Top-Left (NW)
+        Rectangle {
+            id: handle_nw
+            objectName: "handle_nw"
+            property string handleType: "nw"
+            x: -4
+            y: -4
+            width: 8
+            height: 8
+            color: "#ffffff"
+            border.color: "#0077b6"
+            border.width: 1
+            radius: 1
+            z: 10
+
+            MouseArea {
+                id: handleArea_nw
+                objectName: "handleArea_nw"
+                anchors.fill: parent
+                anchors.margins: -4
+                hoverEnabled: true
+                cursorShape: Qt.SizeFDiagCursor
+                acceptedButtons: Qt.LeftButton
+                enabled: controller ? controller.interactionMode === "pan_select" : false
+
+                onPressed: function(mouse) {
+                    if (controller) {
+                        var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, handleArea_nw);
+                        controller.startResize(controller.selectedRegionId, "nw", vpPt.x, vpPt.y);
                     }
+                }
 
-                    MouseArea {
-                        id: handleMouseArea
-                        objectName: "handleArea_" + modelData.handle
-                        anchors.fill: parent
-                        anchors.margins: -4 // Expanded hit target for smooth mouse interaction
-                        hoverEnabled: true
-                        cursorShape: handleItem.handleCursor
-                        acceptedButtons: Qt.LeftButton
+                onPositionChanged: function(mouse) {
+                    if (pressed && controller && controller.editorState === "resizing") {
+                        var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, handleArea_nw);
+                        controller.updateResize(vpPt.x, vpPt.y);
+                    }
+                }
 
-                        onPressed: function(mouse) {
-                            if (controller) {
-                                var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, handleMouseArea);
-                                controller.startResize(boxRect.regionId, handleItem.handleType, vpPt.x, vpPt.y);
-                            }
-                        }
+                onReleased: function(mouse) {
+                    if (controller && controller.editorState === "resizing") {
+                        controller.commitResize();
+                    }
+                }
 
-                        onPositionChanged: function(mouse) {
-                            if (pressed && controller && controller.editorState === "resizing") {
-                                var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, handleMouseArea);
-                                controller.updateResize(vpPt.x, vpPt.y);
-                            }
-                        }
+                onCanceled: function() {
+                    if (controller && controller.editorState === "resizing") {
+                        controller.cancelResize();
+                    }
+                }
+            }
+        }
 
-                        onReleased: function(mouse) {
-                            if (controller && controller.editorState === "resizing") {
-                                controller.commitResize();
-                            }
-                        }
+        // 2. Top-Center (N)
+        Rectangle {
+            id: handle_n
+            objectName: "handle_n"
+            property string handleType: "n"
+            x: Math.round((parent.width - 8) / 2)
+            y: -4
+            width: 8
+            height: 8
+            color: "#ffffff"
+            border.color: "#0077b6"
+            border.width: 1
+            radius: 1
+            z: 10
 
-                        onCanceled: function() {
-                            if (controller && controller.editorState === "resizing") {
-                                controller.cancelResize();
-                            }
-                        }
+            MouseArea {
+                id: handleArea_n
+                objectName: "handleArea_n"
+                anchors.fill: parent
+                anchors.margins: -4
+                hoverEnabled: true
+                cursorShape: Qt.SizeVerCursor
+                acceptedButtons: Qt.LeftButton
+                enabled: controller ? controller.interactionMode === "pan_select" : false
+
+                onPressed: function(mouse) {
+                    if (controller) {
+                        var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, handleArea_n);
+                        controller.startResize(controller.selectedRegionId, "n", vpPt.x, vpPt.y);
+                    }
+                }
+
+                onPositionChanged: function(mouse) {
+                    if (pressed && controller && controller.editorState === "resizing") {
+                        var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, handleArea_n);
+                        controller.updateResize(vpPt.x, vpPt.y);
+                    }
+                }
+
+                onReleased: function(mouse) {
+                    if (controller && controller.editorState === "resizing") {
+                        controller.commitResize();
+                    }
+                }
+
+                onCanceled: function() {
+                    if (controller && controller.editorState === "resizing") {
+                        controller.cancelResize();
+                    }
+                }
+            }
+        }
+
+        // 3. Top-Right (NE)
+        Rectangle {
+            id: handle_ne
+            objectName: "handle_ne"
+            property string handleType: "ne"
+            x: parent.width - 4
+            y: -4
+            width: 8
+            height: 8
+            color: "#ffffff"
+            border.color: "#0077b6"
+            border.width: 1
+            radius: 1
+            z: 10
+
+            MouseArea {
+                id: handleArea_ne
+                objectName: "handleArea_ne"
+                anchors.fill: parent
+                anchors.margins: -4
+                hoverEnabled: true
+                cursorShape: Qt.SizeBDiagCursor
+                acceptedButtons: Qt.LeftButton
+                enabled: controller ? controller.interactionMode === "pan_select" : false
+
+                onPressed: function(mouse) {
+                    if (controller) {
+                        var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, handleArea_ne);
+                        controller.startResize(controller.selectedRegionId, "ne", vpPt.x, vpPt.y);
+                    }
+                }
+
+                onPositionChanged: function(mouse) {
+                    if (pressed && controller && controller.editorState === "resizing") {
+                        var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, handleArea_ne);
+                        controller.updateResize(vpPt.x, vpPt.y);
+                    }
+                }
+
+                onReleased: function(mouse) {
+                    if (controller && controller.editorState === "resizing") {
+                        controller.commitResize();
+                    }
+                }
+
+                onCanceled: function() {
+                    if (controller && controller.editorState === "resizing") {
+                        controller.cancelResize();
+                    }
+                }
+            }
+        }
+
+        // 4. Middle-Right (E)
+        Rectangle {
+            id: handle_e
+            objectName: "handle_e"
+            property string handleType: "e"
+            x: parent.width - 4
+            y: Math.round((parent.height - 8) / 2)
+            width: 8
+            height: 8
+            color: "#ffffff"
+            border.color: "#0077b6"
+            border.width: 1
+            radius: 1
+            z: 10
+
+            MouseArea {
+                id: handleArea_e
+                objectName: "handleArea_e"
+                anchors.fill: parent
+                anchors.margins: -4
+                hoverEnabled: true
+                cursorShape: Qt.SizeHorCursor
+                acceptedButtons: Qt.LeftButton
+                enabled: controller ? controller.interactionMode === "pan_select" : false
+
+                onPressed: function(mouse) {
+                    if (controller) {
+                        var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, handleArea_e);
+                        controller.startResize(controller.selectedRegionId, "e", vpPt.x, vpPt.y);
+                    }
+                }
+
+                onPositionChanged: function(mouse) {
+                    if (pressed && controller && controller.editorState === "resizing") {
+                        var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, handleArea_e);
+                        controller.updateResize(vpPt.x, vpPt.y);
+                    }
+                }
+
+                onReleased: function(mouse) {
+                    if (controller && controller.editorState === "resizing") {
+                        controller.commitResize();
+                    }
+                }
+
+                onCanceled: function() {
+                    if (controller && controller.editorState === "resizing") {
+                        controller.cancelResize();
+                    }
+                }
+            }
+        }
+
+        // 5. Bottom-Right (SE)
+        Rectangle {
+            id: handle_se
+            objectName: "handle_se"
+            property string handleType: "se"
+            x: parent.width - 4
+            y: parent.height - 4
+            width: 8
+            height: 8
+            color: "#ffffff"
+            border.color: "#0077b6"
+            border.width: 1
+            radius: 1
+            z: 10
+
+            MouseArea {
+                id: handleArea_se
+                objectName: "handleArea_se"
+                anchors.fill: parent
+                anchors.margins: -4
+                hoverEnabled: true
+                cursorShape: Qt.SizeFDiagCursor
+                acceptedButtons: Qt.LeftButton
+                enabled: controller ? controller.interactionMode === "pan_select" : false
+
+                onPressed: function(mouse) {
+                    if (controller) {
+                        var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, handleArea_se);
+                        controller.startResize(controller.selectedRegionId, "se", vpPt.x, vpPt.y);
+                    }
+                }
+
+                onPositionChanged: function(mouse) {
+                    if (pressed && controller && controller.editorState === "resizing") {
+                        var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, handleArea_se);
+                        controller.updateResize(vpPt.x, vpPt.y);
+                    }
+                }
+
+                onReleased: function(mouse) {
+                    if (controller && controller.editorState === "resizing") {
+                        controller.commitResize();
+                    }
+                }
+
+                onCanceled: function() {
+                    if (controller && controller.editorState === "resizing") {
+                        controller.cancelResize();
+                    }
+                }
+            }
+        }
+
+        // 6. Bottom-Center (S)
+        Rectangle {
+            id: handle_s
+            objectName: "handle_s"
+            property string handleType: "s"
+            x: Math.round((parent.width - 8) / 2)
+            y: parent.height - 4
+            width: 8
+            height: 8
+            color: "#ffffff"
+            border.color: "#0077b6"
+            border.width: 1
+            radius: 1
+            z: 10
+
+            MouseArea {
+                id: handleArea_s
+                objectName: "handleArea_s"
+                anchors.fill: parent
+                anchors.margins: -4
+                hoverEnabled: true
+                cursorShape: Qt.SizeVerCursor
+                acceptedButtons: Qt.LeftButton
+                enabled: controller ? controller.interactionMode === "pan_select" : false
+
+                onPressed: function(mouse) {
+                    if (controller) {
+                        var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, handleArea_s);
+                        controller.startResize(controller.selectedRegionId, "s", vpPt.x, vpPt.y);
+                    }
+                }
+
+                onPositionChanged: function(mouse) {
+                    if (pressed && controller && controller.editorState === "resizing") {
+                        var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, handleArea_s);
+                        controller.updateResize(vpPt.x, vpPt.y);
+                    }
+                }
+
+                onReleased: function(mouse) {
+                    if (controller && controller.editorState === "resizing") {
+                        controller.commitResize();
+                    }
+                }
+
+                onCanceled: function() {
+                    if (controller && controller.editorState === "resizing") {
+                        controller.cancelResize();
+                    }
+                }
+            }
+        }
+
+        // 7. Bottom-Left (SW)
+        Rectangle {
+            id: handle_sw
+            objectName: "handle_sw"
+            property string handleType: "sw"
+            x: -4
+            y: parent.height - 4
+            width: 8
+            height: 8
+            color: "#ffffff"
+            border.color: "#0077b6"
+            border.width: 1
+            radius: 1
+            z: 10
+
+            MouseArea {
+                id: handleArea_sw
+                objectName: "handleArea_sw"
+                anchors.fill: parent
+                anchors.margins: -4
+                hoverEnabled: true
+                cursorShape: Qt.SizeBDiagCursor
+                acceptedButtons: Qt.LeftButton
+                enabled: controller ? controller.interactionMode === "pan_select" : false
+
+                onPressed: function(mouse) {
+                    if (controller) {
+                        var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, handleArea_sw);
+                        controller.startResize(controller.selectedRegionId, "sw", vpPt.x, vpPt.y);
+                    }
+                }
+
+                onPositionChanged: function(mouse) {
+                    if (pressed && controller && controller.editorState === "resizing") {
+                        var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, handleArea_sw);
+                        controller.updateResize(vpPt.x, vpPt.y);
+                    }
+                }
+
+                onReleased: function(mouse) {
+                    if (controller && controller.editorState === "resizing") {
+                        controller.commitResize();
+                    }
+                }
+
+                onCanceled: function() {
+                    if (controller && controller.editorState === "resizing") {
+                        controller.cancelResize();
+                    }
+                }
+            }
+        }
+
+        // 8. Middle-Left (W)
+        Rectangle {
+            id: handle_w
+            objectName: "handle_w"
+            property string handleType: "w"
+            x: -4
+            y: Math.round((parent.height - 8) / 2)
+            width: 8
+            height: 8
+            color: "#ffffff"
+            border.color: "#0077b6"
+            border.width: 1
+            radius: 1
+            z: 10
+
+            MouseArea {
+                id: handleArea_w
+                objectName: "handleArea_w"
+                anchors.fill: parent
+                anchors.margins: -4
+                hoverEnabled: true
+                cursorShape: Qt.SizeHorCursor
+                acceptedButtons: Qt.LeftButton
+                enabled: controller ? controller.interactionMode === "pan_select" : false
+
+                onPressed: function(mouse) {
+                    if (controller) {
+                        var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, handleArea_w);
+                        controller.startResize(controller.selectedRegionId, "w", vpPt.x, vpPt.y);
+                    }
+                }
+
+                onPositionChanged: function(mouse) {
+                    if (pressed && controller && controller.editorState === "resizing") {
+                        var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, handleArea_w);
+                        controller.updateResize(vpPt.x, vpPt.y);
+                    }
+                }
+
+                onReleased: function(mouse) {
+                    if (controller && controller.editorState === "resizing") {
+                        controller.commitResize();
+                    }
+                }
+
+                onCanceled: function() {
+                    if (controller && controller.editorState === "resizing") {
+                        controller.cancelResize();
                     }
                 }
             }

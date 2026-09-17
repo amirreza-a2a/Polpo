@@ -11,7 +11,6 @@ import "../components"
 Item {
     id: markdownViewRoot
     objectName: "markdownView"
-    anchors.fill: parent
 
     property var controller: typeof markdownViewerController !== "undefined" ? markdownViewerController : null
 

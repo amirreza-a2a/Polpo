@@ -51,10 +51,14 @@ class DocumentViewerController(QObject):
     regionsChanged = Signal()
     selectionChanged = Signal()
     editorStateChanged = Signal()
+    interactionModeChanged = Signal()
     transientBoxChanged = Signal()
+    selectedItemRectChanged = Signal()
     regionUpdated = Signal(str)
     regionCreated = Signal(str)
     regionDeleted = Signal(str)
+
+    # Public signals for review apply and artifact regeneration (Phase 10E Review Workflow)
 
     # Internal Qt Signals for thread-safe worker-to-GUI dispatch
     _internalPageLoaded = Signal(int, object)
@@ -85,7 +89,8 @@ class DocumentViewerController(QObject):
         self._error_message: str = ""
         self._active_regions: List[Dict[str, Any]] = []
 
-        # Interactive Bounding Box Editor State (Phase 10D)
+        # Interactive Bounding Box Editor State (Phase 10D / 10E Hardening)
+        self._interaction_mode: str = "pan_select"  # "pan_select", "create_region"
         self._selected_region_id: str = ""
         self._editor_state: str = "idle"  # "idle", "selected", "dragging", "resizing", "creating"
         self._active_handle: str = ""
@@ -222,6 +227,10 @@ class DocumentViewerController(QObject):
     def activeHandle(self) -> str:
         return self._active_handle
 
+    @Property(str, notify=interactionModeChanged)
+    def interactionMode(self) -> str:
+        return self._interaction_mode
+
     @Property("QVariant", notify=transientBoxChanged)
     def transientBox(self) -> Dict[str, int]:
         if not self._transient_bbox:
@@ -245,6 +254,45 @@ class DocumentViewerController(QObject):
             fit_mode=FitMode.PRESERVE_ASPECT_FIT,
         )
         rect = CoordinateTransformer.normalized_to_item_rect(self._transient_bbox, metrics)
+        return {"x": rect.x, "y": rect.y, "width": rect.width, "height": rect.height}
+
+    @Property("QVariant", notify=selectedItemRectChanged)
+    def selectedItemRect(self) -> Dict[str, float]:
+        """Item-space rectangle of the currently selected region (transient or committed)."""
+        if (
+            not self._selected_region_id
+            or self._raster_width <= 0
+            or self._raster_height <= 0
+            or self._item_width <= 0
+            or self._item_height <= 0
+        ):
+            return {}
+
+        bbox = None
+        if self._transient_bbox is not None and self._editor_state in ("dragging", "resizing"):
+            bbox = self._transient_bbox
+        else:
+            for r in self._active_regions:
+                if r["region_id"] == self._selected_region_id:
+                    bbox = BoundingBox(
+                        ymin=r["effective_ymin"],
+                        xmin=r["effective_xmin"],
+                        ymax=r["effective_ymax"],
+                        xmax=r["effective_xmax"],
+                    )
+                    break
+
+        if bbox is None:
+            return {}
+
+        metrics = DisplayedImageMetrics(
+            raster_width=float(self._raster_width),
+            raster_height=float(self._raster_height),
+            item_width=float(self._item_width),
+            item_height=float(self._item_height),
+            fit_mode=FitMode.PRESERVE_ASPECT_FIT,
+        )
+        rect = CoordinateTransformer.normalized_to_item_rect(bbox, metrics)
         return {"x": rect.x, "y": rect.y, "width": rect.width, "height": rect.height}
 
     # =========================================================================
@@ -333,6 +381,7 @@ class DocumentViewerController(QObject):
         if self._current_page > 1:
             self.loadPage(self._current_job_id, self._current_page - 1)
 
+    # =========================================================================
     def _get_viewport_metrics(self) -> ViewportMetrics:
         return ViewportMetrics(
             zoom=self._zoom,
@@ -420,6 +469,8 @@ class DocumentViewerController(QObject):
             self._item_width = w
             self._item_height = h
             self.itemDimensionsChanged.emit()
+            if self._selected_region_id:
+                self.selectedItemRectChanged.emit()
 
         pan_changed = self._clamp_and_update_pan(self._pan_x, self._pan_y)
         self.boundsChanged.emit()
@@ -548,16 +599,12 @@ class DocumentViewerController(QObject):
 
         results = []
         for r in self._active_regions:
-            is_sel = (r["region_id"] == self._selected_region_id)
-            if is_sel and self._transient_bbox is not None and self._editor_state in ("dragging", "resizing"):
-                bbox = self._transient_bbox
-            else:
-                bbox = BoundingBox(
-                    ymin=r["effective_ymin"],
-                    xmin=r["effective_xmin"],
-                    ymax=r["effective_ymax"],
-                    xmax=r["effective_xmax"],
-                )
+            bbox = BoundingBox(
+                ymin=r["effective_ymin"],
+                xmin=r["effective_xmin"],
+                ymax=r["effective_ymax"],
+                xmax=r["effective_xmax"],
+            )
             item_rect = CoordinateTransformer.normalized_to_item_rect(bbox, metrics)
             results.append({
                 "region_id": r["region_id"],
@@ -565,7 +612,7 @@ class DocumentViewerController(QObject):
                 "origin": r["origin"],
                 "review_status": r["review_status"],
                 "is_modified": r.get("is_modified", False),
-                "is_selected": is_sel,
+                "is_selected": (r["region_id"] == self._selected_region_id),
                 "x": item_rect.x,
                 "y": item_rect.y,
                 "width": item_rect.width,
@@ -768,6 +815,8 @@ class DocumentViewerController(QObject):
             }
             for r in regions_dto
         ]
+        if self._selected_region_id:
+            self.selectedItemRectChanged.emit()
 
     @Slot(float, float, result=dict)
     def normPointFromViewport(self, vp_x: float, vp_y: float) -> Dict[str, float]:
@@ -804,7 +853,7 @@ class DocumentViewerController(QObject):
             self.selectionChanged.emit()
             self.editorStateChanged.emit()
             self.transientBoxChanged.emit()
-            self.regionsChanged.emit()
+            self.selectedItemRectChanged.emit()
 
     @Slot()
     def clearSelection(self) -> None:
@@ -821,7 +870,16 @@ class DocumentViewerController(QObject):
             self.selectionChanged.emit()
             self.editorStateChanged.emit()
             self.transientBoxChanged.emit()
-            self.regionsChanged.emit()
+            self.selectedItemRectChanged.emit()
+
+    @Slot(str)
+    def setInteractionMode(self, mode: str) -> None:
+        """Sets the active pointer interaction mode ('pan_select' or 'create_region')."""
+        if mode not in ("pan_select", "create_region"):
+            return
+        if self._interaction_mode != mode:
+            self._interaction_mode = mode
+            self.interactionModeChanged.emit()
 
     @Slot(str, float, float)
     def startDrag(self, region_id: str, vp_x: float, vp_y: float) -> None:
@@ -837,6 +895,7 @@ class DocumentViewerController(QObject):
         if not target:
             return
 
+        sel_changed = (self._selected_region_id != region_id)
         self._selected_region_id = region_id
         self._editor_state = "dragging"
         self._active_handle = ""
@@ -850,10 +909,12 @@ class DocumentViewerController(QObject):
         self._transient_bbox = bbox
         self._interaction_start_norm_pt = self._norm_point_from_viewport(vp_x, vp_y)
 
-        self.selectionChanged.emit()
+        if sel_changed:
+            self.selectionChanged.emit()
         self.editorStateChanged.emit()
         self.transientBoxChanged.emit()
-        self.regionsChanged.emit()
+        if sel_changed:
+            self.selectedItemRectChanged.emit()
 
     @Slot(float, float)
     def updateDrag(self, vp_x: float, vp_y: float) -> None:
@@ -877,7 +938,7 @@ class DocumentViewerController(QObject):
         if self._transient_bbox != new_bbox:
             self._transient_bbox = new_bbox
             self.transientBoxChanged.emit()
-            self.regionsChanged.emit()
+            self.selectedItemRectChanged.emit()
 
     @Slot()
     def commitDrag(self) -> None:
@@ -892,6 +953,17 @@ class DocumentViewerController(QObject):
 
         target_id = self._selected_region_id
         new_bbox = self._transient_bbox
+
+        # If geometry did not actually change (e.g. click to select without translation),
+        # transition cleanly to selected without mutating domain state or marking dirty.
+        if self._interaction_initial_bbox is not None and new_bbox == self._interaction_initial_bbox:
+            self._editor_state = "selected"
+            self._transient_bbox = None
+            self._interaction_start_norm_pt = None
+            self._interaction_initial_bbox = None
+            self.editorStateChanged.emit()
+            self.transientBoxChanged.emit()
+            return
 
         try:
             self.viewer_service.update_region_geometry(target_id, new_bbox)
@@ -919,7 +991,7 @@ class DocumentViewerController(QObject):
         self._interaction_initial_bbox = None
         self.editorStateChanged.emit()
         self.transientBoxChanged.emit()
-        self.regionsChanged.emit()
+        self.selectedItemRectChanged.emit()
 
     @Slot(str, str, float, float)
     def startResize(self, region_id: str, handle: str, vp_x: float, vp_y: float) -> None:
@@ -935,6 +1007,7 @@ class DocumentViewerController(QObject):
         if not target:
             return
 
+        sel_changed = (self._selected_region_id != region_id)
         self._selected_region_id = region_id
         self._editor_state = "resizing"
         self._active_handle = handle.lower()
@@ -947,10 +1020,12 @@ class DocumentViewerController(QObject):
         self._interaction_initial_bbox = bbox
         self._transient_bbox = bbox
 
-        self.selectionChanged.emit()
+        if sel_changed:
+            self.selectionChanged.emit()
         self.editorStateChanged.emit()
         self.transientBoxChanged.emit()
-        self.regionsChanged.emit()
+        if sel_changed:
+            self.selectedItemRectChanged.emit()
 
     @Slot(float, float)
     def updateResize(self, vp_x: float, vp_y: float) -> None:
@@ -971,7 +1046,7 @@ class DocumentViewerController(QObject):
         if self._transient_bbox != new_bbox:
             self._transient_bbox = new_bbox
             self.transientBoxChanged.emit()
-            self.regionsChanged.emit()
+            self.selectedItemRectChanged.emit()
 
     @Slot()
     def commitResize(self) -> None:
@@ -986,6 +1061,16 @@ class DocumentViewerController(QObject):
 
         target_id = self._selected_region_id
         new_bbox = self._transient_bbox
+
+        # If geometry did not actually change, transition cleanly to selected.
+        if self._interaction_initial_bbox is not None and new_bbox == self._interaction_initial_bbox:
+            self._editor_state = "selected"
+            self._active_handle = ""
+            self._transient_bbox = None
+            self._interaction_initial_bbox = None
+            self.editorStateChanged.emit()
+            self.transientBoxChanged.emit()
+            return
 
         try:
             self.viewer_service.update_region_geometry(target_id, new_bbox)
@@ -1013,7 +1098,7 @@ class DocumentViewerController(QObject):
         self._interaction_initial_bbox = None
         self.editorStateChanged.emit()
         self.transientBoxChanged.emit()
-        self.regionsChanged.emit()
+        self.selectedItemRectChanged.emit()
 
     @Slot(float, float)
     def startCreateManual(self, vp_x: float, vp_y: float) -> None:
@@ -1063,6 +1148,7 @@ class DocumentViewerController(QObject):
             self.selectionChanged.emit()
             self.editorStateChanged.emit()
             self.transientBoxChanged.emit()
+            self.selectedItemRectChanged.emit()
             self.regionsChanged.emit()
         except Exception as e:
             self._error_message = f"Failed to create manual region: {str(e)}"
