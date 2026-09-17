@@ -452,7 +452,10 @@ class MarkdownEditorController(QObject):
         Attachment is strictly idempotent and prevents duplicate highlighters.
         """
         if self._highlighter is not None:
-            self._highlighter.setDocument(None)
+            try:
+                self._highlighter.setDocument(None)
+            except RuntimeError:
+                pass
             self._highlighter = None
             self._text_document = None
 
@@ -735,7 +738,10 @@ class MarkdownEditorController(QObject):
         """Shuts down background thread executor and detaches syntax highlighter."""
         self._is_shutdown = True
         if self._highlighter is not None:
-            self._highlighter.setDocument(None)
+            try:
+                self._highlighter.setDocument(None)
+            except RuntimeError:
+                pass
             self._highlighter = None
         self._text_document = None
         self._headless_doc = None

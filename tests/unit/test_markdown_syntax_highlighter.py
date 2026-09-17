@@ -248,3 +248,64 @@ def test_controller_attach_text_document_lifecycle(qapp):
     assert ctrl._highlighter is None
     assert ctrl._text_document is None
     assert hl3.document() is None
+
+
+def test_highlighter_multiline_comment_closing_line_suppresses_inline_markdown(qapp):
+    """
+    CRITICAL REGRESSION TEST (Finding 4):
+    On the closing line of a multiline comment, any Markdown syntax occurring
+    before '-->' must remain comment-styled and must NOT be formatted as Markdown.
+    Any Markdown occurring after '-->' must be formatted normally.
+    """
+    doc = QTextDocument()
+    text = "<!-- Start of comment\n**bold** inside comment --> and `code` after"
+    doc.setPlainText(text)
+    hl = MarkdownSyntaxHighlighter(doc)
+    hl.rehighlight()
+
+    b1 = doc.findBlockByNumber(1)
+    formats = b1.layout().formats()
+
+    # Formats should be:
+    # 1. 0 to 27 (comment): comment_fmt (#6b7280, italic)
+    # 2. 32 to 38 (`code`): code_span_fmt (#fcd34d)
+    assert len(formats) == 2
+
+    comment_part = formats[0]
+    assert comment_part.start == 0
+    assert comment_part.length == 27
+    assert comment_part.format.fontItalic() is True
+    assert comment_part.format.foreground().color().name() == "#6b7280"
+
+    code_part = formats[1]
+    assert code_part.format.foreground().color().name() == "#fcd34d"
+    assert code_part.start == 32
+    assert code_part.length == len("`code`")
+
+
+def test_controller_safe_detachment_when_cpp_object_deleted(qapp):
+    """
+    CRITICAL REGRESSION TEST (Finding 5):
+    If the underlying QTextDocument is destroyed by Qt Quick before controller detachment,
+    calling attachTextDocument() or shutdown() must safely handle the deleted C++ wrapper
+    without raising an unhandled RuntimeError.
+    """
+    mock_service = MagicMock()
+    ctrl = MarkdownEditorController(editor_service=mock_service)
+
+    doc = QTextDocument()
+    mock_quick_doc = MagicMock()
+    mock_quick_doc.textDocument.return_value = doc
+
+    ctrl.attachTextDocument(mock_quick_doc)
+    assert ctrl._highlighter is not None
+
+    # Simulate underlying Qt destruction of doc and its child highlighter
+    del doc
+
+    # Subsequent detachment or shutdown must not raise RuntimeError!
+    ctrl.attachTextDocument(None)
+    assert ctrl._highlighter is None
+
+    ctrl.shutdown()
+    assert ctrl._is_shutdown is True

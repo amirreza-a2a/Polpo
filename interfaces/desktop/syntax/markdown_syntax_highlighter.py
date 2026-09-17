@@ -148,10 +148,12 @@ class MarkdownSyntaxHighlighter(QSyntaxHighlighter):
         # =====================================================================
         # 2. Multi-line HTML Comment State Machine
         # =====================================================================
+        closed_comment_len = 0
         if prev_state == STATE_COMMENT_BLOCK:
             end_idx = text.find("-->")
             if end_idx != -1:
-                self.setFormat(0, end_idx + 3, self.comment_fmt)
+                closed_comment_len = end_idx + 3
+                self.setFormat(0, closed_comment_len, self.comment_fmt)
                 self.setCurrentBlockState(STATE_DEFAULT)
                 # Remainder of line can be formatted below if needed
             else:
@@ -196,6 +198,11 @@ class MarkdownSyntaxHighlighter(QSyntaxHighlighter):
         # 6. Inline Spans with Strict Non-Overlapping Precedence
         # =====================================================================
         claimed = [False] * len(text)
+
+        # Mark closed multiline comment span as claimed
+        if closed_comment_len > 0:
+            for k in range(min(closed_comment_len, len(text))):
+                claimed[k] = True
 
         # Mark blockquote prefix as claimed
         if bq_match:
