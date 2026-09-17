@@ -258,6 +258,12 @@ Item {
                         }
                     }
 
+                    onCursorPositionChanged: {
+                        if (controller) {
+                            controller.updateCursorPosition(cursorPosition)
+                        }
+                    }
+
                     Component.onCompleted: {
                         if (controller && textDocument) {
                             controller.attachTextDocument(textDocument)
@@ -324,6 +330,16 @@ Item {
                     font.pixelSize: 13
                 }
             }
+        }
+
+        // =====================================================================
+        // Docked Status Bar
+        // =====================================================================
+        MarkdownEditorStatusBar {
+            id: statusBar
+            objectName: "markdownEditorStatusBar"
+            Layout.fillWidth: true
+            controller: editorPaneRoot.controller
         }
     }
 }

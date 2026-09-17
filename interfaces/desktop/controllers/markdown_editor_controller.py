@@ -3,6 +3,7 @@
 #  Phase 10F.1 — Native Markdown Editor Presentation Controller
 # ============================================================
 
+import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional, Tuple
 
@@ -43,6 +44,8 @@ class MarkdownEditorController(QObject):
     conflictChanged = Signal()
     searchStateChanged = Signal()
     searchVisibilityChanged = Signal()
+    cursorMetricsChanged = Signal()
+    documentMetricsChanged = Signal()
 
     saved = Signal(int)             # (new_version)
     discarded = Signal()
@@ -87,6 +90,11 @@ class MarkdownEditorController(QObject):
         self._is_replace_open: bool = False
         self._matches: List[Tuple[int, int]] = []
 
+        self._cursor_line: int = 1
+        self._cursor_column: int = 1
+        self._character_count: int = 0
+        self._word_count: int = 0
+
         self._request_id: int = 0
         self._is_shutdown: bool = False
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="MarkdownEditorWorker")
@@ -120,6 +128,9 @@ class MarkdownEditorController(QObject):
             if self._is_dirty != new_dirty:
                 self._is_dirty = new_dirty
                 self.dirtyChanged.emit()
+            self._character_count = len(self._source_text)
+            self._word_count = len(re.findall(r"\S+", self._source_text))
+            self.documentMetricsChanged.emit()
             if self._search_query:
                 self._recompute_matches()
 
@@ -204,6 +215,26 @@ class MarkdownEditorController(QObject):
         return self._is_replace_open
 
     isReplaceOpen = Property(bool, is_replace_open, notify=searchVisibilityChanged)
+
+    def cursor_line(self) -> int:
+        return self._cursor_line
+
+    cursorLine = Property(int, cursor_line, notify=cursorMetricsChanged)
+
+    def cursor_column(self) -> int:
+        return self._cursor_column
+
+    cursorColumn = Property(int, cursor_column, notify=cursorMetricsChanged)
+
+    def character_count(self) -> int:
+        return self._character_count
+
+    characterCount = Property(int, character_count, notify=documentMetricsChanged)
+
+    def word_count(self) -> int:
+        return self._word_count
+
+    wordCount = Property(int, word_count, notify=documentMetricsChanged)
 
     # -----------------------------------------------------------------------
     # Operations
@@ -328,11 +359,17 @@ class MarkdownEditorController(QObject):
         self._has_conflict = False
         self._conflict_message = ""
         self._error_message = ""
+        self._cursor_line = 1
+        self._cursor_column = 1
+        self._character_count = len(self._source_text)
+        self._word_count = len(re.findall(r"\S+", self._source_text))
 
         self.sourceTextChanged.emit()
         self.dirtyChanged.emit()
         self.conflictChanged.emit()
         self.errorChanged.emit()
+        self.cursorMetricsChanged.emit()
+        self.documentMetricsChanged.emit()
         self.discarded.emit()
 
     @Slot(int)
@@ -372,6 +409,10 @@ class MarkdownEditorController(QObject):
         self._active_version = 0
         self._has_conflict = False
         self._conflict_message = ""
+        self._cursor_line = 1
+        self._cursor_column = 1
+        self._character_count = 0
+        self._word_count = 0
 
         self.sourceTextChanged.emit()
         self.dirtyChanged.emit()
@@ -381,6 +422,8 @@ class MarkdownEditorController(QObject):
         self.activeJobChanged.emit()
         self.activeVersionChanged.emit()
         self.conflictChanged.emit()
+        self.cursorMetricsChanged.emit()
+        self.documentMetricsChanged.emit()
 
         self._search_query = ""
         self._replace_query = ""
@@ -635,6 +678,29 @@ class MarkdownEditorController(QObject):
         """Returns match intervals [[start, end], ...] in UTF-16 code units."""
         return [[s, e] for (s, e) in self._matches]
 
+    # -----------------------------------------------------------------------
+    # Cursor Position & Document Metrics
+    # -----------------------------------------------------------------------
+
+    @Slot(int)
+    def updateCursorPosition(self, pos: int) -> None:
+        """
+        Updates cursorLine and cursorColumn from a Qt UTF-16 code-unit position offset.
+        cursorLine: 1-indexed document block (line) number.
+        cursorColumn: 1-indexed UTF-16 code-unit offset within the block.
+        """
+        doc = self._get_document()
+        cursor = QTextCursor(doc)
+        doc_len = max(0, doc.characterCount() - 1)
+        clamped_pos = max(0, min(pos, doc_len))
+        cursor.setPosition(clamped_pos)
+        new_line = cursor.blockNumber() + 1
+        new_col = cursor.positionInBlock() + 1
+        if self._cursor_line != new_line or self._cursor_column != new_col:
+            self._cursor_line = new_line
+            self._cursor_column = new_col
+            self.cursorMetricsChanged.emit()
+
     def shutdown(self) -> None:
         """Shuts down background thread executor and detaches syntax highlighter."""
         self._is_shutdown = True
@@ -661,6 +727,12 @@ class MarkdownEditorController(QObject):
         self._error_message = ""
         self._has_conflict = False
         self._conflict_message = ""
+        self._cursor_line = 1
+        self._cursor_column = 1
+        self._character_count = len(self._source_text)
+        self._word_count = len(re.findall(r"\S+", self._source_text))
+        if self._headless_doc is not None:
+            self._headless_doc.setPlainText(text)
 
         self.sourceTextChanged.emit()
         self.dirtyChanged.emit()
@@ -668,6 +740,8 @@ class MarkdownEditorController(QObject):
         self.loadingChanged.emit()
         self.errorChanged.emit()
         self.conflictChanged.emit()
+        self.cursorMetricsChanged.emit()
+        self.documentMetricsChanged.emit()
 
     def _on_internal_load_error(self, req_id: int, error_msg: str) -> None:
         if req_id != self._request_id or self._is_shutdown:
