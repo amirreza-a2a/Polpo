@@ -2,7 +2,7 @@ import difflib
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Tuple, List, Set
+from typing import Optional, Tuple, List
 from collections import Counter
 
 class HunkType(Enum):

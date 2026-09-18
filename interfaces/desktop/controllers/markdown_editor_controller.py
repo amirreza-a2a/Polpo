@@ -145,6 +145,9 @@ class MarkdownEditorController(QObject):
             if self._is_dirty != new_dirty:
                 self._is_dirty = new_dirty
                 self.dirtyChanged.emit()
+            if self._active_conflict_session is not None and not self._active_conflict_session.isInvalidated:
+                self._active_conflict_session.sync_from_buffer(text)
+                self.mergeSessionStateChanged.emit()
             self._character_count = len(self._source_text)
             self._word_count = len(re.findall(r"\S+", self._source_text))
             self.documentMetricsChanged.emit()
@@ -295,6 +298,27 @@ class MarkdownEditorController(QObject):
 
     canSaveConflict = Property(bool, can_save_conflict, notify=mergeSessionStateChanged)
 
+    def has_unresolved_conflict(self) -> bool:
+        if self._active_conflict_session is not None and not self._active_conflict_session.isInvalidated:
+            return not self._active_conflict_session.is_fully_resolved()
+        return self._has_conflict
+
+    hasUnresolvedConflict = Property(bool, has_unresolved_conflict, notify=mergeSessionStateChanged)
+
+    def clean_candidate_text(self) -> str:
+        if self._active_conflict_session is not None and not self._active_conflict_session.isInvalidated:
+            return self._active_conflict_session.generate_candidate_markdown()
+        return self._source_text
+
+    cleanCandidateText = Property(str, clean_candidate_text, notify=mergeSessionStateChanged)
+
+    def active_conflict_canonical_version(self) -> int:
+        if self._active_conflict_session is not None and not self._active_conflict_session.isInvalidated:
+            return self._active_conflict_session.canonicalVersion
+        return self._active_version
+
+    activeConflictCanonicalVersion = Property(int, active_conflict_canonical_version, notify=mergeSessionStateChanged)
+
     def auto_merge_notification(self) -> str:
         return self._auto_merge_notification
 
@@ -359,8 +383,9 @@ class MarkdownEditorController(QObject):
             return
         hunk = self._active_conflict_session.get_current_hunk()
         idx = hunk.hunk_index if hunk is not None else self._active_conflict_session.currentHunkIndex
-        self._active_conflict_session.resolve_hunk(idx, choice)
-        self._source_text = self._active_conflict_session.generate_in_buffer_markdown()
+        self._source_text = self._active_conflict_session.apply_resolution_to_buffer(
+            self._source_text, idx, choice
+        )
         if self._headless_doc is not None and self._headless_doc.toPlainText() != self._source_text:
             self._headless_doc.setPlainText(self._source_text)
         self._character_count = len(self._source_text)
@@ -385,6 +410,18 @@ class MarkdownEditorController(QObject):
         """Accepts both local and remote hunk modifications and updates editor buffer."""
         self._resolve_current_hunk("both")
 
+    def _navigate_to_current_hunk_position(self) -> None:
+        if not self._active_conflict_session:
+            return
+        hunk = self._active_conflict_session.get_current_hunk()
+        if hunk is None:
+            return
+        idx = hunk.hunk_index
+        marker = f"<<<<<<< [LOCAL:hunk_{idx}]"
+        pos = self._source_text.find(marker)
+        if pos >= 0:
+            self.requestNavigateToPosition.emit(pos)
+
     @Slot()
     def nextConflictHunk(self) -> None:
         """Navigates to the next conflict hunk in the active session."""
@@ -392,6 +429,7 @@ class MarkdownEditorController(QObject):
             return
         self._active_conflict_session.next_hunk()
         self.mergeSessionStateChanged.emit()
+        self._navigate_to_current_hunk_position()
 
     @Slot()
     def prevConflictHunk(self) -> None:
@@ -400,6 +438,28 @@ class MarkdownEditorController(QObject):
             return
         self._active_conflict_session.prev_hunk()
         self.mergeSessionStateChanged.emit()
+        self._navigate_to_current_hunk_position()
+
+    def _prepare_save_candidate(self) -> Tuple[bool, int, str, str]:
+        """
+        Validates conflict state and prepares clean candidate text and base version for saving.
+        Returns (can_save, base_version, clean_text, error_message).
+        """
+        if self._active_conflict_session is not None and not self._active_conflict_session.isInvalidated:
+            self._active_conflict_session.sync_from_buffer(self._source_text)
+            if self._active_conflict_session.is_fully_resolved():
+                clean_text = self._active_conflict_session.generate_candidate_markdown(self._source_text)
+                self._source_text = clean_text
+                if self._headless_doc is not None and self._headless_doc.toPlainText() != clean_text:
+                    self._headless_doc.setPlainText(clean_text)
+                self.sourceTextChanged.emit()
+                return True, self._active_conflict_session.canonicalVersion, clean_text, ""
+            else:
+                return False, 0, "", "Cannot save: unresolved conflicts exist."
+        elif self._has_conflict:
+            return False, 0, "", "Cannot save: unresolved conflicts exist."
+        else:
+            return True, self._active_version, self._source_text, ""
 
     @Slot()
     def save(self) -> None:
@@ -407,26 +467,11 @@ class MarkdownEditorController(QObject):
         if not self._is_dirty or self._is_saving:
             return
 
-        if self._has_conflict or (
-            self._active_conflict_session is not None
-            and not self._active_conflict_session.is_fully_resolved()
-        ):
-            if (
-                self._active_conflict_session is not None
-                and self._active_conflict_session.is_fully_resolved()
-            ):
-                clean_text = self._active_conflict_session.generate_candidate_markdown()
-                self._source_text = clean_text
-                if self._headless_doc is not None and self._headless_doc.toPlainText() != clean_text:
-                    self._headless_doc.setPlainText(clean_text)
-                self.sourceTextChanged.emit()
-                base_ver = self._active_conflict_session.canonicalVersion
-            else:
-                self._error_message = "Cannot save: unresolved conflicts exist."
-                self.errorChanged.emit()
-                return
-        else:
-            base_ver = self._active_version
+        can_save, base_ver, raw_text, err_msg = self._prepare_save_candidate()
+        if not can_save:
+            self._error_message = err_msg
+            self.errorChanged.emit()
+            return
 
         self._request_id += 1
         req_id = self._request_id
@@ -437,7 +482,6 @@ class MarkdownEditorController(QObject):
         self.errorChanged.emit()
 
         job_id = self._active_job_id
-        raw_text = self._source_text
 
         def _task():
             try:
@@ -459,31 +503,15 @@ class MarkdownEditorController(QObject):
         if not self._is_dirty or self._is_saving:
             return False
 
-        if self._has_conflict or (
-            self._active_conflict_session is not None
-            and not self._active_conflict_session.is_fully_resolved()
-        ):
-            if (
-                self._active_conflict_session is not None
-                and self._active_conflict_session.is_fully_resolved()
-            ):
-                clean_text = self._active_conflict_session.generate_candidate_markdown()
-                self._source_text = clean_text
-                if self._headless_doc is not None and self._headless_doc.toPlainText() != clean_text:
-                    self._headless_doc.setPlainText(clean_text)
-                self.sourceTextChanged.emit()
-                base_ver = self._active_conflict_session.canonicalVersion
-            else:
-                self._error_message = "Cannot save: unresolved conflicts exist."
-                self.errorChanged.emit()
-                return False
-        else:
-            base_ver = self._active_version
+        can_save, base_ver, raw_text, err_msg = self._prepare_save_candidate()
+        if not can_save:
+            self._error_message = err_msg
+            self.errorChanged.emit()
+            return False
 
         self._request_id += 1
         req_id = self._request_id
         job_id = self._active_job_id
-        raw_text = self._source_text
 
         try:
             new_ver = self.editor_service.commit_source_text(
@@ -566,7 +594,8 @@ class MarkdownEditorController(QObject):
                 session_id = self._merge_session_id
 
                 if self._active_conflict_session is not None:
-                    local_candidate = self._active_conflict_session.generate_candidate_markdown()
+                    self._active_conflict_session.sync_from_buffer(self._source_text)
+                    local_candidate = self._active_conflict_session.generate_candidate_markdown(self._source_text)
                     base_ver = self._active_conflict_session.canonicalVersion
                     self._active_conflict_session.invalidate()
                 else:
@@ -1124,6 +1153,7 @@ class MarkdownEditorController(QObject):
             self.mergeSessionStateChanged.emit()
             self.conflictDetected.emit(self._conflict_message)
             self.documentMetricsChanged.emit()
+            self._navigate_to_current_hunk_position()
 
     def _on_internal_merge_error(self, session_id: int, error_msg: str) -> None:
         if self._is_shutdown or session_id != self._merge_session_id:

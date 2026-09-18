@@ -88,17 +88,19 @@ def wire_review_workspace_sync(
 
     if markdown_editor_controller is not None:
         def _on_source_text_changed():
-            if markdown_editor_controller.hasConflict:
+            if markdown_editor_controller.hasUnresolvedConflict:
                 return
             active_job = markdown_editor_controller.activeJobId
             is_dirty = markdown_editor_controller.isDirty or (
                 markdown_editor_controller.sourceText != getattr(markdown_editor_controller, "_saved_source_text", "")
             )
             if active_job > 0 and is_dirty:
+                raw_text = markdown_editor_controller.cleanCandidateText
+                base_ver = markdown_editor_controller.activeConflictCanonicalVersion
                 markdown_viewer_controller.scheduleLivePreview(
                     job_id=active_job,
-                    raw_text=markdown_editor_controller.sourceText,
-                    base_version=markdown_editor_controller.activeVersion,
+                    raw_text=raw_text,
+                    base_version=base_ver,
                 )
 
         def _on_editor_saved(new_version: int):
@@ -127,7 +129,7 @@ def wire_review_workspace_sync(
             markdown_editor_controller.notifyCanonicalDocumentAdvance(active_ver)
 
         def _on_conflict_or_merge_state_changed():
-            if markdown_editor_controller.hasConflict:
+            if markdown_editor_controller.hasUnresolvedConflict:
                 markdown_viewer_controller.setPreviewPaused(
                     True, "Preview paused during conflict resolution"
                 )
@@ -139,10 +141,12 @@ def wire_review_workspace_sync(
                     != getattr(markdown_editor_controller, "_saved_source_text", "")
                 )
                 if active_job > 0 and is_dirty:
+                    raw_text = markdown_editor_controller.cleanCandidateText
+                    base_ver = markdown_editor_controller.activeConflictCanonicalVersion
                     markdown_viewer_controller.scheduleLivePreview(
                         job_id=active_job,
-                        raw_text=markdown_editor_controller.sourceText,
-                        base_version=markdown_editor_controller.activeVersion,
+                        raw_text=raw_text,
+                        base_version=base_ver,
                     )
 
         markdown_editor_controller.sourceTextChanged.connect(_on_source_text_changed)

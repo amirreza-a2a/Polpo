@@ -18,6 +18,18 @@ ApplicationWindow {
     property string missedScheduleBanner: ""
     property int missedJobId: 0
     property string missedFileName: ""
+    property bool forceExit: false
+
+    onClosing: (close) => {
+        if (forceExit) {
+            return;
+        }
+        if (typeof markdownEditorController !== "undefined" && markdownEditorController &&
+            (markdownEditorController.isDirty || markdownEditorController.hasConflict || markdownEditorController.mergeSessionActive)) {
+            close.accepted = false;
+            windowExitConfirmModal.open();
+        }
+    }
 
     function doOpenReviewWorkspace(jobId) {
         if (typeof documentViewerController !== "undefined" && documentViewerController) {
@@ -246,6 +258,61 @@ ApplicationWindow {
                             markdownEditorController.clear();
                         }
                         window.doOpenReviewWorkspace(targetId);
+                    }
+                }
+            }
+        }
+    }
+
+    ModalDialog {
+        id: windowExitConfirmModal
+        objectName: "windowExitConfirmModal"
+        title: "Unsaved Changes on Exit"
+        width: 460
+        height: 240
+
+        Column {
+            anchors.fill: parent
+            anchors.margins: 20
+            spacing: 14
+
+            Text {
+                text: "Unsaved Changes on Exit"
+                color: "#F9FAFB"
+                font.pixelSize: 16
+                font.bold: true
+            }
+
+            Text {
+                text: "You have uncommitted changes or an active conflict resolution session. Exiting will discard these changes. Are you sure you want to exit?"
+                color: "#D1D5DB"
+                font.pixelSize: 13
+                wrapMode: Text.Wrap
+                width: parent.width
+            }
+
+            Row {
+                spacing: 10
+                anchors.horizontalCenter: parent.horizontalCenter
+
+                Button {
+                    id: windowExitCancelBtn
+                    objectName: "windowExitCancelButton"
+                    text: "Cancel"
+                    onClicked: {
+                        windowExitConfirmModal.close();
+                    }
+                }
+
+                Button {
+                    id: windowExitDiscardBtn
+                    objectName: "windowExitDiscardButton"
+                    text: "Discard & Exit"
+                    highlighted: true
+                    onClicked: {
+                        windowExitConfirmModal.close();
+                        window.forceExit = true;
+                        window.close();
                     }
                 }
             }

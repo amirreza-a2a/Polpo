@@ -5,7 +5,7 @@
 
 import html
 import re
-from typing import List, Optional
+from typing import List
 
 from application.dtos.merge_dto import ConflictHunkDTO, MergeAnalysisResultDTO
 from application.ports.storage import IArtifactStorage

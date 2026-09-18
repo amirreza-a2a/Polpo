@@ -505,3 +505,239 @@ def test_resolution_slots_incoming_and_both(qapp, mock_editor_service, mock_merg
         assert ctrl.canSaveConflict is True
     finally:
         ctrl.shutdown()
+
+
+def test_t_merge_72_preview_unpauses_when_all_conflicts_resolved_before_save(qapp, mock_editor_service, mock_merge_service):
+    """
+    T-MERGE-72 (F-01): Preview unpauses and hasUnresolvedConflict becomes False immediately
+    when all conflicts are resolved, before save is invoked.
+    """
+    from interfaces.desktop.controllers.markdown_viewer_controller import MarkdownViewerController
+    from interfaces.desktop.app import wire_review_workspace_sync
+
+    viewer_service = MagicMock()
+    viewer_service.render_document.return_value = MagicMock(nodes=[], raw_markdown="")
+    viewer_service.render_text.return_value = MagicMock(nodes=[], raw_markdown="")
+
+    doc_viewer_ctrl = MagicMock()
+    viewer_ctrl = MarkdownViewerController(viewer_service=viewer_service)
+    editor_ctrl = MarkdownEditorController(editor_service=mock_editor_service, merge_service=mock_merge_service)
+
+    try:
+        wire_review_workspace_sync(
+            markdown_viewer_controller=viewer_ctrl,
+            document_viewer_controller=doc_viewer_ctrl,
+            markdown_editor_controller=editor_ctrl,
+        )
+
+        editor_ctrl.load_source_sync(job_id=1)
+        editor_ctrl.setSourceText("# Base\nUser edit")
+
+        conflict_hunk = _make_hunk(
+            hunk_index=0,
+            hunk_type="CONFLICT",
+            base_text="Base text\n",
+            local_text="Local text\n",
+            remote_text="Remote text\n",
+        )
+        conflict_result = _make_analysis_result(
+            hunks=[conflict_hunk],
+            job_id=1,
+            merge_session_id=1,
+            base_version=1,
+            canonical_version=2,
+            has_conflicts=True,
+        )
+
+        import time
+        advance_done = threading.Event()
+        mock_merge_service.analyze_three_way_merge.side_effect = lambda *a, **kw: (advance_done.set(), conflict_result)[1]
+
+        editor_ctrl.notifyCanonicalDocumentAdvance(2)
+        assert advance_done.wait(timeout=2.0) is True
+        for _ in range(50):
+            qapp.processEvents()
+            if editor_ctrl.hasConflict:
+                break
+            time.sleep(0.01)
+
+        # Conflict is active and unresolved -> preview must be paused
+        assert editor_ctrl.hasConflict is True
+        assert editor_ctrl.hasUnresolvedConflict is True
+        assert viewer_ctrl.previewPaused is True
+
+        # Resolve the hunk
+        editor_ctrl.acceptCurrentHunkLocal()
+        qapp.processEvents()
+
+        # Before calling save():
+        # hasUnresolvedConflict must be False, preview must be unpaused immediately!
+        assert editor_ctrl.hasUnresolvedConflict is False
+        assert viewer_ctrl.previewPaused is False
+        assert editor_ctrl.canSaveConflict is True
+    finally:
+        editor_ctrl.shutdown()
+        viewer_ctrl.shutdown()
+
+
+def test_t_merge_73_in_buffer_manual_edits_preserved_on_toolbar_resolution(qapp, mock_editor_service, mock_merge_service):
+    """
+    T-MERGE-73 (F-02): User manual edits outside and inside markers are preserved
+    when clicking toolbar resolution actions.
+    """
+    ctrl = MarkdownEditorController(editor_service=mock_editor_service, merge_service=mock_merge_service)
+    try:
+        ctrl.load_source_sync(job_id=1)
+        ctrl.setSourceText("Base content")
+
+        conflict_hunk = _make_hunk(
+            hunk_index=0,
+            hunk_type="CONFLICT",
+            base_text="Base text\n",
+            local_text="Original local\n",
+            remote_text="Original remote\n",
+        )
+        conflict_result = _make_analysis_result(
+            hunks=[conflict_hunk],
+            job_id=1,
+            merge_session_id=1,
+            base_version=1,
+            canonical_version=2,
+            has_conflicts=True,
+        )
+
+        advance_done = threading.Event()
+        mock_merge_service.analyze_three_way_merge.side_effect = lambda *a, **kw: (advance_done.set(), conflict_result)[1]
+
+        ctrl.notifyCanonicalDocumentAdvance(2)
+        assert advance_done.wait(timeout=2.0) is True
+        qapp.processEvents()
+
+        # In-buffer text now has markers
+        current_buf = ctrl.sourceText
+        assert "Original local" in current_buf
+
+        # User edits outside markers AND inside local text
+        user_edited = (
+            "# My Custom Header\n"
+            + current_buf.replace("Original local", "Edited local content")
+            + "\n# Footer Notes\n"
+        )
+        ctrl.setSourceText(user_edited)
+
+        # User clicks Accept Local
+        ctrl.acceptCurrentHunkLocal()
+
+        # All manual edits outside and inside hunk must be preserved
+        assert "# My Custom Header" in ctrl.sourceText
+        assert "# Footer Notes" in ctrl.sourceText
+        assert "Edited local content" in ctrl.sourceText
+        assert "<<<<<<<" not in ctrl.sourceText
+    finally:
+        ctrl.shutdown()
+
+
+def test_t_merge_74_d06_preserves_manual_edits_on_second_advance(qapp, mock_editor_service, mock_merge_service):
+    """
+    T-MERGE-74 (D06 / F-02): Second external advance preserves manual edits when extracting candidate for S2.
+    """
+    ctrl = MarkdownEditorController(editor_service=mock_editor_service, merge_service=mock_merge_service)
+    try:
+        ctrl.load_source_sync(job_id=1)
+        ctrl.setSourceText("Base content")
+
+        conflict_hunk = _make_hunk(
+            hunk_index=0,
+            hunk_type="CONFLICT",
+            base_text="Base text\n",
+            local_text="Local section\n",
+            remote_text="Remote section\n",
+        )
+        conflict_result = _make_analysis_result(
+            hunks=[conflict_hunk],
+            job_id=1,
+            merge_session_id=1,
+            base_version=1,
+            canonical_version=2,
+            has_conflicts=True,
+        )
+
+        advance_1_done = threading.Event()
+        mock_merge_service.analyze_three_way_merge.side_effect = lambda *a, **kw: (advance_1_done.set(), conflict_result)[1]
+
+        ctrl.notifyCanonicalDocumentAdvance(2)
+        assert advance_1_done.wait(timeout=2.0) is True
+        qapp.processEvents()
+
+        # User adds text outside markers
+        current_buf = ctrl.sourceText
+        user_edited = "# Custom Intro\n" + current_buf
+        ctrl.setSourceText(user_edited)
+
+        # Second external canonical advance arrives (version 3)
+        mock_merge_service.analyze_three_way_merge.reset_mock()
+        advance_2_done = threading.Event()
+
+        def _capture_s2(job_id, base_version, local_text, canonical_version, merge_session_id):
+            advance_2_done.set()
+            return _make_analysis_result(
+                [], job_id=job_id, merge_session_id=merge_session_id,
+                base_version=base_version, canonical_version=canonical_version,
+                has_conflicts=False, clean_text="Merged v3",
+            )
+
+        mock_merge_service.analyze_three_way_merge.side_effect = _capture_s2
+
+        ctrl.notifyCanonicalDocumentAdvance(3)
+        assert advance_2_done.wait(timeout=2.0) is True
+        qapp.processEvents()
+
+        # Merge service must have been called for S2 with candidate text containing # Custom Intro and ZERO markers
+        mock_merge_service.analyze_three_way_merge.assert_called_once()
+        _, kwargs = mock_merge_service.analyze_three_way_merge.call_args
+        assert kwargs["canonical_version"] == 3
+        candidate_passed = kwargs["local_text"]
+        assert "# Custom Intro" in candidate_passed
+        assert "<<<<<<<" not in candidate_passed
+        assert ">>>>>>>" not in candidate_passed
+        assert "=======" not in candidate_passed
+    finally:
+        ctrl.shutdown()
+
+
+def test_t_merge_75_navigation_emits_request_navigate_to_position(qapp, mock_editor_service, mock_merge_service):
+    """
+    T-MERGE-75 (F-04): nextConflictHunk and prevConflictHunk emit requestNavigateToPosition
+    pointing to the hunk's character offset in sourceText.
+    """
+    ctrl = MarkdownEditorController(editor_service=mock_editor_service, merge_service=mock_merge_service)
+    try:
+        ctrl.load_source_sync(job_id=1)
+        ctrl.setSourceText("Prefix text\n")
+        ctrl.notifyCanonicalDocumentAdvance(2)
+
+        hunk0 = _make_hunk(0, "CONFLICT", "b0\n", "l0\n", "r0\n", 0, 1)
+        hunk1 = _make_hunk(1, "CONFLICT", "b1\n", "l1\n", "r1\n", 2, 3)
+        analysis = _make_analysis_result([hunk0, hunk1])
+
+        nav_positions = []
+        ctrl.requestNavigateToPosition.connect(lambda pos: nav_positions.append(pos))
+
+        ctrl._on_internal_merge_analyzed(1, analysis)
+
+        # Initial conflict detection navigates to hunk 0
+        expected_pos_0 = ctrl.sourceText.find("<<<<<<< [LOCAL:hunk_0]")
+        assert expected_pos_0 >= 0
+        assert nav_positions[-1] == expected_pos_0
+
+        # Navigate to next hunk (hunk 1)
+        ctrl.nextConflictHunk()
+        expected_pos_1 = ctrl.sourceText.find("<<<<<<< [LOCAL:hunk_1]")
+        assert expected_pos_1 > expected_pos_0
+        assert nav_positions[-1] == expected_pos_1
+
+        # Navigate back to previous hunk (hunk 0)
+        ctrl.prevConflictHunk()
+        assert nav_positions[-1] == expected_pos_0
+    finally:
+        ctrl.shutdown()

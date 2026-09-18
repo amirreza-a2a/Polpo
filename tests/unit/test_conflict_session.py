@@ -341,3 +341,125 @@ def test_navigation_next_prev_and_labels():
     assert session.currentHunkIndex == 0
 
     assert nav_emissions == [1, 2, 1, 0]
+
+
+def test_t_merge_68_sync_from_buffer_captures_manual_edits():
+    """
+    T-MERGE-68: sync_from_buffer() captures manual edits made inside local and remote blocks.
+    """
+    hunks = [
+        _make_hunk(0, "CONFLICT", "base text\n", "local original\n", "remote original\n", 0, 1),
+    ]
+    analysis = _make_analysis_result(hunks)
+    session = ConflictSession(1, 1, 1, 2, analysis)
+
+    initial_buffer = session.generate_in_buffer_markdown()
+    assert "local original" in initial_buffer
+
+    # User manually edits inside local section in buffer
+    edited_buffer = initial_buffer.replace("local original", "local modified by user")
+    session.sync_from_buffer(edited_buffer)
+
+    assert session.is_fully_resolved() is False
+    assert session.canSave is False
+
+    # Resolving hunk as local will use the modified text
+    resolved_buf = session.apply_resolution_to_buffer(edited_buffer, 0, "local")
+    assert "local modified by user" in resolved_buf
+    assert "local original" not in resolved_buf
+    assert "<<<<<<<" not in resolved_buf
+
+
+def test_t_merge_69_apply_resolution_preserves_external_manual_edits():
+    """
+    T-MERGE-69: apply_resolution_to_buffer() replaces only target marker block,
+    preserving manual edits outside and in other hunks.
+    """
+    hunks = [
+        _make_hunk(0, "CONFLICT", "b0\n", "l0\n", "r0\n", 0, 1),
+        _make_hunk(1, "CONFLICT", "b1\n", "l1\n", "r1\n", 2, 3),
+    ]
+    analysis = _make_analysis_result(hunks)
+    session = ConflictSession(1, 1, 1, 2, analysis)
+
+    initial_buf = session.generate_in_buffer_markdown()
+    # User adds text before, between, and after hunks
+    user_edited_buf = (
+        "# Top Header\n"
+        + initial_buf
+        + "\n# Bottom Notes\n"
+    )
+    session.sync_from_buffer(user_edited_buf)
+
+    # Resolve first hunk
+    step1_buf = session.apply_resolution_to_buffer(user_edited_buf, 0, "local")
+    assert "# Top Header\n" in step1_buf
+    assert "# Bottom Notes\n" in step1_buf
+    assert "<<<<<<< [LOCAL:hunk_0]" not in step1_buf
+    assert "<<<<<<< [LOCAL:hunk_1]" in step1_buf
+    assert session.is_fully_resolved() is False
+
+    # Resolve second hunk
+    step2_buf = session.apply_resolution_to_buffer(step1_buf, 1, "remote")
+    assert "# Top Header\n" in step2_buf
+    assert "# Bottom Notes\n" in step2_buf
+    assert "<<<<<<< [LOCAL:hunk_1]" not in step2_buf
+    assert session.is_fully_resolved() is True
+    assert session.canSave is True
+
+
+def test_t_merge_70_manual_removal_of_markers_resolves_session():
+    """
+    T-MERGE-70: Manual removal of all conflict markers in buffer resolves session
+    without requiring toolbar button clicks.
+    """
+    hunks = [
+        _make_hunk(0, "CONFLICT", "b0\n", "l0\n", "r0\n", 0, 1),
+    ]
+    analysis = _make_analysis_result(hunks)
+    session = ConflictSession(1, 1, 1, 2, analysis)
+
+    buf = session.generate_in_buffer_markdown()
+    assert session.is_fully_resolved() is False
+
+    # User manually deletes all markers and types custom resolution
+    clean_buf = "Completely manual resolution written by user.\n"
+    session.sync_from_buffer(clean_buf)
+
+    assert session.is_fully_resolved() is True
+    assert session.canSave is True
+    assert session.hasMalformedMarkers is False
+
+    candidate = session.generate_candidate_markdown(clean_buf)
+    assert candidate == clean_buf
+
+
+def test_t_merge_71_malformed_markers_blocks_save():
+    """
+    T-MERGE-71: Malformed markers (unmatched start/end, missing divider) keep canSave == False.
+    """
+    hunks = [
+        _make_hunk(0, "CONFLICT", "b0\n", "l0\n", "r0\n", 0, 1),
+    ]
+    analysis = _make_analysis_result(hunks)
+    session = ConflictSession(1, 1, 1, 2, analysis)
+
+    # 1. Missing end tag
+    malformed_buf1 = "<<<<<<< [LOCAL:hunk_0]\nl0\n=======\nr0\n"
+    session.sync_from_buffer(malformed_buf1)
+    assert session.hasMalformedMarkers is True
+    assert session.is_fully_resolved() is False
+    assert session.canSave is False
+
+    # 2. Missing divider
+    malformed_buf2 = "<<<<<<< [LOCAL:hunk_0]\nl0\n>>>>>>> [CANONICAL:hunk_0]\n"
+    session.sync_from_buffer(malformed_buf2)
+    assert session.hasMalformedMarkers is True
+    assert session.is_fully_resolved() is False
+    assert session.canSave is False
+
+    # 3. Orphan remote tag
+    malformed_buf3 = "Normal text\n>>>>>>> [CANONICAL:hunk_0]\n"
+    session.sync_from_buffer(malformed_buf3)
+    assert session.hasMalformedMarkers is True
+    assert session.canSave is False
