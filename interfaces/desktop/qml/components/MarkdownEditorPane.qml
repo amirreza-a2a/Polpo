@@ -179,7 +179,7 @@ Item {
                     text: controller && controller.isSaving ? "Saving..." : "Save (Ctrl+S)"
                     implicitHeight: 28
                     highlighted: true
-                    enabled: controller && controller.isDirty && !controller.isSaving && !controller.hasConflict
+                    enabled: controller && controller.isDirty && !controller.isSaving && (!controller.hasConflict || controller.canSaveConflict)
                     onClicked: {
                         if (controller) {
                             controller.save()
@@ -190,14 +190,14 @@ Item {
         }
 
         // =====================================================================
-        // Conflict Warning Banner
+        // Conflict Warning Banner (Legacy Fallback)
         // =====================================================================
         Rectangle {
             id: conflictBanner
             objectName: "editorConflictBanner"
             Layout.fillWidth: true
             Layout.preferredHeight: 44
-            visible: controller ? controller.hasConflict : false
+            visible: controller ? (controller.hasConflict && !controller.mergeSessionActive) : false
             color: "#451a03"
             border.color: "#b45309"
             border.width: 1
@@ -230,6 +230,71 @@ Item {
                             controller.loadSource(controller.activeJobId)
                         }
                     }
+                }
+            }
+        }
+
+        // =====================================================================
+        // Visual Conflict Resolution Toolbar
+        // =====================================================================
+        ConflictResolutionBar {
+            id: conflictResolutionBar
+            objectName: "conflictResolutionBar"
+            Layout.fillWidth: true
+            controller: editorPaneRoot.controller
+        }
+
+        // =====================================================================
+        // Auto-Merge Notification Banner
+        // =====================================================================
+        Rectangle {
+            id: autoMergeBanner
+            objectName: "editorAutoMergeBanner"
+            Layout.fillWidth: true
+            Layout.preferredHeight: 36
+            property bool dismissed: false
+            visible: (controller ? controller.autoMergeNotification !== "" : false) && !dismissed
+            color: "#064e3b"
+            border.color: "#059669"
+            border.width: 1
+
+            Connections {
+                target: controller
+                function onAutoMergeNotified() {
+                    autoMergeBanner.dismissed = false
+                }
+            }
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 16
+                anchors.rightMargin: 16
+                spacing: 12
+
+                Text {
+                    text: "✓"
+                    color: "#a7f3d0"
+                    font.pixelSize: 13
+                    font.bold: true
+                }
+
+                Text {
+                    id: autoMergeText
+                    objectName: "editorAutoMergeText"
+                    Layout.fillWidth: true
+                    text: controller ? controller.autoMergeNotification : ""
+                    color: "#ecfdf5"
+                    font.pixelSize: 12
+                    elide: Text.ElideRight
+                }
+
+                Button {
+                    id: autoMergeDismissBtn
+                    objectName: "editorAutoMergeDismissButton"
+                    text: "✕"
+                    implicitHeight: 24
+                    implicitWidth: 24
+                    onClicked: autoMergeBanner.dismissed = true
                 }
             }
         }
@@ -320,7 +385,7 @@ Item {
 
                     Shortcut {
                         sequences: [StandardKey.Save]
-                        enabled: controller && controller.isDirty && !controller.isSaving && !controller.hasConflict
+                        enabled: controller && controller.isDirty && !controller.isSaving && (!controller.hasConflict || controller.canSaveConflict)
                         onActivated: {
                             if (controller) {
                                 controller.save()

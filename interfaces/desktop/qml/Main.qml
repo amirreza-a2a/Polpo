@@ -19,7 +19,7 @@ ApplicationWindow {
     property int missedJobId: 0
     property string missedFileName: ""
 
-    function openReviewWorkspace(jobId) {
+    function doOpenReviewWorkspace(jobId) {
         if (typeof documentViewerController !== "undefined" && documentViewerController) {
             documentViewerController.loadPage(jobId, 1);
         }
@@ -31,6 +31,18 @@ ApplicationWindow {
         }
         sidebar.currentTab = 6;
         stackLayout.currentIndex = 6;
+    }
+
+    function openReviewWorkspace(jobId) {
+        if (typeof markdownEditorController !== "undefined" && markdownEditorController &&
+            (markdownEditorController.isDirty || markdownEditorController.hasConflict || markdownEditorController.mergeSessionActive) &&
+            markdownEditorController.activeJobId > 0 &&
+            markdownEditorController.activeJobId !== jobId) {
+            jobSwitchConfirmModal.pendingJobId = jobId;
+            jobSwitchConfirmModal.open();
+            return;
+        }
+        doOpenReviewWorkspace(jobId);
     }
 
     Connections {
@@ -173,6 +185,67 @@ ApplicationWindow {
                         jobController.acknowledge_missed_schedule(window.missedJobId, "cancel", "");
                         window.missedScheduleBanner = "";
                         missedScheduleModal.close();
+                    }
+                }
+            }
+        }
+    }
+
+    ModalDialog {
+        id: jobSwitchConfirmModal
+        objectName: "jobSwitchConfirmModal"
+        title: "Unsaved Merge / Changes"
+        width: 460
+        height: 240
+        property int pendingJobId: 0
+
+        Column {
+            anchors.fill: parent
+            anchors.margins: 20
+            spacing: 14
+
+            Text {
+                text: "Unsaved Merge / Changes"
+                color: "#F9FAFB"
+                font.pixelSize: 16
+                font.bold: true
+            }
+
+            Text {
+                text: "You have uncommitted changes or an active conflict resolution session in the review editor. Switching jobs will discard these changes. Would you like to proceed?"
+                color: "#D1D5DB"
+                font.pixelSize: 13
+                wrapMode: Text.Wrap
+                width: parent.width
+            }
+
+            Row {
+                spacing: 10
+                anchors.horizontalCenter: parent.horizontalCenter
+
+                Button {
+                    id: jobSwitchCancelBtn
+                    objectName: "jobSwitchCancelButton"
+                    text: "Cancel"
+                    onClicked: {
+                        jobSwitchConfirmModal.pendingJobId = 0;
+                        jobSwitchConfirmModal.close();
+                    }
+                }
+
+                Button {
+                    id: jobSwitchDiscardBtn
+                    objectName: "jobSwitchDiscardButton"
+                    text: "Discard & Switch"
+                    highlighted: true
+                    onClicked: {
+                        var targetId = jobSwitchConfirmModal.pendingJobId;
+                        jobSwitchConfirmModal.pendingJobId = 0;
+                        jobSwitchConfirmModal.close();
+                        if (typeof markdownEditorController !== "undefined" && markdownEditorController) {
+                            markdownEditorController.clear();
+                        }
+                        window.doOpenReviewWorkspace(targetId);
                     }
                 }
             }

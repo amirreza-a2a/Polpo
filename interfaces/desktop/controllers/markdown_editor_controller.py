@@ -370,6 +370,7 @@ class MarkdownEditorController(QObject):
         self.sourceTextChanged.emit()
         self.dirtyChanged.emit()
         self.documentMetricsChanged.emit()
+        self.mergeSessionStateChanged.emit()
 
     @Slot()
     def acceptCurrentHunkLocal(self) -> None:
@@ -392,6 +393,7 @@ class MarkdownEditorController(QObject):
         if not self._active_conflict_session:
             return
         self._active_conflict_session.next_hunk()
+        self.mergeSessionStateChanged.emit()
 
     @Slot()
     def prevConflictHunk(self) -> None:
@@ -399,6 +401,7 @@ class MarkdownEditorController(QObject):
         if not self._active_conflict_session:
             return
         self._active_conflict_session.prev_hunk()
+        self.mergeSessionStateChanged.emit()
 
     @Slot()
     def save(self) -> None:
