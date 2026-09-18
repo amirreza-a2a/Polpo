@@ -272,6 +272,15 @@ class MarkdownDocumentModel(QAbstractListModel):
         self.endResetModel()
 
     @Slot(object)
+    def apply_transient_preview(self, document_dto: Optional[MarkdownDocumentDTO]) -> None:
+        """
+        Applies an ephemeral AST projection to the presentation model.
+        Delegates to reconcile_document(document_dto) while guaranteeing
+        zero canonical version mutation or version signal emission.
+        """
+        self.reconcile_document(document_dto)
+
+    @Slot(object)
     def reconcile_document(self, document_dto: Optional[MarkdownDocumentDTO]) -> None:
         """
         Non-destructively reconciles the model with the canonical MarkdownDocumentDTO.

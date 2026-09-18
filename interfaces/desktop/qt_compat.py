@@ -16,6 +16,7 @@ try:
         QUrl,
         QAbstractListModel,
         QEvent,
+        QTimer,
     )
     from PySide6.QtGui import (
         QGuiApplication,
@@ -43,6 +44,7 @@ except ImportError:
         QUrl,
         QAbstractListModel,
         QEvent,
+        QTimer,
     )
     from PyQt6.QtGui import (
         QGuiApplication,
@@ -70,6 +72,7 @@ __all__ = [
     "QUrl",
     "QAbstractListModel",
     "QEvent",
+    "QTimer",
     "QGuiApplication",
     "QDesktopServices",
     "QQmlApplicationEngine",

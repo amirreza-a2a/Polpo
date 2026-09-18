@@ -138,6 +138,37 @@ class MarkdownViewerService:
             base_dir=base_dir,
         )
 
+    def render_preview(
+        self,
+        job_id: int,
+        raw_text: str,
+        base_version: int = 1,
+    ) -> MarkdownDocumentDTO:
+        """
+        Pure in-memory transient projection of uncommitted editor text against
+        the job's active visual regions.
+
+        Executes read-only queries within a non-committing Unit of Work.
+        Guarantees zero database writes, zero artifact file writes, and zero OCC advancement.
+        """
+        with self.uow_factory.create() as uow:
+            job = uow.jobs.get_by_id(job_id)
+            if not job:
+                raise EntityNotFoundError("Job", job_id)
+            active_regions = uow.visual_regions.get_by_job_id(job_id)
+            output_path = job.output_path
+
+        clean_path = output_path[7:] if (output_path and output_path.startswith("file://")) else output_path
+        base_dir = os.path.dirname(clean_path) if clean_path else None
+
+        return self.render_text(
+            raw_text=raw_text,
+            active_regions=active_regions,
+            job_id=job_id,
+            version=base_version,
+            base_dir=base_dir,
+        )
+
     def render_text(
         self,
         raw_text: str,
