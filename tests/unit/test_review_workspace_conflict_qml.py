@@ -126,6 +126,8 @@ def test_t_merge_60_conflict_resolution_bar_visibility_and_label(qapp, mock_edit
     assert "Conflict 1 of 2" in label.property("text")
     assert "Paragraph" in label.property("text")
 
+    controller.shutdown()
+
 
 def test_t_merge_61_toolbar_buttons_navigation_and_actions(qapp, mock_editor_service):
     """
@@ -193,6 +195,8 @@ def test_t_merge_61_toolbar_buttons_navigation_and_actions(qapp, mock_editor_ser
     qapp.processEvents()
     assert session._resolutions[1] == "Local 2\nRemote 2"
 
+    controller.shutdown()
+
 
 def test_t_merge_62_save_button_disabled_during_conflict_enabled_when_resolved(qapp, mock_editor_service):
     """
@@ -242,6 +246,17 @@ def test_t_merge_62_save_button_disabled_during_conflict_enabled_when_resolved(q
     # Fully resolved -> Save must now be enabled!
     assert save_btn.property("enabled") is True
 
+    # Test legacy conflict (hasConflict=True, mergeSessionActive=False) -> Save must be disabled
+    controller._active_conflict_session = None
+    controller._has_conflict = True
+    controller.mergeSessionStateChanged.emit()
+    controller.conflictChanged.emit()
+    qapp.processEvents()
+    assert controller.canSaveConflict is False
+    assert save_btn.property("enabled") is False
+
+    controller.shutdown()
+
 
 def test_t_merge_63_auto_merge_notification_banner_display_and_dismiss(qapp, mock_editor_service):
     """
@@ -271,6 +286,8 @@ def test_t_merge_63_auto_merge_notification_banner_display_and_dismiss(qapp, moc
     qapp.processEvents()
 
     assert banner.property("visible") is False
+
+    controller.shutdown()
 
 
 def test_t_merge_64_open_review_workspace_job_switch_guard(qapp):

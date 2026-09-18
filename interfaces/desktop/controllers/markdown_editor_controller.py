@@ -289,11 +289,9 @@ class MarkdownEditorController(QObject):
     currentConflictLabel = Property(str, current_conflict_label, notify=mergeSessionStateChanged)
 
     def can_save_conflict(self) -> bool:
-        return (
-            self._active_conflict_session.canSave
-            if self._active_conflict_session is not None
-            else True
-        )
+        if self._active_conflict_session is not None:
+            return self._active_conflict_session.canSave
+        return not self._has_conflict
 
     canSaveConflict = Property(bool, can_save_conflict, notify=mergeSessionStateChanged)
 

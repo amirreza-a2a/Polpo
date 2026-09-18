@@ -179,7 +179,7 @@ Item {
                     text: controller && controller.isSaving ? "Saving..." : "Save (Ctrl+S)"
                     implicitHeight: 28
                     highlighted: true
-                    enabled: controller && controller.isDirty && !controller.isSaving && (!controller.hasConflict || controller.canSaveConflict)
+                    enabled: controller && controller.isDirty && !controller.isSaving && (!controller.hasConflict || (controller.mergeSessionActive && controller.canSaveConflict))
                     onClicked: {
                         if (controller) {
                             controller.save()
@@ -385,7 +385,7 @@ Item {
 
                     Shortcut {
                         sequences: [StandardKey.Save]
-                        enabled: controller && controller.isDirty && !controller.isSaving && (!controller.hasConflict || controller.canSaveConflict)
+                        enabled: controller && controller.isDirty && !controller.isSaving && (!controller.hasConflict || (controller.mergeSessionActive && controller.canSaveConflict))
                         onActivated: {
                             if (controller) {
                                 controller.save()
