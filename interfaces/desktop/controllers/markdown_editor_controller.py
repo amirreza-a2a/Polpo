@@ -7,8 +7,12 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional, Tuple
 
+from application.dtos.merge_dto import MergeAnalysisResultDTO
 from application.services.markdown_editor_service import MarkdownEditorService
+from application.services.markdown_merge_service import MarkdownMergeService
+from core.entities.artifact import ArtifactHandle, ArtifactType, StorageBackendType
 from core.exceptions.domain_exceptions import StaleDocumentVersionError
+from interfaces.desktop.models.conflict_session import ConflictSession
 from interfaces.desktop.qt_compat import (
     QObject,
     Property,
@@ -46,6 +50,8 @@ class MarkdownEditorController(QObject):
     searchVisibilityChanged = Signal()
     cursorMetricsChanged = Signal()
     documentMetricsChanged = Signal()
+    mergeSessionStateChanged = Signal()
+    autoMergeNotified = Signal(str)
 
     saved = Signal(int)             # (new_version)
     discarded = Signal()
@@ -58,14 +64,18 @@ class MarkdownEditorController(QObject):
     _internalLoadError = Signal(int, str)            # (req_id, error_message)
     _internalSaved = Signal(int, int, str)           # (req_id, new_version, saved_text)
     _internalSaveError = Signal(int, str, bool)      # (req_id, error_message, is_conflict)
+    _internalMergeAnalyzed = Signal(int, object)     # (session_id, MergeAnalysisResultDTO)
+    _internalMergeError = Signal(int, str)           # (session_id, error_message)
 
     def __init__(
         self,
         editor_service: MarkdownEditorService,
+        merge_service: Optional[MarkdownMergeService] = None,
         parent: Optional[QObject] = None,
     ):
         super().__init__(parent)
         self.editor_service = editor_service
+        self.merge_service = merge_service
 
         self._source_text: str = ""
         self._saved_source_text: str = ""
@@ -77,6 +87,10 @@ class MarkdownEditorController(QObject):
         self._active_version: int = 0
         self._has_conflict: bool = False
         self._conflict_message: str = ""
+
+        self._merge_session_id: int = 0
+        self._active_conflict_session: Optional[ConflictSession] = None
+        self._auto_merge_notification: str = ""
 
         self._text_document: Optional[QTextDocument] = None
         self._highlighter: Optional[MarkdownSyntaxHighlighter] = None
@@ -105,6 +119,8 @@ class MarkdownEditorController(QObject):
         self._internalLoadError.connect(self._on_internal_load_error)
         self._internalSaved.connect(self._on_internal_saved)
         self._internalSaveError.connect(self._on_internal_save_error)
+        self._internalMergeAnalyzed.connect(self._on_internal_merge_analyzed)
+        self._internalMergeError.connect(self._on_internal_merge_error)
 
     # -----------------------------------------------------------------------
     # Properties
@@ -238,6 +254,55 @@ class MarkdownEditorController(QObject):
 
     wordCount = Property(int, word_count, notify=documentMetricsChanged)
 
+    def merge_session_active(self) -> bool:
+        return (
+            self._active_conflict_session is not None
+            and not self._active_conflict_session.isInvalidated
+        )
+
+    mergeSessionActive = Property(bool, merge_session_active, notify=mergeSessionStateChanged)
+
+    def current_conflict_index(self) -> int:
+        return (
+            self._active_conflict_session.currentHunkIndex
+            if self._active_conflict_session is not None
+            else -1
+        )
+
+    currentConflictIndex = Property(int, current_conflict_index, notify=mergeSessionStateChanged)
+
+    def total_conflicts(self) -> int:
+        return (
+            self._active_conflict_session.totalConflicts
+            if self._active_conflict_session is not None
+            else 0
+        )
+
+    totalConflicts = Property(int, total_conflicts, notify=mergeSessionStateChanged)
+
+    def current_conflict_label(self) -> str:
+        return (
+            self._active_conflict_session.currentConflictLabel
+            if self._active_conflict_session is not None
+            else ""
+        )
+
+    currentConflictLabel = Property(str, current_conflict_label, notify=mergeSessionStateChanged)
+
+    def can_save_conflict(self) -> bool:
+        return (
+            self._active_conflict_session.canSave
+            if self._active_conflict_session is not None
+            else True
+        )
+
+    canSaveConflict = Property(bool, can_save_conflict, notify=mergeSessionStateChanged)
+
+    def auto_merge_notification(self) -> str:
+        return self._auto_merge_notification
+
+    autoMergeNotification = Property(str, auto_merge_notification, notify=autoMergeNotified)
+
     # -----------------------------------------------------------------------
     # Operations
     # -----------------------------------------------------------------------
@@ -284,16 +349,103 @@ class MarkdownEditorController(QObject):
         except Exception as e:
             self._on_internal_load_error(req_id, str(e))
 
+    # -----------------------------------------------------------------------
+    # Conflict Resolution Slots
+    # -----------------------------------------------------------------------
+
+    @Slot()
+    def acceptCurrentHunkLocal(self) -> None:
+        """Accepts local hunk for active conflict and updates editor buffer."""
+        if not self._active_conflict_session:
+            return
+        hunk = self._active_conflict_session.get_current_hunk()
+        idx = hunk.hunk_index if hunk is not None else self._active_conflict_session.currentHunkIndex
+        self._active_conflict_session.resolve_hunk(idx, "local")
+        self._source_text = self._active_conflict_session.generate_in_buffer_markdown()
+        if self._headless_doc is not None and self._headless_doc.toPlainText() != self._source_text:
+            self._headless_doc.setPlainText(self._source_text)
+        self._character_count = len(self._source_text)
+        self._word_count = len(re.findall(r"\S+", self._source_text))
+        self.sourceTextChanged.emit()
+        self.dirtyChanged.emit()
+        self.documentMetricsChanged.emit()
+
+    @Slot()
+    def acceptCurrentHunkIncoming(self) -> None:
+        """Accepts incoming/remote hunk for active conflict and updates editor buffer."""
+        if not self._active_conflict_session:
+            return
+        hunk = self._active_conflict_session.get_current_hunk()
+        idx = hunk.hunk_index if hunk is not None else self._active_conflict_session.currentHunkIndex
+        self._active_conflict_session.resolve_hunk(idx, "remote")
+        self._source_text = self._active_conflict_session.generate_in_buffer_markdown()
+        if self._headless_doc is not None and self._headless_doc.toPlainText() != self._source_text:
+            self._headless_doc.setPlainText(self._source_text)
+        self._character_count = len(self._source_text)
+        self._word_count = len(re.findall(r"\S+", self._source_text))
+        self.sourceTextChanged.emit()
+        self.dirtyChanged.emit()
+        self.documentMetricsChanged.emit()
+
+    @Slot()
+    def acceptCurrentHunkBoth(self) -> None:
+        """Accepts both local and remote hunk modifications and updates editor buffer."""
+        if not self._active_conflict_session:
+            return
+        hunk = self._active_conflict_session.get_current_hunk()
+        idx = hunk.hunk_index if hunk is not None else self._active_conflict_session.currentHunkIndex
+        self._active_conflict_session.resolve_hunk(idx, "both")
+        self._source_text = self._active_conflict_session.generate_in_buffer_markdown()
+        if self._headless_doc is not None and self._headless_doc.toPlainText() != self._source_text:
+            self._headless_doc.setPlainText(self._source_text)
+        self._character_count = len(self._source_text)
+        self._word_count = len(re.findall(r"\S+", self._source_text))
+        self.sourceTextChanged.emit()
+        self.dirtyChanged.emit()
+        self.documentMetricsChanged.emit()
+
+    @Slot()
+    def nextConflictHunk(self) -> None:
+        """Navigates to the next conflict hunk in the active session."""
+        if not self._active_conflict_session:
+            return
+        self._active_conflict_session.next_hunk()
+
+    @Slot()
+    def prevConflictHunk(self) -> None:
+        """Navigates to the previous conflict hunk in the active session."""
+        if not self._active_conflict_session:
+            return
+        self._active_conflict_session.prev_hunk()
+
     @Slot()
     def save(self) -> None:
         """Asynchronously persists source text to a new immutable canonical document."""
         if not self._is_dirty or self._is_saving:
             return
 
-        if self._has_conflict:
-            self._error_message = "Cannot save: document has conflicting external changes. Please reload."
-            self.errorChanged.emit()
-            return
+        if self._has_conflict or (
+            self._active_conflict_session is not None
+            and not self._active_conflict_session.is_fully_resolved()
+        ):
+            if (
+                self._active_conflict_session is not None
+                and self._active_conflict_session.is_fully_resolved()
+            ):
+                clean_text = self._active_conflict_session.generate_candidate_markdown()
+                self._source_text = clean_text
+                if self._headless_doc is not None and self._headless_doc.toPlainText() != clean_text:
+                    self._headless_doc.setPlainText(clean_text)
+                self.sourceTextChanged.emit()
+                base_ver = self._active_conflict_session.canonicalVersion
+                self._has_conflict = False
+                self.conflictChanged.emit()
+            else:
+                self._error_message = "Cannot save: unresolved conflicts exist."
+                self.errorChanged.emit()
+                return
+        else:
+            base_ver = self._active_version
 
         self._request_id += 1
         req_id = self._request_id
@@ -305,7 +457,6 @@ class MarkdownEditorController(QObject):
 
         job_id = self._active_job_id
         raw_text = self._source_text
-        base_ver = self._active_version
 
         def _task():
             try:
@@ -327,16 +478,33 @@ class MarkdownEditorController(QObject):
         if not self._is_dirty or self._is_saving:
             return False
 
-        if self._has_conflict:
-            self._error_message = "Cannot save: document has conflicting external changes. Please reload."
-            self.errorChanged.emit()
-            return False
+        if self._has_conflict or (
+            self._active_conflict_session is not None
+            and not self._active_conflict_session.is_fully_resolved()
+        ):
+            if (
+                self._active_conflict_session is not None
+                and self._active_conflict_session.is_fully_resolved()
+            ):
+                clean_text = self._active_conflict_session.generate_candidate_markdown()
+                self._source_text = clean_text
+                if self._headless_doc is not None and self._headless_doc.toPlainText() != clean_text:
+                    self._headless_doc.setPlainText(clean_text)
+                self.sourceTextChanged.emit()
+                base_ver = self._active_conflict_session.canonicalVersion
+                self._has_conflict = False
+                self.conflictChanged.emit()
+            else:
+                self._error_message = "Cannot save: unresolved conflicts exist."
+                self.errorChanged.emit()
+                return False
+        else:
+            base_ver = self._active_version
 
         self._request_id += 1
         req_id = self._request_id
         job_id = self._active_job_id
         raw_text = self._source_text
-        base_ver = self._active_version
 
         try:
             new_ver = self.editor_service.commit_source_text(
@@ -356,13 +524,25 @@ class MarkdownEditorController(QObject):
     @Slot()
     def discard(self) -> None:
         """Discards uncommitted buffer modifications and reverts to last saved text."""
+        had_conflict = (self._active_conflict_session is not None or self._has_conflict)
+        self._active_conflict_session = None
+        self._auto_merge_notification = ""
+        self._has_conflict = False
+        self._conflict_message = ""
+        self._error_message = ""
+        self.mergeSessionStateChanged.emit()
+        self.conflictChanged.emit()
+        self.errorChanged.emit()
+
+        if had_conflict and self._active_job_id > 0:
+            self.loadSource(self._active_job_id)
+            self.discarded.emit()
+            return
+
         self._source_text = self._saved_source_text
         if self._headless_doc is not None and self._headless_doc.toPlainText() != self._source_text:
             self._headless_doc.setPlainText(self._source_text)
         self._is_dirty = False
-        self._has_conflict = False
-        self._conflict_message = ""
-        self._error_message = ""
         self._cursor_line = 1
         self._cursor_column = 1
         self._character_count = len(self._source_text)
@@ -370,8 +550,6 @@ class MarkdownEditorController(QObject):
 
         self.sourceTextChanged.emit()
         self.dirtyChanged.emit()
-        self.conflictChanged.emit()
-        self.errorChanged.emit()
         self.cursorMetricsChanged.emit()
         self.documentMetricsChanged.emit()
         self.discarded.emit()
@@ -388,19 +566,57 @@ class MarkdownEditorController(QObject):
     def notifyCanonicalDocumentAdvance(self, new_doc_version: int) -> None:
         """
         Receives notification that the active canonical Markdown document advanced to new_doc_version.
-        If the editor buffer is dirty, sets conflict state.
-        If the buffer is clean, automatically advances activeVersion and reloads the latest document.
+        If the editor buffer is dirty:
+          - If merge_service is available, initiates background three-way merge analysis.
+          - If already in a conflict session, invalidates it and extracts clean candidate text.
+          - If merge_service is None, sets legacy conflict state.
+        If the buffer is clean:
+          - Automatically advances activeVersion and reloads the latest document.
         """
-        if new_doc_version <= self._active_version:
+        current_known = (
+            self._active_conflict_session.canonicalVersion
+            if self._active_conflict_session is not None
+            else self._active_version
+        )
+        if new_doc_version <= current_known:
             return
 
         if self._is_dirty:
-            self._has_conflict = True
-            self._conflict_message = (
-                f"Canonical document updated to version {new_doc_version} while uncommitted changes exist."
-            )
-            self.conflictChanged.emit()
-            self.conflictDetected.emit(self._conflict_message)
+            if self.merge_service is not None:
+                self._merge_session_id += 1
+                session_id = self._merge_session_id
+
+                if self._active_conflict_session is not None:
+                    local_candidate = self._active_conflict_session.generate_candidate_markdown()
+                    base_ver = self._active_conflict_session.canonicalVersion
+                    self._active_conflict_session.invalidate()
+                else:
+                    local_candidate = self._source_text
+                    base_ver = self._active_version
+
+                job_id = self._active_job_id
+
+                def _run_merge():
+                    try:
+                        res = self.merge_service.analyze_three_way_merge(
+                            job_id=job_id,
+                            base_version=base_ver,
+                            local_text=local_candidate,
+                            canonical_version=new_doc_version,
+                            merge_session_id=session_id,
+                        )
+                        self._internalMergeAnalyzed.emit(session_id, res)
+                    except Exception as e:
+                        self._internalMergeError.emit(session_id, str(e))
+
+                self._executor.submit(_run_merge)
+            else:
+                self._has_conflict = True
+                self._conflict_message = (
+                    f"Canonical document updated to version {new_doc_version} while uncommitted changes exist."
+                )
+                self.conflictChanged.emit()
+                self.conflictDetected.emit(self._conflict_message)
         else:
             self._active_version = new_doc_version
             self.activeVersionChanged.emit()
@@ -425,6 +641,8 @@ class MarkdownEditorController(QObject):
         self._cursor_column = 1
         self._character_count = 0
         self._word_count = 0
+        self._active_conflict_session = None
+        self._auto_merge_notification = ""
 
         self.sourceTextChanged.emit()
         self.dirtyChanged.emit()
@@ -434,6 +652,7 @@ class MarkdownEditorController(QObject):
         self.activeJobChanged.emit()
         self.activeVersionChanged.emit()
         self.conflictChanged.emit()
+        self.mergeSessionStateChanged.emit()
         self.cursorMetricsChanged.emit()
         self.documentMetricsChanged.emit()
 
@@ -842,12 +1061,14 @@ class MarkdownEditorController(QObject):
         self._error_message = ""
         self._has_conflict = False
         self._conflict_message = ""
+        self._active_conflict_session = None
 
         self.activeVersionChanged.emit()
         self.dirtyChanged.emit()
         self.savingChanged.emit()
         self.errorChanged.emit()
         self.conflictChanged.emit()
+        self.mergeSessionStateChanged.emit()
         self.saved.emit(new_version)
 
     def _on_internal_save_error(self, req_id: int, error_msg: str, is_conflict: bool) -> None:
@@ -864,3 +1085,83 @@ class MarkdownEditorController(QObject):
 
         self.savingChanged.emit()
         self.errorChanged.emit()
+
+    def _on_internal_merge_analyzed(
+        self, session_id: int, result_dto: MergeAnalysisResultDTO
+    ) -> None:
+        if self._is_shutdown or session_id != self._merge_session_id:
+            return  # Stale generation (T-MERGE-47)
+
+        if not result_dto.has_conflicts:
+            # Clean Auto-Merge (D03 / T-MERGE-41)
+            self._source_text = result_dto.clean_text or ""
+            handle = ArtifactHandle(
+                storage_backend=StorageBackendType.LOCAL_FS,
+                uri="",
+                artifact_type=getattr(ArtifactType, "TRANSCRIPTION", ArtifactType.OUTPUT_MARKDOWN),
+                job_id=result_dto.job_id,
+                filename=f"output_{result_dto.job_id}_v{result_dto.canonical_version}.md",
+            )
+            storage = getattr(self.merge_service, "storage", getattr(self.editor_service, "storage", None))
+            if storage is not None and storage.exists(handle):
+                raw_data = storage.retrieve(handle)
+                self._saved_source_text = raw_data.decode("utf-8") if isinstance(raw_data, bytes) else str(raw_data)
+            else:
+                self._saved_source_text = ""
+
+            self._active_version = result_dto.canonical_version
+            self._is_dirty = (self._source_text != self._saved_source_text)
+            self._has_conflict = False
+            self._conflict_message = ""
+            self._active_conflict_session = None
+            self._auto_merge_notification = "External updates merged seamlessly."
+
+            if self._headless_doc is not None and self._headless_doc.toPlainText() != self._source_text:
+                self._headless_doc.setPlainText(self._source_text)
+            self._character_count = len(self._source_text)
+            self._word_count = len(re.findall(r"\S+", self._source_text))
+
+            self.sourceTextChanged.emit()
+            self.dirtyChanged.emit()
+            self.activeVersionChanged.emit()
+            self.conflictChanged.emit()
+            self.mergeSessionStateChanged.emit()
+            self.autoMergeNotified.emit(self._auto_merge_notification)
+            self.documentMetricsChanged.emit()
+        else:
+            # Overlapping Conflict (D04 / T-MERGE-42)
+            session = ConflictSession(
+                job_id=result_dto.job_id,
+                merge_session_id=session_id,
+                base_version=result_dto.base_version,
+                canonical_version=result_dto.canonical_version,
+                analysis_result=result_dto,
+                parent=self,
+            )
+            session.sessionChanged.connect(self.mergeSessionStateChanged)
+            session.currentHunkIndexChanged.connect(self.mergeSessionStateChanged)
+            session.canSaveChanged.connect(self.mergeSessionStateChanged)
+            self._active_conflict_session = session
+            self._has_conflict = True
+            self._conflict_message = (
+                f"Conflict detected with canonical version {result_dto.canonical_version}."
+            )
+            self._source_text = session.generate_in_buffer_markdown()
+            if self._headless_doc is not None and self._headless_doc.toPlainText() != self._source_text:
+                self._headless_doc.setPlainText(self._source_text)
+            self._character_count = len(self._source_text)
+            self._word_count = len(re.findall(r"\S+", self._source_text))
+
+            self.sourceTextChanged.emit()
+            self.conflictChanged.emit()
+            self.mergeSessionStateChanged.emit()
+            self.conflictDetected.emit(self._conflict_message)
+            self.documentMetricsChanged.emit()
+
+    def _on_internal_merge_error(self, session_id: int, error_msg: str) -> None:
+        if self._is_shutdown or session_id != self._merge_session_id:
+            return
+        self._has_conflict = True
+        self._conflict_message = error_msg
+        self.conflictChanged.emit()
+        self.conflictDetected.emit(error_msg)

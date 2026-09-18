@@ -27,6 +27,7 @@ from interfaces.desktop.models import (
     PromptListModel,
 )
 from interfaces.desktop.coordinators.review_workspace_sync_coordinator import ReviewWorkspaceSyncCoordinator
+from application.services.markdown_merge_service import MarkdownMergeService
 
 
 def wire_review_workspace_sync(
@@ -211,8 +212,14 @@ def create_app(
     markdown_viewer_controller = MarkdownViewerController(
         viewer_service=container.markdown_viewer_service,
     )
+    markdown_merge_service = MarkdownMergeService(
+        uow_factory=container.uow_factory,
+        storage=container.storage,
+        viewer_service=container.markdown_viewer_service,
+    )
     markdown_editor_controller = MarkdownEditorController(
         editor_service=container.markdown_editor_service,
+        merge_service=markdown_merge_service,
     )
 
     # Wire Bidirectional Synchronization between Document Viewer, Markdown Viewer, and Markdown Editor
