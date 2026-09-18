@@ -218,11 +218,13 @@ Item {
 
                             markdownView.visible = true;
                             markdownView.width = totalW;
+                            markdownView.height = height;
                             markdownView.SplitView.preferredWidth = totalW;
                         } else if (tab === 1) {
                             // Mode 1: Editor Only (100% width)
                             markdownEditorPane.visible = true;
                             markdownEditorPane.width = totalW;
+                            markdownEditorPane.height = height;
                             markdownEditorPane.SplitView.preferredWidth = totalW;
 
                             markdownView.visible = false;
@@ -233,11 +235,20 @@ Item {
                             var half = Math.floor((totalW - handleW) / 2);
                             markdownEditorPane.visible = true;
                             markdownEditorPane.width = half;
+                            markdownEditorPane.height = height;
                             markdownEditorPane.SplitView.preferredWidth = half;
 
                             markdownView.visible = true;
                             markdownView.width = totalW - handleW - half;
+                            markdownView.height = height;
                             markdownView.SplitView.preferredWidth = totalW - handleW - half;
+                        }
+                    }
+
+                    onHeightChanged: {
+                        if (height > 0) {
+                            markdownEditorPane.height = height;
+                            markdownView.height = height;
                         }
                     }
 
@@ -268,6 +279,7 @@ Item {
                         objectName: "markdownEditorPane"
                         visible: false
                         width: 0
+                        height: rightSplitView.height
                         SplitView.preferredWidth: 0
                         SplitView.minimumWidth: visible ? 150 : 0
                     }
@@ -276,6 +288,7 @@ Item {
                         id: markdownView
                         objectName: "markdownView"
                         visible: true
+                        height: rightSplitView.height
                         SplitView.minimumWidth: visible ? 150 : 0
                     }
                 }

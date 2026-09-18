@@ -152,21 +152,28 @@ def test_qml_review_workspace_instantiation(qapp, workspace_env):
 
 
 def test_qml_splitview_tab0_preview_only(qapp, workspace_env):
-    """T-F3-QML-01: In Tab 0, verify markdownView.width > 0 and markdownEditorPane.width == 0."""
+    """T-F3-QML-01: In Tab 0, verify markdownView.width > 0, height > 0, and markdownEditorPane.width == 0, height > 0."""
     engine, workspace = _load_workspace_view(workspace_env)
     md_pane = workspace.findChild(QObject, "markdownPane")
     md_view = workspace.findChild(QObject, "markdownView")
     md_editor = workspace.findChild(QObject, "markdownEditorPane")
+    md_list = workspace.findChild(QObject, "markdownListView")
 
     assert md_pane.property("currentTab") == 0
     assert md_view.property("visible") is True
     assert md_editor.property("visible") is False
     assert md_view.property("width") > 0
+    assert md_view.property("height") > 0
     assert md_editor.property("width") == 0
+    assert md_editor.property("height") > 0
+
+    assert md_list is not None
+    assert md_list.property("width") > 0
+    assert md_list.property("height") > 0
 
 
 def test_qml_splitview_tab1_editor_only(qapp, workspace_env):
-    """T-F3-QML-02: In Tab 1, verify markdownEditorPane.width > 0 and markdownView.width == 0."""
+    """T-F3-QML-02: In Tab 1, verify markdownEditorPane.width > 0, height > 0, and markdownView.width == 0."""
     engine, workspace = _load_workspace_view(workspace_env)
     md_pane = workspace.findChild(QObject, "markdownPane")
     md_view = workspace.findChild(QObject, "markdownView")
@@ -180,11 +187,12 @@ def test_qml_splitview_tab1_editor_only(qapp, workspace_env):
     assert md_editor.property("visible") is True
     assert md_view.property("visible") is False
     assert md_editor.property("width") > 0
+    assert md_editor.property("height") > 0
     assert md_view.property("width") == 0
 
 
 def test_qml_splitview_tab2_dual_pane_and_handle(qapp, workspace_env):
-    """T-F3-QML-03: In Tab 2, verify markdownEditorPane.width > 0, markdownView.width > 0, and splitter handle is visible."""
+    """T-F3-QML-03: In Tab 2, verify markdownEditorPane.width > 0, height > 0, markdownView.width > 0, height > 0, and splitter handle is visible."""
     engine, workspace = _load_workspace_view(workspace_env)
     md_pane = workspace.findChild(QObject, "markdownPane")
     md_view = workspace.findChild(QObject, "markdownView")
@@ -200,7 +208,9 @@ def test_qml_splitview_tab2_dual_pane_and_handle(qapp, workspace_env):
     assert md_editor.property("visible") is True
     assert md_view.property("visible") is True
     assert md_editor.property("width") > 0
+    assert md_editor.property("height") > 0
     assert md_view.property("width") > 0
+    assert md_view.property("height") > 0
 
     handle = workspace.findChild(QObject, "rightSplitHandle")
     assert handle is not None, "rightSplitHandle must exist"
@@ -291,7 +301,7 @@ def test_qml_dual_pane_preview_error_banner(qapp, workspace_env):
 
 
 def test_qml_dual_pane_responsive_resizing(qapp, workspace_env):
-    """T-F3-QML-06: In Tab 2, resize window width from 600 to 1000; verify both editor and preview expand responsively."""
+    """T-F3-QML-06: In Tab 2, resize window width and height; verify both editor and preview expand responsively in both dimensions."""
     engine, workspace = _load_workspace_view(workspace_env)
     md_view = workspace.findChild(QObject, "markdownView")
     md_editor = workspace.findChild(QObject, "markdownEditorPane")
@@ -300,20 +310,102 @@ def test_qml_dual_pane_responsive_resizing(qapp, workspace_env):
     assert split_btn is not None
     split_btn.clicked.emit()
     workspace.setProperty("width", 600)
+    workspace.setProperty("height", 500)
     QGuiApplication.processEvents()
 
     w_editor_600 = md_editor.property("width")
     w_view_600 = md_view.property("width")
+    h_editor_500 = md_editor.property("height")
+    h_view_500 = md_view.property("height")
     assert w_editor_600 > 0
     assert w_view_600 > 0
+    assert h_editor_500 > 0
+    assert h_view_500 > 0
 
     workspace.setProperty("width", 1000)
+    workspace.setProperty("height", 800)
     QGuiApplication.processEvents()
 
     w_editor_1000 = md_editor.property("width")
     w_view_1000 = md_view.property("width")
+    h_editor_800 = md_editor.property("height")
+    h_view_800 = md_view.property("height")
     assert w_editor_1000 > w_editor_600, f"Editor width {w_editor_1000} should be > {w_editor_600}"
     assert w_view_1000 > w_view_600, f"View width {w_view_1000} should be > {w_view_600}"
+    assert h_editor_800 > h_editor_500, f"Editor height {h_editor_800} should be > {h_editor_500}"
+    assert h_view_800 > h_view_500, f"View height {h_view_800} should be > {h_view_500}"
+
+
+def test_qml_rendered_preview_mode_real_document_and_delegates(qapp, workspace_env):
+    """
+    T-F3-QML-07: Real document rendering verification.
+    Proves:
+    1. MarkdownViewerController has a valid document.
+    2. MarkdownDocumentModel contains at least one node.
+    3. MarkdownView ListView is bound to the expected model.
+    4. At least one delegate is instantiated with observable non-zero geometry and content.
+    5. The preview is not merely a correctly-sized empty container.
+    """
+    uow_factory = workspace_env["uow_factory"]
+    storage = workspace_env["storage"]
+    prompt_id = workspace_env["prompt_id"]
+    md_viewer_ctrl = workspace_env["md_viewer_ctrl"]
+
+    # Store valid Markdown document
+    doc_markdown = "# Document Title\n\nThis is a real paragraph with text content."
+    out_h = storage.store(1, ArtifactType.OUTPUT_MARKDOWN, "output_1_v1.md", doc_markdown.encode("utf-8"))
+    with uow_factory.create() as uow:
+        job = uow.jobs.save(
+            Job(
+                id=None,
+                file_name="doc.pdf",
+                file_path="/tmp/doc.pdf",
+                total_pages=1,
+                prompt_id=prompt_id,
+                status=JobStatus.DONE,
+                output_path=out_h.uri,
+                output_artifact_version_watermark=1,
+            )
+        )
+        job_id = job.id
+        uow.commit()
+
+    # Load canonical document into viewer synchronously
+    md_viewer_ctrl.load_document_sync(job_id)
+
+    # 1 & 2: Controller has valid document and model contains nodes
+    assert md_viewer_ctrl.hasDocument is True
+    assert md_viewer_ctrl.model.rowCount() == 2
+
+    # Instantiate workspace view
+    engine, workspace = _load_workspace_view(workspace_env)
+    for _ in range(30):
+        QGuiApplication.processEvents()
+
+    md_view = workspace.findChild(QObject, "markdownView")
+    md_list = workspace.findChild(QObject, "markdownListView")
+
+    # 3: Verify preview geometry and ListView binding
+    assert md_view.property("visible") is True
+    assert md_view.property("width") > 0
+    assert md_view.property("height") > 0
+
+    assert md_list is not None
+    assert md_list.property("visible") is True
+    assert md_list.property("width") > 0
+    assert md_list.property("height") > 0
+    assert md_list.property("count") == 2
+
+    # 4 & 5: Verify delegate instantiation and non-zero dimensions
+    content_item = md_list.property("contentItem")
+    assert content_item is not None
+    children = content_item.childItems()
+    assert len(children) > 0, "ListView must have at least one instantiated delegate child item"
+
+    delegate = children[0]
+    assert delegate.property("objectName") == "markdownNodeDelegate"
+    assert delegate.property("width") > 0
+    assert delegate.property("height") > 0
 
 
 def test_qml_editor_pane_save_activation_and_shortcut(qapp, workspace_env):
