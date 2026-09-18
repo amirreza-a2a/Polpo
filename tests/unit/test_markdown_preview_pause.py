@@ -3,12 +3,10 @@
 #  Unit tests for Preview Pause / Resume & Overlay Coordination (Phase 10F.5 Task 5)
 # ============================================================
 
-from typing import Optional, Sequence
 from unittest.mock import MagicMock
 import pytest
 
 from application.dto.markdown_dto import MarkdownDocumentDTO, MarkdownNodeDTO
-from application.dtos.merge_dto import ConflictHunkDTO, MergeAnalysisResultDTO
 from interfaces.desktop.app import wire_review_workspace_sync
 from interfaces.desktop.controllers.markdown_editor_controller import MarkdownEditorController
 from interfaces.desktop.controllers.markdown_viewer_controller import MarkdownViewerController

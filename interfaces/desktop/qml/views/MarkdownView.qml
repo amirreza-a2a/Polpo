@@ -257,6 +257,11 @@ Item {
                 color: Qt.rgba(0.06, 0.06, 0.08, 0.85)
                 z: 100
 
+                MouseArea {
+                    anchors.fill: parent
+                    preventStealing: true
+                }
+
                 ColumnLayout {
                     anchors.centerIn: parent
                     spacing: 12

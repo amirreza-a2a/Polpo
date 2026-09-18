@@ -88,6 +88,8 @@ def wire_review_workspace_sync(
 
     if markdown_editor_controller is not None:
         def _on_source_text_changed():
+            if markdown_editor_controller.hasConflict:
+                return
             active_job = markdown_editor_controller.activeJobId
             is_dirty = markdown_editor_controller.isDirty or (
                 markdown_editor_controller.sourceText != getattr(markdown_editor_controller, "_saved_source_text", "")
