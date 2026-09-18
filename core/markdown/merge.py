@@ -47,7 +47,7 @@ class ThreeWayMergeResult:
 def tokenize(text: str) -> Tuple[List[str], List[str], bool]:
     if not text:
         return [], [], False
-    
+
     raw_lines = text.splitlines(keepends=True)
     lines = []
     endings = []
@@ -64,7 +64,7 @@ def tokenize(text: str) -> Tuple[List[str], List[str], bool]:
         else:
             lines.append(rl)
             endings.append('')
-            
+
     has_trailing = (endings[-1] != '') if endings else False
     return lines, endings, has_trailing
 
@@ -77,7 +77,7 @@ class Change:
 def changes_overlap(c1: Change, c2: Change) -> bool:
     s1, e1 = c1.start, c1.end
     s2, e2 = c2.start, c2.end
-    
+
     if s1 == e1 and s2 == e2:
         return s1 == s2
     elif s1 == e1:
@@ -89,7 +89,7 @@ def changes_overlap(c1: Change, c2: Change) -> bool:
 
 def map_base_range(opcodes, start_i, end_i, include_insertions=True) -> Tuple[int, int]:
     min_j, max_j = None, None
-    
+
     def add_j(j1, j2):
         nonlocal min_j, max_j
         if min_j is None or j1 < min_j: min_j = j1
@@ -121,7 +121,7 @@ def map_base_range(opcodes, start_i, end_i, include_insertions=True) -> Tuple[in
             else:
                 if include_insertions and tag == 'insert' and start_i < i1 < end_i:
                     add_j(j1, j2)
-                    
+
     return min_j or 0, max_j or 0
 
 def determine_ending(b_ends, l_ends, r_ends):
@@ -137,13 +137,13 @@ def three_way_merge(base_text: str, local_text: str, remote_text: str) -> ThreeW
     b_lines, b_ends, b_trail = tokenize(base_text)
     l_lines, l_ends, l_trail = tokenize(local_text)
     r_lines, r_ends, r_trail = tokenize(remote_text)
-    
+
     sm_l = difflib.SequenceMatcher(None, b_lines, l_lines)
     sm_r = difflib.SequenceMatcher(None, b_lines, r_lines)
-    
+
     opcodes_L = sm_l.get_opcodes()
     opcodes_R = sm_r.get_opcodes()
-    
+
     changes = []
     for tag, i1, i2, j1, j2 in opcodes_L:
         if tag != 'equal':
@@ -151,14 +151,14 @@ def three_way_merge(base_text: str, local_text: str, remote_text: str) -> ThreeW
     for tag, i1, i2, j1, j2 in opcodes_R:
         if tag != 'equal':
             changes.append(Change(i1, i2, 'R'))
-            
+
     blocks = []
     for c in sorted(changes, key=lambda x: (x.start, x.end)):
         overlapping = []
         for b in blocks:
             if any(changes_overlap(x, c) for x in b):
                 overlapping.append(b)
-                
+
         if overlapping:
             new_block = [c]
             for b in overlapping:
@@ -167,14 +167,14 @@ def three_way_merge(base_text: str, local_text: str, remote_text: str) -> ThreeW
             blocks.append(new_block)
         else:
             blocks.append([c])
-            
+
     blocks.sort(key=lambda b: min(x.start for x in b))
-    
+
     hunks = []
     current_idx = 0
     has_conflicts = False
     conflict_count = 0
-    
+
     def make_hunk(h_type, b_s, b_e):
         nonlocal conflict_count
         l_s, l_e = map_base_range(opcodes_L, b_s, b_e)
@@ -201,17 +201,17 @@ def three_way_merge(base_text: str, local_text: str, remote_text: str) -> ThreeW
     for block in blocks:
         min_s = min(x.start for x in block)
         max_e = max(x.end for x in block)
-        
+
         if min_s > current_idx:
             hunks.append(make_hunk(HunkType.CLEAN_UNCHANGED, current_idx, min_s))
-            
+
         sources = set(x.source for x in block)
         l_min, l_max = map_base_range(opcodes_L, min_s, max_e)
         r_min, r_max = map_base_range(opcodes_R, min_s, max_e)
-        
+
         local_lines = tuple(l_lines[l_min:l_max])
         remote_lines = tuple(r_lines[r_min:r_max])
-        
+
         if sources == {'L'}:
             hunks.append(make_hunk(HunkType.CLEAN_LOCAL, min_s, max_e))
         elif sources == {'R'}:
@@ -222,16 +222,16 @@ def three_way_merge(base_text: str, local_text: str, remote_text: str) -> ThreeW
             else:
                 has_conflicts = True
                 hunks.append(make_hunk(HunkType.CONFLICT, min_s, max_e))
-                
+
         current_idx = max_e
 
     if current_idx < len(b_lines):
         hunks.append(make_hunk(HunkType.CLEAN_UNCHANGED, current_idx, len(b_lines)))
-        
+
     clean_text = None
     if not has_conflicts:
         ending = determine_ending(b_ends, l_ends, r_ends)
-        
+
         final_trail = b_trail
         if hunks:
             last = hunks[-1]
@@ -250,7 +250,7 @@ def three_way_merge(base_text: str, local_text: str, remote_text: str) -> ThreeW
                 output_lines.extend(hunk.local_lines)
             elif hunk.hunk_type == HunkType.CLEAN_REMOTE:
                 output_lines.extend(hunk.remote_lines)
-                
+
         if output_lines:
             clean_text = ending.join(output_lines)
             if final_trail:
