@@ -124,9 +124,30 @@ def wire_review_workspace_sync(
             active_ver = markdown_viewer_controller.activeVersion
             markdown_editor_controller.notifyCanonicalDocumentAdvance(active_ver)
 
+        def _on_conflict_or_merge_state_changed():
+            if markdown_editor_controller.hasConflict:
+                markdown_viewer_controller.setPreviewPaused(
+                    True, "Preview paused during conflict resolution"
+                )
+            else:
+                markdown_viewer_controller.setPreviewPaused(False)
+                active_job = markdown_editor_controller.activeJobId
+                is_dirty = markdown_editor_controller.isDirty or (
+                    markdown_editor_controller.sourceText
+                    != getattr(markdown_editor_controller, "_saved_source_text", "")
+                )
+                if active_job > 0 and is_dirty:
+                    markdown_viewer_controller.scheduleLivePreview(
+                        job_id=active_job,
+                        raw_text=markdown_editor_controller.sourceText,
+                        base_version=markdown_editor_controller.activeVersion,
+                    )
+
         markdown_editor_controller.sourceTextChanged.connect(_on_source_text_changed)
         markdown_editor_controller.saved.connect(_on_editor_saved)
         markdown_editor_controller.discarded.connect(_on_editor_discarded)
+        markdown_editor_controller.conflictChanged.connect(_on_conflict_or_merge_state_changed)
+        markdown_editor_controller.mergeSessionStateChanged.connect(_on_conflict_or_merge_state_changed)
         markdown_viewer_controller.activeVersionChanged.connect(_on_viewer_version_changed)
 
         return ReviewWorkspaceSyncCoordinator(

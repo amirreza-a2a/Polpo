@@ -247,6 +247,39 @@ Item {
                     }
                 }
             }
+
+            // 5. Preview Paused Overlay
+            Rectangle {
+                id: previewPausedOverlay
+                objectName: "previewPausedOverlay"
+                anchors.fill: parent
+                visible: controller && controller.previewPaused
+                color: Qt.rgba(0.06, 0.06, 0.08, 0.85)
+                z: 100
+
+                ColumnLayout {
+                    anchors.centerIn: parent
+                    spacing: 12
+
+                    Text {
+                        text: "⚠️ Preview Paused"
+                        color: "#f59e0b"
+                        font.pixelSize: 18
+                        font.bold: true
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+
+                    Text {
+                        text: controller ? controller.previewPausedReason : ""
+                        color: "#9ca3af"
+                        font.pixelSize: 13
+                        wrapMode: Text.WordWrap
+                        Layout.maximumWidth: 440
+                        horizontalAlignment: Text.AlignHCenter
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+                }
+            }
         }
     }
 }

@@ -43,6 +43,7 @@ class MarkdownViewerController(QObject):
     pageFilterChanged = Signal()
     previewErrorChanged = Signal()
     hasPreviewErrorChanged = Signal()
+    previewPausedChanged = Signal()
 
     regionSelected = Signal(str, str)          # (region_id, occurrence_id)
     requestScrollToNode = Signal(int)          # (node_index)
@@ -86,6 +87,8 @@ class MarkdownViewerController(QObject):
         self._last_reconcile_future = None
 
         # Live dual-pane synchronized preview state
+        self._preview_paused: bool = False
+        self._preview_paused_reason: str = ""
         self._has_preview_error: bool = False
         self._preview_error_message: str = ""
         self._draft_revision: int = 0
@@ -140,6 +143,31 @@ class MarkdownViewerController(QObject):
         return self._has_preview_error
 
     hasPreviewError = Property(bool, has_preview_error, notify=hasPreviewErrorChanged)
+
+    def preview_paused(self) -> bool:
+        return self._preview_paused
+
+    previewPaused = Property(bool, preview_paused, notify=previewPausedChanged)
+
+    def preview_paused_reason(self) -> str:
+        return self._preview_paused_reason
+
+    previewPausedReason = Property(str, preview_paused_reason, notify=previewPausedChanged)
+
+    @Slot(bool, str)
+    @Slot(bool)
+    def setPreviewPaused(self, paused: bool, reason: str = "") -> None:
+        target_reason = reason if paused else ""
+        if self._preview_paused == paused and self._preview_paused_reason == target_reason:
+            return
+        self._preview_paused = paused
+        self._preview_paused_reason = target_reason
+        if paused:
+            if hasattr(self, "_live_preview_timer") and self._live_preview_timer.isActive():
+                self._live_preview_timer.stop()
+        self.previewPausedChanged.emit()
+
+    set_preview_paused = setPreviewPaused
 
     @property
     def has_active_draft(self) -> bool:
@@ -313,6 +341,8 @@ class MarkdownViewerController(QObject):
         self._selected_node_index = -1
         self._highlighted_region_id = ""
         self._highlighted_occurrence_id = ""
+        self._preview_paused = False
+        self._preview_paused_reason = ""
         self.documentChanged.emit()
         self.activeJobChanged.emit()
         self.activeVersionChanged.emit()
@@ -323,6 +353,7 @@ class MarkdownViewerController(QObject):
         self.selectedNodeIndexChanged.emit()
         self.highlightedRegionIdChanged.emit()
         self.highlightedOccurrenceIdChanged.emit()
+        self.previewPausedChanged.emit()
 
     @property
     def is_shutdown(self) -> bool:
@@ -338,6 +369,8 @@ class MarkdownViewerController(QObject):
         if self._is_shutdown:
             return
         self._is_shutdown = True
+        self._preview_paused = False
+        self._preview_paused_reason = ""
         if hasattr(self, "_live_preview_timer") and self._live_preview_timer.isActive():
             self._live_preview_timer.stop()
         self._has_active_draft = False
@@ -592,7 +625,7 @@ class MarkdownViewerController(QObject):
         Debounces live preview rendering requests. Sets dirty draft flag and starts/restarts
         the 250ms single-shot timer without touching canonical version metadata.
         """
-        if self._is_shutdown or job_id <= 0:
+        if self._is_shutdown or self._preview_paused or job_id <= 0:
             return
         self._has_active_draft = True
         self._draft_revision += 1
@@ -686,12 +719,13 @@ class MarkdownViewerController(QObject):
         latest revision matching.
         Guards:
           - Shutdown check.
+          - Preview paused check.
           - Job switch isolation (job_id == self._active_job_id).
           - Option B strict matching: draft_revision == self._draft_revision.
         Critical Invariant: Live preview updates MUST NEVER touch self._active_version
         and MUST NEVER emit activeVersionChanged.
         """
-        if self._is_shutdown:
+        if self._is_shutdown or self._preview_paused:
             return
         if job_id != self._active_job_id:
             return  # Job switch isolation: drop result from previous job
@@ -716,11 +750,12 @@ class MarkdownViewerController(QObject):
         GUI-thread handler exposing live preview syntax/render errors.
         Guards:
           - Shutdown check.
+          - Preview paused check.
           - Job switch isolation (job_id == self._active_job_id).
           - Option B strict matching: draft_revision == self._draft_revision.
         Invariant: Retains existing _model (never blanked!).
         """
-        if self._is_shutdown:
+        if self._is_shutdown or self._preview_paused:
             return
         if job_id != self._active_job_id:
             return

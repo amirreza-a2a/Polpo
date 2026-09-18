@@ -137,6 +137,8 @@ class ReviewWorkspaceSyncCoordinator(QObject):
         """
         if not self._is_dual_pane or self._is_shutdown:
             return
+        if getattr(self.viewer_controller, "previewPaused", False):
+            return
         if self._sync_origin == SyncOrigin.PREVIEW_USER:
             return
 
@@ -211,6 +213,8 @@ class ReviewWorkspaceSyncCoordinator(QObject):
 
     def _on_editor_cursor_metrics_changed(self) -> None:
         if not self._is_dual_pane or self._is_shutdown:
+            return
+        if getattr(self.viewer_controller, "previewPaused", False):
             return
         # If preview is driving, suppress feedback
         if self._sync_origin == SyncOrigin.PREVIEW_USER:
