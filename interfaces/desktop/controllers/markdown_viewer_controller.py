@@ -372,27 +372,20 @@ class MarkdownViewerController(QObject):
     ) -> None:
         """
         Updates the active artifact URI for all occurrences of region_id in-place.
-        Notifies presentation model.
-        If region_id is not yet present in the presentation model, triggers asynchronous
-        structural synchronization to reconcile with the canonical document artifact.
-        If region_id is already present but a structural reconciliation is currently in-flight,
-        updates the presentation model in-place and re-synchronizes document structure to prevent
-        the in-flight reconciliation from overwriting the newer artifact.
+        Notifies presentation model immediately for zero-latency image updates.
+        Always triggers asynchronous structural reconciliation with the canonical document
+        in SQLite to synchronize canonical document version, advance activeVersion, and notify
+        coordinators/editors of the external canonical advance.
         """
         if not region_id:
             return
 
-        # Invariant: update_region_artifact() is for existing presentation occurrences;
-        # structural synchronization is required when the canonical document contains
-        # a committed region occurrence that is absent from the current presentation model.
         existing_occs = self._model.occurrencesOfRegion(region_id)
         if existing_occs:
             self._model.update_region_artifact(region_id, new_artifact_uri, new_version)
-            if self._reconcile_in_flight and self._has_document and self._active_job_id > 0:
-                self._sync_document_structure(self._active_job_id)
-        else:
-            if self._has_document and self._active_job_id > 0:
-                self._sync_document_structure(self._active_job_id)
+
+        if self._has_document and self._active_job_id > 0:
+            self._sync_document_structure(self._active_job_id)
 
     @Slot(str)
     @Slot(str, str)

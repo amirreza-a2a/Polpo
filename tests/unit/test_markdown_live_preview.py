@@ -3,10 +3,13 @@
 #  Unit Tests for Phase 10F.3 Live Dual-Pane Synchronized Preview
 # ============================================================
 
+import io
 import os
 import time
+import uuid
 from pathlib import Path
 from unittest.mock import MagicMock
+from PIL import Image
 import pytest
 
 from application.dto.markdown_dto import (
@@ -22,7 +25,7 @@ from application.services.markdown_editor_service import MarkdownEditorService
 from application.services.markdown_viewer_service import MarkdownViewerService
 from core.entities.artifact import ArtifactType
 from core.entities.bounding_box import BoundingBox
-from core.entities.job import Job
+from core.entities.job import Job, JobStatus
 
 from core.entities.visual_region import (
     RegionOrigin,
@@ -1076,3 +1079,399 @@ def test_ext_04_discard_after_external_advance_reloads_canonical_v2(qapp, tmp_pa
 
     viewer_ctrl.shutdown()
     editor_ctrl.shutdown()
+
+
+def _setup_recrop_workspace(tmp_path, initial_version: int = 1):
+    env = _setup_wired_workspace(tmp_path)
+    storage = env["storage"]
+    uow_factory = env["uow_factory"]
+    doc_proc = env["doc_ctrl"].viewer_service.doc_processor
+
+    # Synthetic 200x200 JPEG
+    img = Image.new("RGB", (200, 200), color=(180, 180, 180))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    page_jpeg = buf.getvalue()
+
+    doc_proc.get_page_count = lambda pdf_bytes: 1
+    doc_proc.render_page_to_jpeg = lambda pdf_bytes, page_number, dpi=150: page_jpeg
+
+    # Store mock source PDF
+    pdf_handle = storage.store(
+        job_id=1,
+        artifact_type=ArtifactType.SOURCE_PDF,
+        filename="source.pdf",
+        data=b"%PDF-1.4 mock pdf data",
+        mime_type="application/pdf",
+    )
+
+    region_id = uuid.uuid4().hex
+
+    # Store initial crop artifact
+    crop_handle = storage.store(
+        job_id=1,
+        artifact_type=ArtifactType.CROPPED_IMAGE,
+        filename=f"crop_1_{region_id}_v{initial_version}.jpg",
+        data=page_jpeg,
+        mime_type="image/jpeg",
+    )
+
+    # Store initial markdown document
+    initial_md_text = (
+        f"# Title V{initial_version}\n\n"
+        f"Paragraph text.\n\n"
+        f"![[crop_1_{region_id}_v{initial_version}.jpg|region_id={region_id}]]\n\n"
+        f"Summary text."
+    )
+    output_md_handle = storage.store(
+        job_id=1,
+        artifact_type=ArtifactType.OUTPUT_MARKDOWN,
+        filename=f"output_1_v{initial_version}.md",
+        data=initial_md_text.encode("utf-8"),
+        mime_type="text/markdown",
+    )
+    storage.store(
+        job_id=1,
+        artifact_type=ArtifactType.OUTPUT_MARKDOWN,
+        filename=f"page_1_v{initial_version}.md",
+        data=initial_md_text.encode("utf-8"),
+        mime_type="text/markdown",
+    )
+
+    with uow_factory.create() as uow:
+        job = uow.jobs.save(
+            Job(
+                id=None,
+                file_name="source.pdf",
+                file_path=pdf_handle.uri,
+                total_pages=1,
+                status=JobStatus.DONE,
+                output_path=output_md_handle.uri,
+                output_artifact_version_watermark=initial_version,
+            )
+        )
+        region = uow.visual_regions.save(
+            VisualRegion(
+                id=None,
+                region_id=region_id,
+                job_id=job.id,
+                page_number=1,
+                detected_bbox=BoundingBox(ymin=100, xmin=100, ymax=500, xmax=500),
+                origin=RegionOrigin.AI_DETECTED,
+                review_status=ReviewStatus.UNREVIEWED,
+                sync_status=SyncStatus.SYNCED,
+                active_artifact_uri=crop_handle.uri,
+                active_artifact_version=initial_version,
+                artifact_version_watermark=initial_version,
+            )
+        )
+        uow.commit()
+
+    env["job"] = job
+    env["region_id"] = region_id
+    env["page_jpeg"] = page_jpeg
+    return env
+
+
+def test_version_01_region_resize_advances_viewer_active_version(qapp, tmp_path):
+    """
+    T-VERSION-01: Region resize advances viewer.activeVersion to new canonical version.
+    """
+    env = _setup_recrop_workspace(tmp_path, initial_version=1)
+    doc_ctrl = env["doc_ctrl"]
+    viewer_ctrl = env["md_viewer_ctrl"]
+    editor_ctrl = env["md_editor_ctrl"]
+    job = env["job"]
+    region_id = env["region_id"]
+
+    doc_ctrl.loadPageSync(job.id, 1)
+    viewer_ctrl.load_document_sync(job.id)
+    editor_ctrl.load_source_sync(job.id)
+
+    assert viewer_ctrl.activeVersion == 1
+    assert editor_ctrl.activeVersion == 1
+
+    # Perform region resize and commit
+    doc_ctrl.startResize(region_id, "se", 500.0, 500.0)
+    doc_ctrl.updateResize(600.0, 600.0)
+    doc_ctrl.commitResize()
+    doc_ctrl.wait_for_apply()
+    for _ in range(5):
+        QGuiApplication.processEvents()
+
+    # Wait for reconciliation
+    viewer_ctrl.wait_for_reconciliation()
+    for _ in range(5):
+        QGuiApplication.processEvents()
+
+    assert viewer_ctrl.activeVersion == 2
+
+    viewer_ctrl.shutdown()
+    editor_ctrl.shutdown()
+    doc_ctrl.shutdown()
+
+
+def test_version_02_sequential_mutations_monotonically_advance_version(qapp, tmp_path):
+    """
+    T-VERSION-02: Sequential mutations (v22->v26) monotonically advance viewer version to v26.
+    """
+    env = _setup_recrop_workspace(tmp_path, initial_version=22)
+    doc_ctrl = env["doc_ctrl"]
+    viewer_ctrl = env["md_viewer_ctrl"]
+    editor_ctrl = env["md_editor_ctrl"]
+    job = env["job"]
+    region_id = env["region_id"]
+
+    doc_ctrl.loadPageSync(job.id, 1)
+    viewer_ctrl.load_document_sync(job.id)
+    editor_ctrl.load_source_sync(job.id)
+
+    assert viewer_ctrl.activeVersion == 22
+
+    # Perform 4 consecutive resize mutations (22 -> 23 -> 24 -> 25 -> 26)
+    for expected_ver in (23, 24, 25, 26):
+        offset = float((expected_ver - 22) * 20)
+        doc_ctrl.startResize(region_id, "se", 500.0 + offset, 500.0 + offset)
+        doc_ctrl.updateResize(510.0 + offset, 510.0 + offset)
+        doc_ctrl.commitResize()
+        doc_ctrl.wait_for_apply()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+        viewer_ctrl.wait_for_reconciliation()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+        assert viewer_ctrl.activeVersion == expected_ver
+
+    assert viewer_ctrl.activeVersion == 26
+
+    viewer_ctrl.shutdown()
+    editor_ctrl.shutdown()
+    doc_ctrl.shutdown()
+
+
+def test_version_03_clean_editor_tracks_canonical_version_advance(qapp, tmp_path):
+    """
+    T-VERSION-03: Clean editor tracks canonical version advance without false conflict.
+    """
+    env = _setup_recrop_workspace(tmp_path, initial_version=1)
+    doc_ctrl = env["doc_ctrl"]
+    viewer_ctrl = env["md_viewer_ctrl"]
+    editor_ctrl = env["md_editor_ctrl"]
+    job = env["job"]
+    region_id = env["region_id"]
+
+    doc_ctrl.loadPageSync(job.id, 1)
+    viewer_ctrl.load_document_sync(job.id)
+    editor_ctrl.load_source_sync(job.id)
+
+    assert editor_ctrl.isDirty is False
+    assert editor_ctrl.hasConflict is False
+    assert editor_ctrl.activeVersion == 1
+
+    doc_ctrl.startResize(region_id, "se", 500.0, 500.0)
+    doc_ctrl.updateResize(600.0, 600.0)
+    doc_ctrl.commitResize()
+    doc_ctrl.wait_for_apply()
+    for _ in range(5):
+        QGuiApplication.processEvents()
+
+    viewer_ctrl.wait_for_reconciliation()
+    assert _wait_for_condition(lambda: editor_ctrl.activeVersion == 2 and not editor_ctrl.isLoading)
+
+    assert viewer_ctrl.activeVersion == 2
+    assert editor_ctrl.activeVersion == 2
+    assert editor_ctrl.hasConflict is False
+    assert editor_ctrl.isDirty is False
+    assert f"crop_1_{region_id}_v2.jpg" in editor_ctrl.sourceText
+
+    viewer_ctrl.shutdown()
+    editor_ctrl.shutdown()
+    doc_ctrl.shutdown()
+
+
+def test_version_04_editor_save_after_region_mutations_succeeds(qapp, tmp_path):
+    """
+    T-VERSION-04: Editor edit & Save after region mutations succeeds without StaleDocumentVersionError.
+    """
+    env = _setup_recrop_workspace(tmp_path, initial_version=22)
+    doc_ctrl = env["doc_ctrl"]
+    viewer_ctrl = env["md_viewer_ctrl"]
+    editor_ctrl = env["md_editor_ctrl"]
+    job = env["job"]
+    region_id = env["region_id"]
+
+    doc_ctrl.loadPageSync(job.id, 1)
+    viewer_ctrl.load_document_sync(job.id)
+    editor_ctrl.load_source_sync(job.id)
+
+    # Perform mutations 22 -> 23 -> 24
+    for idx in range(2):
+        offset = float(idx * 20)
+        doc_ctrl.startResize(region_id, "se", 500.0 + offset, 500.0 + offset)
+        doc_ctrl.updateResize(510.0 + offset, 510.0 + offset)
+        doc_ctrl.commitResize()
+        doc_ctrl.wait_for_apply()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+        viewer_ctrl.wait_for_reconciliation()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+
+    assert _wait_for_condition(lambda: viewer_ctrl.activeVersion == 24 and editor_ctrl.activeVersion == 24 and not editor_ctrl.isLoading)
+    assert viewer_ctrl.activeVersion == 24
+    assert editor_ctrl.activeVersion == 24
+    assert editor_ctrl.hasConflict is False
+
+    # User edits in editor
+    editor_ctrl.set_source_text(editor_ctrl.sourceText + "\n\nUser appended line.")
+    assert editor_ctrl.isDirty is True
+
+    # User clicks Save
+    saved_versions = []
+    editor_ctrl.saved.connect(lambda v: saved_versions.append(v))
+    success = editor_ctrl.save_sync()
+
+    assert success is True
+    assert len(saved_versions) == 1 and saved_versions[0] == 25
+    assert editor_ctrl.activeVersion == 25
+    assert editor_ctrl.hasConflict is False
+    assert editor_ctrl.isDirty is False
+
+    viewer_ctrl.shutdown()
+    editor_ctrl.shutdown()
+    doc_ctrl.shutdown()
+
+
+def test_version_05_out_of_order_reconciliation_cannot_regress_version(qapp, tmp_path):
+    """
+    T-VERSION-05: Out-of-order async reconciliation completion cannot regress viewer.activeVersion.
+    """
+    env = _setup_recrop_workspace(tmp_path, initial_version=26)
+    viewer_ctrl = env["md_viewer_ctrl"]
+    job = env["job"]
+
+    viewer_ctrl.load_document_sync(job.id)
+    assert viewer_ctrl.activeVersion == 26
+
+    # Simulate an older reconciliation payload arriving late with document version 22
+    stale_dto = MarkdownDocumentDTO(
+        job_id=job.id,
+        version=22,
+        nodes=(),
+        region_to_occurrences={},
+    )
+    viewer_ctrl._on_internal_reconcile_loaded(viewer_ctrl._request_id, stale_dto)
+
+    assert viewer_ctrl.activeVersion == 26
+
+    # Simulate stale request ID
+    stale_req_dto = MarkdownDocumentDTO(
+        job_id=job.id,
+        version=27,
+        nodes=(),
+        region_to_occurrences={},
+    )
+    viewer_ctrl._on_internal_reconcile_loaded(viewer_ctrl._request_id - 1, stale_req_dto)
+    assert viewer_ctrl.activeVersion == 26
+
+    viewer_ctrl.shutdown()
+
+
+def test_version_06_region_crop_artifact_version_distinct_from_document_version(qapp, tmp_path):
+    """
+    T-VERSION-06: Region crop artifact version remains distinct from Markdown document version.
+    """
+    env = _setup_recrop_workspace(tmp_path, initial_version=2)
+    viewer_ctrl = env["md_viewer_ctrl"]
+    job = env["job"]
+    region_id = env["region_id"]
+
+    viewer_ctrl.load_document_sync(job.id)
+    assert viewer_ctrl.activeVersion == 2
+
+    # In-place region crop update with high artifact version (e.g. 55)
+    viewer_ctrl.updateRegionArtifact(region_id, "/data/crop_v55.jpg", new_version=55)
+
+    # Immediately after in-place update, model reflects crop v55
+    node_idx = viewer_ctrl.model.indexOfRegion(region_id)
+    assert node_idx >= 0
+    assert "crop_v55.jpg" in viewer_ctrl.model.getNode(node_idx)["imageUri"]
+
+    # Even after reconciliation completes, activeVersion remains canonical doc version 2, NOT 55
+    viewer_ctrl.wait_for_reconciliation()
+    for _ in range(5):
+        QGuiApplication.processEvents()
+
+    assert viewer_ctrl.activeVersion == 2
+
+    viewer_ctrl.shutdown()
+
+
+def test_version_07_dirty_editor_plus_region_mutation_triggers_conflict_and_preserves_draft(qapp, tmp_path):
+    """
+    T-VERSION-07: Dirty editor + region mutation advances viewer activeVersion,
+    preserves dirty draft preview, and triggers editor conflict.
+    """
+    env = _setup_recrop_workspace(tmp_path, initial_version=1)
+    doc_ctrl = env["doc_ctrl"]
+    viewer_ctrl = env["md_viewer_ctrl"]
+    editor_ctrl = env["md_editor_ctrl"]
+    job = env["job"]
+    region_id = env["region_id"]
+
+    doc_ctrl.loadPageSync(job.id, 1)
+    viewer_ctrl.load_document_sync(job.id)
+    editor_ctrl.load_source_sync(job.id)
+
+    # User types uncommitted draft in editor
+    editor_ctrl.set_source_text("# Dirty Draft Preview\nUser is actively drafting.")
+    viewer_ctrl.flushLivePreview()
+    assert _wait_for_condition(lambda: viewer_ctrl.last_applied_draft_revision == viewer_ctrl.draft_revision)
+    assert editor_ctrl.isDirty is True
+    assert viewer_ctrl.has_active_draft is True
+    draft_row_count = viewer_ctrl.model.rowCount()
+
+    # External region mutation occurs while editor is dirty
+    doc_ctrl.startResize(region_id, "se", 500.0, 500.0)
+    doc_ctrl.updateResize(600.0, 600.0)
+    doc_ctrl.commitResize()
+    doc_ctrl.wait_for_apply()
+    for _ in range(5):
+        QGuiApplication.processEvents()
+
+    viewer_ctrl.wait_for_reconciliation()
+    for _ in range(5):
+        QGuiApplication.processEvents()
+
+    # Viewer activeVersion MUST advance to 2
+    assert viewer_ctrl.activeVersion == 2
+
+    # Preserves dirty draft preview in viewer model (must NOT be replaced by canonical v2)
+    assert viewer_ctrl.has_active_draft is True
+    assert viewer_ctrl.model.rowCount() == draft_row_count
+    assert viewer_ctrl.model.data(viewer_ctrl.model.index(0, 0), MarkdownDocumentModel.ContentRole) == "Dirty Draft Preview"
+
+    # Editor must be in conflict
+    assert editor_ctrl.activeVersion == 1
+    assert editor_ctrl.hasConflict is True
+    assert editor_ctrl.isDirty is True
+
+    # Clicking Discard resolves conflict and reloads canonical v2
+    editor_ctrl.discard()
+    assert _wait_for_condition(
+        lambda: not editor_ctrl.isLoading
+        and not viewer_ctrl.isLoading
+        and editor_ctrl.activeVersion == 2
+        and not editor_ctrl.hasConflict
+        and not viewer_ctrl.has_active_draft
+    )
+
+    assert editor_ctrl.activeVersion == 2
+    assert editor_ctrl.hasConflict is False
+    assert editor_ctrl.isDirty is False
+    assert viewer_ctrl.activeVersion == 2
+    assert viewer_ctrl.has_active_draft is False
+
+    viewer_ctrl.shutdown()
+    editor_ctrl.shutdown()
+    doc_ctrl.shutdown()

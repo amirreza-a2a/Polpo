@@ -224,8 +224,10 @@ class TestPhase10ERecropSyncIntegration(unittest.TestCase):
         doc_ctrl.updateResize(600.0, 600.0)
         doc_ctrl.commitResize()
 
-        # Synchronously apply or verify apply execution
-        doc_ctrl.apply_region_sync(self.job.id, self.region_id)
+        # Wait for async apply triggered by commitResize to complete
+        doc_ctrl.wait_for_apply()
+        for _ in range(5):
+            QGuiApplication.processEvents()
 
         # Verify signal was emitted
         assert len(committed_events) >= 1
@@ -242,8 +244,13 @@ class TestPhase10ERecropSyncIntegration(unittest.TestCase):
         assert f"crop_1_{self.region_id}_v2.jpg" in updated_img_uri
         assert updated_img_uri != initial_img_uri
 
-        # Verify MarkdownViewerController active document version watermark is NOT conflated with region crop version
-        assert md_ctrl.activeVersion == 1
+        # Wait for asynchronous structural reconciliation
+        md_ctrl.wait_for_reconciliation()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+
+        # Canonical markdown document advanced to version 2 via ApplyReviewService
+        assert md_ctrl.activeVersion == 2
 
         # Verify SQLite persistent state
         with self.uow_factory.create() as uow:
@@ -308,8 +315,15 @@ class TestPhase10ERecropSyncIntegration(unittest.TestCase):
         doc_ctrl.updateResize(600.0, 600.0)
         doc_ctrl.commitResize()
 
-        # Apply recrop to version 2
-        doc_ctrl.apply_region_sync(self.job.id, self.region_id)
+        # Wait for async apply triggered by commitResize to complete
+        doc_ctrl.wait_for_apply()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+
+        # Wait for asynchronous structural reconciliation
+        md_ctrl.wait_for_reconciliation()
+        for _ in range(5):
+            QGuiApplication.processEvents()
 
         # Verify BOTH occurrences updated in-place
         updated_matching = [
@@ -413,17 +427,27 @@ class TestPhase10ERecropSyncIntegration(unittest.TestCase):
         doc_ctrl.startResize(self.region_id, "se", 500.0, 500.0)
         doc_ctrl.updateResize(600.0, 600.0)
         doc_ctrl.commitResize()
-        doc_ctrl.apply_region_sync(self.job.id, self.region_id)
-        assert md_ctrl.activeVersion == 1
+        doc_ctrl.wait_for_apply()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+        md_ctrl.wait_for_reconciliation()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+        assert md_ctrl.activeVersion == 2
 
         # 2. Reset to AI
         doc_ctrl.selectRegion(self.region_id)
         assert doc_ctrl.canResetSelectedToAi is True
         doc_ctrl.resetSelectedRegionToAi()
-        doc_ctrl.apply_region_sync(self.job.id, self.region_id)
+        doc_ctrl.wait_for_apply()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+        md_ctrl.wait_for_reconciliation()
+        for _ in range(5):
+            QGuiApplication.processEvents()
 
-        # Active document watermark remains 1; region crop version is 3
-        assert md_ctrl.activeVersion == 1
+        # Canonical document watermark advances to 3; region crop version is 3
+        assert md_ctrl.activeVersion == 3
         image_nodes = [item for item in md_ctrl.model._items if item.get("primaryRegionId") == self.region_id]
         assert len(image_nodes) == 1
         assert f"crop_1_{self.region_id}_v3.jpg" in image_nodes[0]["imageUri"]
@@ -431,12 +455,17 @@ class TestPhase10ERecropSyncIntegration(unittest.TestCase):
         # 3. Delete region
         doc_ctrl.selectRegion(self.region_id)
         doc_ctrl.deleteSelectedRegion()
-        doc_ctrl.apply_region_sync(self.job.id, self.region_id)
+        doc_ctrl.wait_for_apply()
+        for _ in range(5):
+            QGuiApplication.processEvents()
+        md_ctrl.wait_for_reconciliation()
+        for _ in range(5):
+            QGuiApplication.processEvents()
 
-        # In Markdown model, deleted region active artifact URI becomes empty
+        # Canonical document watermark advances to 4; deleted region is removed from canonical Markdown model
+        assert md_ctrl.activeVersion == 4
         image_nodes_after_del = [item for item in md_ctrl.model._items if item.get("primaryRegionId") == self.region_id]
-        assert len(image_nodes_after_del) == 1
-        assert image_nodes_after_del[0]["imageUri"] == ""
+        assert len(image_nodes_after_del) == 0
 
         doc_ctrl.shutdown()
         md_ctrl.shutdown()
