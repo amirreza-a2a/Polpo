@@ -10,6 +10,7 @@ from interfaces.desktop.qt_compat import (
     QObject,
     Qt,
     QUrl,
+    Signal,
     Slot,
 )
 from application.dto.markdown_dto import (
@@ -24,6 +25,8 @@ class MarkdownDocumentModel(QAbstractListModel):
     Supports high-performance virtualization (ListView with reuseItems: true),
     deterministic role access, and O(1) visual region lookup.
     """
+
+    generationChanged = Signal(int)
 
     NodeIdRole = Qt.ItemDataRole.UserRole + 1
     NodeTypeRole = Qt.ItemDataRole.UserRole + 2
@@ -46,10 +49,13 @@ class MarkdownDocumentModel(QAbstractListModel):
     ListItemSegmentsRole = Qt.ItemDataRole.UserRole + 19
     TableCellSegmentsRole = Qt.ItemDataRole.UserRole + 20
     QuoteChildrenRole = Qt.ItemDataRole.UserRole + 21
+    SourceStartLineRole = Qt.ItemDataRole.UserRole + 22
+    SourceEndLineRole = Qt.ItemDataRole.UserRole + 23
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
         self._items: List[Dict[str, Any]] = []
+        self._model_generation: int = 0
         self._document_dto: Optional[MarkdownDocumentDTO] = None
         self._region_to_node_index: Dict[str, int] = {}
         self._region_to_occurrences: Dict[str, List[Dict[str, Any]]] = {}
@@ -79,6 +85,8 @@ class MarkdownDocumentModel(QAbstractListModel):
             self.PageNumberRole: b"pageNumber",
             self.ImageUriRole: b"imageUri",
             self.AltTextRole: b"altText",
+            self.SourceStartLineRole: b"sourceStartLine",
+            self.SourceEndLineRole: b"sourceEndLine",
         }
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
@@ -133,6 +141,10 @@ class MarkdownDocumentModel(QAbstractListModel):
             return item["tableCellSegments"]
         elif role == self.QuoteChildrenRole:
             return item["quoteChildren"]
+        elif role == self.SourceStartLineRole:
+            return item.get("sourceStartLine")
+        elif role == self.SourceEndLineRole:
+            return item.get("sourceEndLine")
         return None
 
     def _node_dto_to_item(self, node: Any) -> Dict[str, Any]:
@@ -232,6 +244,8 @@ class MarkdownDocumentModel(QAbstractListModel):
             "pageNumber": page_number,
             "imageUri": image_uri,
             "altText": alt_text,
+            "sourceStartLine": node.source_start_line,
+            "sourceEndLine": node.source_end_line,
         }
 
     def set_document(self, document_dto: Optional[MarkdownDocumentDTO]) -> None:
@@ -269,7 +283,9 @@ class MarkdownDocumentModel(QAbstractListModel):
         else:
             self._document_dto = None
 
+        self._model_generation += 1
         self.endResetModel()
+        self.generationChanged.emit(self._model_generation)
 
     @Slot(object)
     def apply_transient_preview(self, document_dto: Optional[MarkdownDocumentDTO]) -> None:
@@ -338,6 +354,10 @@ class MarkdownDocumentModel(QAbstractListModel):
                     roles_changed.append(self.RegionsRole)
                 if old_item_dict.get("content") != new_item_dict.get("content"):
                     roles_changed.append(self.ContentRole)
+                if old_item_dict.get("sourceStartLine") != new_item_dict.get("sourceStartLine"):
+                    roles_changed.append(self.SourceStartLineRole)
+                if old_item_dict.get("sourceEndLine") != new_item_dict.get("sourceEndLine"):
+                    roles_changed.append(self.SourceEndLineRole)
 
                 if roles_changed:
                     self._items[old_ptr] = new_item_dict
@@ -375,6 +395,9 @@ class MarkdownDocumentModel(QAbstractListModel):
             ]
             for o in occ_refs:
                 self._occurrence_to_node_index[o.occurrence_id] = o.node_index
+
+        self._model_generation += 1
+        self.generationChanged.emit(self._model_generation)
 
     def _resolve_qml_uri(self, ref: VisualRegionRefDTO) -> str:
         """Converts filesystem image_path to a QML-safe file:// URI."""
@@ -593,3 +616,61 @@ class MarkdownDocumentModel(QAbstractListModel):
                         self.RegionsRole,
                     ],
                 )
+
+    @property
+    def model_generation(self) -> int:
+        return self._model_generation
+
+    @Slot(result=int)
+    def modelGeneration(self) -> int:
+        return self._model_generation
+
+    @Slot()
+    def clear(self) -> None:
+        """Clears the document model and increments generation."""
+        self.set_document(None)
+
+    @Slot(int, result=int)
+    def nodeIndexAtLine(self, line: int) -> int:
+        """
+        Maps a 1-based source markdown line number to the corresponding 0-based
+        presentation AST node index.
+        Deterministic fallback rules:
+        - If document is empty: returns -1.
+        - If line <= 0 or before the first block: returns 0.
+        - If line falls within a block [start, end]: returns that block's index.
+        - If line falls in whitespace between blocks: returns the nearest preceding block index.
+        - If line is beyond the last block: returns the last block index.
+        """
+        if not self._items:
+            return -1
+        if line <= 0:
+            return 0
+
+        best_idx = 0
+        for idx, item in enumerate(self._items):
+            start = item.get("sourceStartLine")
+            end = item.get("sourceEndLine")
+            if start is None or start <= 0:
+                continue
+            if line < start:
+                # Line falls in whitespace before this block: return preceding block
+                return max(0, idx - 1) if idx > 0 else 0
+            if end is not None and start <= line <= end:
+                return idx
+            if start <= line:
+                best_idx = idx
+
+        return best_idx
+
+    @Slot(int, result=int)
+    def lineAtNodeIndex(self, node_index: int) -> int:
+        """
+        Returns the 1-based start line of the block at node_index.
+        Falls back to line 1 if node_index is out of bounds or line info is missing.
+        """
+        if 0 <= node_index < len(self._items):
+            start = self._items[node_index].get("sourceStartLine")
+            if start is not None and start > 0:
+                return start
+        return 1

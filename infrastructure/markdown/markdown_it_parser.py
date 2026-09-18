@@ -98,6 +98,8 @@ def _tokens_to_blocks(
 
     while idx < n:
         tok = tokens[idx]
+        start_line = tok.map[0] + 1 if tok.map else None
+        end_line = tok.map[1] if tok.map else None
 
         if tok.type == "heading_open":
             level = int(tok.tag[1:]) if tok.tag.startswith("h") and tok.tag[1:].isdigit() else 1
@@ -108,7 +110,14 @@ def _tokens_to_blocks(
                 idx += 1
             while idx < n and tokens[idx].type != "heading_close":
                 idx += 1
-            blocks.append(HeadingBlock(level=level, inlines=inlines))
+            blocks.append(
+                HeadingBlock(
+                    level=level,
+                    inlines=inlines,
+                    source_start_line=start_line,
+                    source_end_line=end_line,
+                )
+            )
 
         elif tok.type == "paragraph_open":
             idx += 1
@@ -142,21 +151,47 @@ def _tokens_to_blocks(
                             is_associated=False,
                             display_order=None,
                             raw_tag=raw_tag,
+                            source_start_line=start_line,
+                            source_end_line=end_line,
                         )
                     )
                 else:
                     inlines = _parse_inlines(inline_tok.children)
-                    blocks.append(ParagraphBlock(inlines=inlines))
+                    blocks.append(
+                        ParagraphBlock(
+                            inlines=inlines,
+                            source_start_line=start_line,
+                            source_end_line=end_line,
+                        )
+                    )
             else:
-                blocks.append(ParagraphBlock(inlines=()))
+                blocks.append(
+                    ParagraphBlock(
+                        inlines=(),
+                        source_start_line=start_line,
+                        source_end_line=end_line,
+                    )
+                )
 
         elif tok.type in ("fence", "code_block"):
             language = tok.info.strip().split()[0] if tok.info and tok.info.strip() else ""
             content = tok.content
-            blocks.append(CodeBlock(content=content, language=language))
+            blocks.append(
+                CodeBlock(
+                    content=content,
+                    language=language,
+                    source_start_line=start_line,
+                    source_end_line=end_line,
+                )
+            )
 
         elif tok.type == "hr":
-            blocks.append(ThematicBreakBlock())
+            blocks.append(
+                ThematicBreakBlock(
+                    source_start_line=start_line,
+                    source_end_line=end_line,
+                )
+            )
 
         elif tok.type in ("bullet_list_open", "ordered_list_open"):
             is_ordered = (tok.type == "ordered_list_open")
@@ -265,6 +300,8 @@ def _tokens_to_blocks(
                     items=tuple(list_items),
                     is_ordered=is_ordered,
                     start_index=start_index,
+                    source_start_line=start_line,
+                    source_end_line=end_line,
                 )
             )
 
@@ -281,7 +318,13 @@ def _tokens_to_blocks(
                     inner_tokens.append(tokens[idx])
                 idx += 1
             inner_blocks = _tokens_to_blocks(inner_tokens, source_lines=source_lines)
-            blocks.append(BlockquoteBlock(blocks=inner_blocks))
+            blocks.append(
+                BlockquoteBlock(
+                    blocks=inner_blocks,
+                    source_start_line=start_line,
+                    source_end_line=end_line,
+                )
+            )
 
         elif tok.type == "table_open":
             raw_table = ""
@@ -322,6 +365,8 @@ def _tokens_to_blocks(
                     raw_table=raw_table,
                     headers=tuple(headers),
                     rows=tuple(tuple(r) for r in rows),
+                    source_start_line=start_line,
+                    source_end_line=end_line,
                 )
             )
 

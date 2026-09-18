@@ -51,6 +51,8 @@ class MarkdownEditorController(QObject):
     discarded = Signal()
     conflictDetected = Signal(str)  # (conflict_message)
     matchSelected = Signal(int, int) # (start_utf16, end_utf16)
+    requestScrollToPosition = Signal(int)     # (char_position) - viewport scroll only, preserves caret
+    requestNavigateToPosition = Signal(int)   # (char_position) - moves caret and scrolls into view
 
     _internalLoaded = Signal(int, str, int)          # (req_id, text, version)
     _internalLoadError = Signal(int, str)            # (req_id, error_message)
@@ -733,6 +735,39 @@ class MarkdownEditorController(QObject):
             self._cursor_line = new_line
             self._cursor_column = new_col
             self.cursorMetricsChanged.emit()
+
+    @Slot(int, result=int)
+    def characterPositionOfLine(self, line: int) -> int:
+        """
+        Calculates the UTF-16 character offset of the start of the 1-based line number.
+        Returns 0 if line <= 1.
+        Returns document character count if line exceeds total line count.
+        """
+        if line <= 1:
+            return 0
+        doc = self._get_document()
+        block = doc.findBlockByLineNumber(line - 1)
+        if block.isValid():
+            return block.position()
+        return max(0, doc.characterCount() - 1)
+
+    @Slot(int)
+    def scrollViewportToLine(self, line: int) -> None:
+        """
+        Emits requestScrollToPosition for the given 1-based line.
+        Used for programmatic viewport alignment that preserves cursor and selection.
+        """
+        pos = self.characterPositionOfLine(line)
+        self.requestScrollToPosition.emit(pos)
+
+    @Slot(int)
+    def navigateToLine(self, line: int) -> None:
+        """
+        Emits requestNavigateToPosition for the given 1-based line.
+        Used when the user explicitly clicks or navigates to a block, moving the caret.
+        """
+        pos = self.characterPositionOfLine(line)
+        self.requestNavigateToPosition.emit(pos)
 
     def shutdown(self) -> None:
         """Shuts down background thread executor and detaches syntax highlighter."""

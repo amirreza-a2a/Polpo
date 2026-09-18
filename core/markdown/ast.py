@@ -3,7 +3,7 @@
 #  Canonical PolpoT Markdown AST & Immutable Structural Model
 # ============================================================
 
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from enum import Enum
 from types import MappingProxyType
 from typing import Any, Mapping, Optional, Tuple
@@ -62,6 +62,9 @@ class InlineSpan:
 class MarkdownBlock:
     """Base class for all immutable block-level AST nodes."""
     block_type: BlockType
+    _: KW_ONLY
+    source_start_line: Optional[int] = None
+    source_end_line: Optional[int] = None
 
 
 @dataclass(frozen=True)

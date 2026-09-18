@@ -306,6 +306,8 @@ class MarkdownViewerService:
                 raw_markdown=raw,
                 regions=regions,
                 segments=segments,
+                source_start_line=block.source_start_line,
+                source_end_line=block.source_end_line,
             )
 
         elif isinstance(block, ParagraphBlock):
@@ -328,6 +330,8 @@ class MarkdownViewerService:
                 raw_markdown=plain,
                 regions=regions,
                 segments=segments,
+                source_start_line=block.source_start_line,
+                source_end_line=block.source_end_line,
             )
 
         elif isinstance(block, ImageBlock):
@@ -364,6 +368,8 @@ class MarkdownViewerService:
                 raw_markdown=raw,
                 regions=regions,
                 segments=segments,
+                source_start_line=block.source_start_line,
+                source_end_line=block.source_end_line,
             )
 
         elif isinstance(block, CodeBlock):
@@ -379,6 +385,8 @@ class MarkdownViewerService:
                 language=block.language,
                 content=block.content,
                 raw_markdown=raw,
+                source_start_line=block.source_start_line,
+                source_end_line=block.source_end_line,
             )
 
         elif isinstance(block, ListBlock):
@@ -446,6 +454,8 @@ class MarkdownViewerService:
                 list_item_segments=tuple(list_item_segments),
                 segments=tuple(all_segments),
                 regions=tuple(all_regions),
+                source_start_line=block.source_start_line,
+                source_end_line=block.source_end_line,
             )
 
         elif isinstance(block, BlockquoteBlock):
@@ -536,6 +546,8 @@ class MarkdownViewerService:
                 regions=tuple(quote_regions),
                 segments=tuple(quote_segments),
                 quote_children=tuple(quote_children),
+                source_start_line=block.source_start_line,
+                source_end_line=block.source_end_line,
             )
 
         elif isinstance(block, ThematicBreakBlock):
@@ -547,6 +559,8 @@ class MarkdownViewerService:
                 node_type="thematic_break",
                 content="<hr/>",
                 raw_markdown="---",
+                source_start_line=block.source_start_line,
+                source_end_line=block.source_end_line,
             )
 
         elif isinstance(block, TableFallbackBlock):
@@ -599,13 +613,20 @@ class MarkdownViewerService:
                 regions=tuple(table_regions),
                 segments=tuple(table_segments),
                 table_cell_segments=tuple(table_cell_segments),
+                source_start_line=block.source_start_line,
+                source_end_line=block.source_end_line,
             )
 
         # Generic fallback
         key = ("unknown", str(type(block)))
         seen_counts[key] += 1
         node_id = f"block_{seen_counts[key]}"
-        return MarkdownNodeDTO(node_id=node_id, node_type="paragraph")
+        return MarkdownNodeDTO(
+            node_id=node_id,
+            node_type="paragraph",
+            source_start_line=getattr(block, "source_start_line", None),
+            source_end_line=getattr(block, "source_end_line", None),
+        )
 
     def _render_inlines(
         self,

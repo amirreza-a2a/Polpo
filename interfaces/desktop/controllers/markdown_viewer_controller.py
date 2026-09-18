@@ -47,6 +47,9 @@ class MarkdownViewerController(QObject):
     regionSelected = Signal(str, str)          # (region_id, occurrence_id)
     requestScrollToNode = Signal(int)          # (node_index)
     externalLinkActivated = Signal(str)        # (url)
+    modelReconciled = Signal(int)              # (model_generation)
+    userScrolledNode = Signal(int, int)        # (node_index, model_generation)
+    nodeClicked = Signal(int, int)             # (node_index, model_generation)
 
     _internalDocLoaded = Signal(int, object)   # (req_id, MarkdownDocumentDTO)
     _internalDocError = Signal(int, str)       # (req_id, error_message)
@@ -63,6 +66,7 @@ class MarkdownViewerController(QObject):
         super().__init__(parent)
         self.viewer_service = viewer_service
         self._model = MarkdownDocumentModel(parent=self)
+        self._model.generationChanged.connect(self._on_model_generation_changed)
 
         self._is_loading: bool = False
         self._has_document: bool = False
@@ -727,3 +731,26 @@ class MarkdownViewerController(QObject):
         self._preview_error_message = error_message
         self.hasPreviewErrorChanged.emit()
         self.previewErrorChanged.emit()
+
+    def _on_model_generation_changed(self, generation: int) -> None:
+        self.modelReconciled.emit(generation)
+
+    @Slot(int, int)
+    def reportUserScrolled(self, node_index: int, model_generation: int) -> None:
+        """Reports user-initiated scrolling in the rendered preview pane."""
+        self.userScrolledNode.emit(node_index, model_generation)
+
+    @Slot(int, int)
+    def reportNodeClicked(self, node_index: int, model_generation: int) -> None:
+        """Reports user clicking a block in the rendered preview pane."""
+        if 0 <= node_index < self._model.rowCount():
+            self.setSelectedNodeIndex(node_index)
+        self.nodeClicked.emit(node_index, model_generation)
+
+    @property
+    def model_generation(self) -> int:
+        return self._model.model_generation
+
+    @Slot(result=int)
+    def modelGeneration(self) -> int:
+        return self._model.modelGeneration()

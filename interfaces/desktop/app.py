@@ -26,6 +26,7 @@ from interfaces.desktop.models import (
     ApiSlotModel,
     PromptListModel,
 )
+from interfaces.desktop.coordinators.review_workspace_sync_coordinator import ReviewWorkspaceSyncCoordinator
 
 
 def wire_review_workspace_sync(
@@ -127,6 +128,13 @@ def wire_review_workspace_sync(
         markdown_editor_controller.discarded.connect(_on_editor_discarded)
         markdown_viewer_controller.activeVersionChanged.connect(_on_viewer_version_changed)
 
+        return ReviewWorkspaceSyncCoordinator(
+            editor_controller=markdown_editor_controller,
+            viewer_controller=markdown_viewer_controller,
+        )
+
+    return None
+
 
 def create_app(
 
@@ -208,7 +216,7 @@ def create_app(
     )
 
     # Wire Bidirectional Synchronization between Document Viewer, Markdown Viewer, and Markdown Editor
-    wire_review_workspace_sync(
+    sync_coordinator = wire_review_workspace_sync(
         document_viewer_controller,
         markdown_viewer_controller,
         markdown_editor_controller,
@@ -242,6 +250,7 @@ def create_app(
     container.document_viewer_controller = document_viewer_controller
     container.markdown_viewer_controller = markdown_viewer_controller
     container.markdown_editor_controller = markdown_editor_controller
+    container.sync_coordinator = sync_coordinator
     container.job_queue_model = job_queue_model
     container.job_history_model = job_history_model
     container.api_slot_model = api_slot_model
@@ -258,6 +267,8 @@ def create_app(
     ctx.setContextProperty("documentViewerController", document_viewer_controller)
     ctx.setContextProperty("markdownViewerController", markdown_viewer_controller)
     ctx.setContextProperty("markdownEditorController", markdown_editor_controller)
+    if sync_coordinator is not None:
+        ctx.setContextProperty("reviewWorkspaceSyncCoordinator", sync_coordinator)
     ctx.setContextProperty("jobQueueModel", job_queue_model)
     ctx.setContextProperty("jobHistoryModel", job_history_model)
     ctx.setContextProperty("apiSlotModel", api_slot_model)
@@ -270,6 +281,8 @@ def create_app(
 
     # 8. Graceful shutdown handler
     def on_shutdown():
+        if sync_coordinator is not None:
+            sync_coordinator.shutdown()
         container.shutdown()
         bridge.detach()
 

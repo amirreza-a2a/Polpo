@@ -76,6 +76,8 @@ class MarkdownNodeDTO:
     list_item_segments: Tuple[Tuple[InlineSegmentDTO, ...], ...] = ()
     table_cell_segments: Tuple[Tuple[Tuple[InlineSegmentDTO, ...], ...], ...] = ()
     quote_children: Tuple[QuoteChildBlockDTO, ...] = ()
+    source_start_line: Optional[int] = None
+    source_end_line: Optional[int] = None
 
 
 
