@@ -11,6 +11,7 @@ from interfaces.desktop.models.markdown_document_model import MarkdownDocumentMo
 from interfaces.desktop.qt_compat import (
     QDesktopServices,
     QObject,
+    QTimer,
     Property,
     Signal,
     Slot,
@@ -40,6 +41,8 @@ class MarkdownViewerController(QObject):
     highlightedRegionIdChanged = Signal()
     highlightedOccurrenceIdChanged = Signal()
     pageFilterChanged = Signal()
+    previewErrorChanged = Signal()
+    hasPreviewErrorChanged = Signal()
 
     regionSelected = Signal(str, str)          # (region_id, occurrence_id)
     requestScrollToNode = Signal(int)          # (node_index)
@@ -49,6 +52,8 @@ class MarkdownViewerController(QObject):
     _internalDocError = Signal(int, str)       # (req_id, error_message)
     _internalReconcileLoaded = Signal(int, object)  # (req_id, MarkdownDocumentDTO)
     _internalReconcileError = Signal(int, str)       # (req_id, error_message)
+    _internalPreviewLoaded = Signal(int, int, object)  # (job_id, draft_revision, MarkdownDocumentDTO)
+    _internalPreviewError = Signal(int, int, str)       # (job_id, draft_revision, error_message)
 
     def __init__(
         self,
@@ -76,10 +81,27 @@ class MarkdownViewerController(QObject):
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="MarkdownViewerWorker")
         self._last_reconcile_future = None
 
+        # Live dual-pane synchronized preview state
+        self._has_preview_error: bool = False
+        self._preview_error_message: str = ""
+        self._draft_revision: int = 0
+        self._last_applied_draft_revision: int = 0
+        self._has_active_draft: bool = False
+        self._pending_preview_job_id: int = 0
+        self._pending_preview_text: str = ""
+        self._pending_preview_base_version: int = 1
+
+        self._live_preview_timer = QTimer(self)
+        self._live_preview_timer.setSingleShot(True)
+        self._live_preview_timer.setInterval(250)
+        self._live_preview_timer.timeout.connect(self._dispatch_pending_preview)
+
         self._internalDocLoaded.connect(self._on_internal_doc_loaded)
         self._internalDocError.connect(self._on_internal_doc_error)
         self._internalReconcileLoaded.connect(self._on_internal_reconcile_loaded)
         self._internalReconcileError.connect(self._on_internal_reconcile_error)
+        self._internalPreviewLoaded.connect(self._on_internal_preview_loaded)
+        self._internalPreviewError.connect(self._on_internal_preview_error)
 
     # -----------------------------------------------------------------------
     # Properties
@@ -104,6 +126,28 @@ class MarkdownViewerController(QObject):
         return self._error_message
 
     errorMessage = Property(str, error_message, notify=errorChanged)
+
+    def preview_error_message(self) -> str:
+        return self._preview_error_message
+
+    previewErrorMessage = Property(str, preview_error_message, notify=previewErrorChanged)
+
+    def has_preview_error(self) -> bool:
+        return self._has_preview_error
+
+    hasPreviewError = Property(bool, has_preview_error, notify=hasPreviewErrorChanged)
+
+    @property
+    def has_active_draft(self) -> bool:
+        return self._has_active_draft
+
+    @property
+    def draft_revision(self) -> int:
+        return self._draft_revision
+
+    @property
+    def last_applied_draft_revision(self) -> int:
+        return self._last_applied_draft_revision
 
     def active_job_id(self) -> int:
         return self._active_job_id
@@ -191,6 +235,16 @@ class MarkdownViewerController(QObject):
         self._reconcile_in_flight = False
         req_id = self._request_id
 
+        if job_id != self._active_job_id:
+            if hasattr(self, "_live_preview_timer") and self._live_preview_timer.isActive():
+                self._live_preview_timer.stop()
+            self._has_active_draft = False
+            self._draft_revision += 1
+            self._has_preview_error = False
+            self._preview_error_message = ""
+            self.hasPreviewErrorChanged.emit()
+            self.previewErrorChanged.emit()
+
         self._is_loading = True
         self.loadingChanged.emit()
         self._error_message = ""
@@ -210,6 +264,17 @@ class MarkdownViewerController(QObject):
         self._request_id += 1
         self._reconcile_in_flight = False
         req_id = self._request_id
+
+        if job_id != self._active_job_id:
+            if hasattr(self, "_live_preview_timer") and self._live_preview_timer.isActive():
+                self._live_preview_timer.stop()
+            self._has_active_draft = False
+            self._draft_revision += 1
+            self._has_preview_error = False
+            self._preview_error_message = ""
+            self.hasPreviewErrorChanged.emit()
+            self.previewErrorChanged.emit()
+
         try:
             dto = self.viewer_service.load_document(job_id)
             self._on_internal_doc_loaded(req_id, dto)
@@ -226,6 +291,14 @@ class MarkdownViewerController(QObject):
     def clear(self) -> None:
         """Resets the controller and clears the document model."""
         self._request_id += 1
+        self._draft_revision += 1
+        if hasattr(self, "_live_preview_timer") and self._live_preview_timer.isActive():
+            self._live_preview_timer.stop()
+        self._has_active_draft = False
+        self._has_preview_error = False
+        self._preview_error_message = ""
+        self._pending_preview_job_id = 0
+        self._pending_preview_text = ""
         self._reconcile_in_flight = False
         self._model.set_document(None)
         self._has_document = False
@@ -240,6 +313,8 @@ class MarkdownViewerController(QObject):
         self.activeJobChanged.emit()
         self.activeVersionChanged.emit()
         self.errorChanged.emit()
+        self.previewErrorChanged.emit()
+        self.hasPreviewErrorChanged.emit()
         self.loadingChanged.emit()
         self.selectedNodeIndexChanged.emit()
         self.highlightedRegionIdChanged.emit()
@@ -259,8 +334,12 @@ class MarkdownViewerController(QObject):
         if self._is_shutdown:
             return
         self._is_shutdown = True
+        if hasattr(self, "_live_preview_timer") and self._live_preview_timer.isActive():
+            self._live_preview_timer.stop()
+        self._has_active_draft = False
         self._reconcile_in_flight = False
         self._request_id += 1
+        self._draft_revision += 1
         try:
             self._executor.shutdown(wait=False, cancel_futures=True)
         except TypeError:
@@ -491,3 +570,142 @@ class MarkdownViewerController(QObject):
         self._reconcile_in_flight = False
         self._error_message = f"Failed to reconcile markdown document: {error_message}"
         self.errorChanged.emit()
+
+    # -----------------------------------------------------------------------
+    # Live Dual-Pane Synchronized Preview Scheduling & Cancellation
+    # -----------------------------------------------------------------------
+
+    @Slot(int, str, int)
+    @Slot(int, str)
+    def scheduleLivePreview(
+        self, job_id: int, raw_text: str, base_version: int = 1
+    ) -> None:
+        """
+        Debounces live preview rendering requests. Sets dirty draft flag and starts/restarts
+        the 250ms single-shot timer without touching canonical version metadata.
+        """
+        if self._is_shutdown or job_id <= 0:
+            return
+        self._has_active_draft = True
+        self._draft_revision += 1
+        self._pending_preview_job_id = job_id
+        self._pending_preview_text = raw_text
+        self._pending_preview_base_version = base_version
+        self._live_preview_timer.start(250)
+
+    schedule_live_preview = scheduleLivePreview
+
+    @Slot()
+    def flushLivePreview(self) -> None:
+        """
+        Immediately flushes any pending debounced live preview render without waiting
+        for timer expiry.
+        """
+        if hasattr(self, "_live_preview_timer") and self._live_preview_timer.isActive():
+            self._live_preview_timer.stop()
+            self._dispatch_pending_preview()
+
+    flush_live_preview = flushLivePreview
+
+    def _dispatch_pending_preview(self) -> None:
+        """
+        Dispatches background render task for the pending preview snapshot.
+        """
+        if self._is_shutdown or self._pending_preview_job_id <= 0:
+            return
+        job_id = self._pending_preview_job_id
+        rev_id = self._draft_revision
+        raw_text = self._pending_preview_text
+        base_ver = self._pending_preview_base_version
+
+        def _task():
+            try:
+                dto = self.viewer_service.render_preview(job_id, raw_text, base_ver)
+                self._internalPreviewLoaded.emit(job_id, rev_id, dto)
+            except Exception as e:
+                self._internalPreviewError.emit(job_id, rev_id, str(e))
+
+        self._executor.submit(_task)
+
+    @Slot(int, str, int)
+    @Slot(int, str)
+    def cancelPendingLivePreviewAndReconcile(
+        self, job_id: int, raw_text: str, base_version: int = 1
+    ) -> None:
+        """
+        Cancels pending live preview timer, resets active draft flag, advances draft revision,
+        and dispatches an immediate background render task for raw_text.
+        """
+        if self._is_shutdown:
+            return
+        if hasattr(self, "_live_preview_timer") and self._live_preview_timer.isActive():
+            self._live_preview_timer.stop()
+        self._has_active_draft = False
+        self._draft_revision += 1
+        rev_id = self._draft_revision
+
+        def _task():
+            try:
+                dto = self.viewer_service.render_preview(job_id, raw_text, base_version)
+                self._internalPreviewLoaded.emit(job_id, rev_id, dto)
+            except Exception as e:
+                self._internalPreviewError.emit(job_id, rev_id, str(e))
+
+        self._executor.submit(_task)
+
+    cancel_pending_live_preview_and_reconcile = cancelPendingLivePreviewAndReconcile
+
+    @Slot(int, int, object)
+    def _on_internal_preview_loaded(
+        self, job_id: int, draft_revision: int, document_dto
+    ) -> None:
+        """
+        GUI-thread handler applying transient preview projection under Option B strict
+        latest revision matching.
+        Guards:
+          - Shutdown check.
+          - Job switch isolation (job_id == self._active_job_id).
+          - Option B strict matching: draft_revision == self._draft_revision.
+        Critical Invariant: Live preview updates MUST NEVER touch self._active_version
+        and MUST NEVER emit activeVersionChanged.
+        """
+        if self._is_shutdown:
+            return
+        if job_id != self._active_job_id:
+            return  # Job switch isolation: drop result from previous job
+        if draft_revision != self._draft_revision:
+            return  # Option B: newer revision typed, drop obsolete result
+
+        self._last_applied_draft_revision = draft_revision
+        self._model.apply_transient_preview(document_dto)
+        self._has_document = True
+        self._has_preview_error = False
+        self._preview_error_message = ""
+
+        self.hasPreviewErrorChanged.emit()
+        self.previewErrorChanged.emit()
+        self.documentChanged.emit()
+
+    @Slot(int, int, str)
+    def _on_internal_preview_error(
+        self, job_id: int, draft_revision: int, error_message: str
+    ) -> None:
+        """
+        GUI-thread handler exposing live preview syntax/render errors.
+        Guards:
+          - Shutdown check.
+          - Job switch isolation (job_id == self._active_job_id).
+          - Option B strict matching: draft_revision == self._draft_revision.
+        Invariant: Retains existing _model (never blanked!).
+        """
+        if self._is_shutdown:
+            return
+        if job_id != self._active_job_id:
+            return
+        if draft_revision != self._draft_revision:
+            return
+
+        self._has_preview_error = True
+        self._preview_error_message = error_message
+        self.hasPreviewErrorChanged.emit()
+        self.previewErrorChanged.emit()
