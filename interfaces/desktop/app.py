@@ -85,20 +85,51 @@ def wire_review_workspace_sync(
     document_viewer_controller.regionArtifactCommitted.connect(_on_region_artifact_committed)
 
     if markdown_editor_controller is not None:
+        def _on_source_text_changed():
+            active_job = markdown_editor_controller.activeJobId
+            is_dirty = markdown_editor_controller.isDirty or (
+                markdown_editor_controller.sourceText != getattr(markdown_editor_controller, "_saved_source_text", "")
+            )
+            if active_job > 0 and is_dirty:
+                markdown_viewer_controller.scheduleLivePreview(
+                    job_id=active_job,
+                    raw_text=markdown_editor_controller.sourceText,
+                    base_version=markdown_editor_controller.activeVersion,
+                )
+
         def _on_editor_saved(new_version: int):
             active_job = markdown_editor_controller.activeJobId
             if active_job > 0:
+                markdown_viewer_controller.resetActiveDraft()
                 markdown_viewer_controller.loadDocument(active_job)
+
+        def _on_editor_discarded():
+            active_job = markdown_editor_controller.activeJobId
+            if active_job <= 0:
+                return
+            if markdown_viewer_controller.activeVersion > markdown_editor_controller.activeVersion:
+                markdown_editor_controller.loadSource(active_job)
+                markdown_viewer_controller.resetActiveDraft()
+                markdown_viewer_controller.loadDocument(active_job)
+            else:
+                markdown_viewer_controller.cancelPendingLivePreviewAndReconcile(
+                    active_job,
+                    markdown_editor_controller.sourceText,
+                    markdown_editor_controller.activeVersion,
+                )
 
         def _on_viewer_version_changed():
             active_ver = markdown_viewer_controller.activeVersion
             markdown_editor_controller.notifyCanonicalDocumentAdvance(active_ver)
 
+        markdown_editor_controller.sourceTextChanged.connect(_on_source_text_changed)
         markdown_editor_controller.saved.connect(_on_editor_saved)
+        markdown_editor_controller.discarded.connect(_on_editor_discarded)
         markdown_viewer_controller.activeVersionChanged.connect(_on_viewer_version_changed)
 
 
 def create_app(
+
     argv: Optional[List[str]] = None,
     db_path: Optional[str | Path] = None,
     artifacts_dir: Optional[str | Path] = None,

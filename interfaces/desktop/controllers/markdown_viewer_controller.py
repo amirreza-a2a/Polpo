@@ -454,16 +454,25 @@ class MarkdownViewerController(QObject):
             return  # Stale generation, drop result
 
         self._reconcile_in_flight = False
-        self._model.set_document(document_dto)
+
+        if document_dto.job_id != self._active_job_id:
+            self._has_active_draft = False
+            if hasattr(self, "_live_preview_timer") and self._live_preview_timer.isActive():
+                self._live_preview_timer.stop()
+
+        if not self._has_active_draft:
+            self._model.set_document(document_dto)
+            self.documentChanged.emit()
+
         self._active_job_id = document_dto.job_id
         self._active_version = document_dto.version
+
         self._has_document = True
         self._is_loading = False
         self._error_message = ""
 
         self.activeJobChanged.emit()
         self.activeVersionChanged.emit()
-        self.documentChanged.emit()
         self.loadingChanged.emit()
         self.errorChanged.emit()
 
@@ -555,7 +564,9 @@ class MarkdownViewerController(QObject):
             self._active_version = document_dto.version
             self.activeVersionChanged.emit()
 
-        self._model.reconcile_document(document_dto)
+        if not self._has_active_draft:
+            self._model.reconcile_document(document_dto)
+
 
     @Slot(int, str)
     def _on_internal_reconcile_error(self, req_id: int, error_message: str) -> None:
@@ -655,7 +666,20 @@ class MarkdownViewerController(QObject):
 
     cancel_pending_live_preview_and_reconcile = cancelPendingLivePreviewAndReconcile
 
+    @Slot()
+    def resetActiveDraft(self) -> None:
+        """
+        Explicitly resets active draft state without resetting the presentation model.
+        Used by presentation coordinators when a canonical save or hard reload completes.
+        """
+        if hasattr(self, "_live_preview_timer") and self._live_preview_timer.isActive():
+            self._live_preview_timer.stop()
+        self._has_active_draft = False
+
+    reset_active_draft = resetActiveDraft
+
     @Slot(int, int, object)
+
     def _on_internal_preview_loaded(
         self, job_id: int, draft_revision: int, document_dto
     ) -> None:
