@@ -675,6 +675,7 @@ class MarkdownViewerController(QObject):
         if hasattr(self, "_live_preview_timer") and self._live_preview_timer.isActive():
             self._live_preview_timer.stop()
         self._has_active_draft = False
+        self._draft_revision += 1
 
     reset_active_draft = resetActiveDraft
 
