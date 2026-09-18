@@ -1,5 +1,5 @@
 import difflib
-import re
+
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Tuple, List, Set
@@ -25,7 +25,15 @@ class ConflictHunk:
     local_lines: tuple
     remote_lines: tuple
     hunk_type: HunkType
+    hunk_index: int = -1
+    base_line_start: int = 0
+    base_line_end: int = 0
+    local_line_start: int = 0
+    local_line_end: int = 0
+    remote_line_start: int = 0
+    remote_line_end: int = 0
     ast_node_type: str = ""
+    ast_node_id: Optional[str] = None
     ast_label: str = ""
 
 @dataclass(frozen=True)
@@ -34,6 +42,7 @@ class ThreeWayMergeResult:
     clean_text: Optional[str]
     hunks: tuple
     conflict_count: int
+    auto_merged_count: int
 
 def tokenize(text: str) -> Tuple[List[str], List[str], bool]:
     if not text:
@@ -78,7 +87,7 @@ def changes_overlap(c1: Change, c2: Change) -> bool:
     else:
         return max(s1, s2) < min(e1, e2)
 
-def map_base_range(opcodes, start_i, end_i) -> Tuple[int, int]:
+def map_base_range(opcodes, start_i, end_i, include_insertions=True) -> Tuple[int, int]:
     min_j, max_j = None, None
     
     def add_j(j1, j2):
@@ -92,7 +101,7 @@ def map_base_range(opcodes, start_i, end_i) -> Tuple[int, int]:
                 if tag == 'equal':
                     add_j(j1 + (start_i - i1), j1 + (start_i - i1))
                 elif tag == 'insert':
-                    if i1 == start_i:
+                    if include_insertions and i1 == start_i:
                         add_j(j1, j2)
                 elif tag in ('replace', 'delete'):
                     if i1 < start_i < i2:
@@ -110,10 +119,9 @@ def map_base_range(opcodes, start_i, end_i) -> Tuple[int, int]:
                 else:
                     add_j(j1, j2)
             else:
-                if tag == 'insert' and start_i <= i1 < end_i:
+                if include_insertions and tag == 'insert' and start_i < i1 < end_i:
                     add_j(j1, j2)
                     
-    # Fallback if mapping not found (should not happen with complete opcodes)
     return min_j or 0, max_j or 0
 
 def determine_ending(b_ends, l_ends, r_ends):
@@ -167,69 +175,58 @@ def three_way_merge(base_text: str, local_text: str, remote_text: str) -> ThreeW
     has_conflicts = False
     conflict_count = 0
     
+    def make_hunk(h_type, b_s, b_e):
+        nonlocal conflict_count
+        l_s, l_e = map_base_range(opcodes_L, b_s, b_e)
+        r_s, r_e = map_base_range(opcodes_R, b_s, b_e)
+        idx = -1
+        if h_type == HunkType.CONFLICT:
+            idx = conflict_count
+            conflict_count += 1
+
+        return ConflictHunk(
+            base_lines=tuple(b_lines[b_s:b_e]),
+            local_lines=tuple(l_lines[l_s:l_e]),
+            remote_lines=tuple(r_lines[r_s:r_e]),
+            hunk_type=h_type,
+            hunk_index=idx,
+            base_line_start=b_s,
+            base_line_end=b_e,
+            local_line_start=l_s,
+            local_line_end=l_e,
+            remote_line_start=r_s,
+            remote_line_end=r_e
+        )
+
     for block in blocks:
         min_s = min(x.start for x in block)
         max_e = max(x.end for x in block)
         
         if min_s > current_idx:
-            lines = b_lines[current_idx:min_s]
-            hunks.append(ConflictHunk(
-                base_lines=tuple(lines),
-                local_lines=tuple(lines),
-                remote_lines=tuple(lines),
-                hunk_type=HunkType.CLEAN_UNCHANGED
-            ))
+            hunks.append(make_hunk(HunkType.CLEAN_UNCHANGED, current_idx, min_s))
             
         sources = set(x.source for x in block)
         l_min, l_max = map_base_range(opcodes_L, min_s, max_e)
         r_min, r_max = map_base_range(opcodes_R, min_s, max_e)
         
-        base_lines = tuple(b_lines[min_s:max_e])
         local_lines = tuple(l_lines[l_min:l_max])
         remote_lines = tuple(r_lines[r_min:r_max])
         
         if sources == {'L'}:
-            hunks.append(ConflictHunk(
-                base_lines=base_lines,
-                local_lines=local_lines,
-                remote_lines=base_lines,
-                hunk_type=HunkType.CLEAN_LOCAL
-            ))
+            hunks.append(make_hunk(HunkType.CLEAN_LOCAL, min_s, max_e))
         elif sources == {'R'}:
-            hunks.append(ConflictHunk(
-                base_lines=base_lines,
-                local_lines=base_lines,
-                remote_lines=remote_lines,
-                hunk_type=HunkType.CLEAN_REMOTE
-            ))
+            hunks.append(make_hunk(HunkType.CLEAN_REMOTE, min_s, max_e))
         else:
             if local_lines == remote_lines:
-                hunks.append(ConflictHunk(
-                    base_lines=base_lines,
-                    local_lines=local_lines,
-                    remote_lines=remote_lines,
-                    hunk_type=HunkType.CLEAN_SAME
-                ))
+                hunks.append(make_hunk(HunkType.CLEAN_SAME, min_s, max_e))
             else:
                 has_conflicts = True
-                conflict_count += 1
-                hunks.append(ConflictHunk(
-                    base_lines=base_lines,
-                    local_lines=local_lines,
-                    remote_lines=remote_lines,
-                    hunk_type=HunkType.CONFLICT
-                ))
+                hunks.append(make_hunk(HunkType.CONFLICT, min_s, max_e))
                 
         current_idx = max_e
 
     if current_idx < len(b_lines):
-        lines = b_lines[current_idx:]
-        hunks.append(ConflictHunk(
-            base_lines=tuple(lines),
-            local_lines=tuple(lines),
-            remote_lines=tuple(lines),
-            hunk_type=HunkType.CLEAN_UNCHANGED
-        ))
+        hunks.append(make_hunk(HunkType.CLEAN_UNCHANGED, current_idx, len(b_lines)))
         
     clean_text = None
     if not has_conflicts:
@@ -265,5 +262,6 @@ def three_way_merge(base_text: str, local_text: str, remote_text: str) -> ThreeW
         has_conflicts=has_conflicts,
         clean_text=clean_text,
         hunks=tuple(hunks),
-        conflict_count=conflict_count
+        conflict_count=conflict_count,
+        auto_merged_count=sum(1 for h in hunks if h.hunk_type in (HunkType.CLEAN_LOCAL, HunkType.CLEAN_REMOTE, HunkType.CLEAN_SAME))
     )

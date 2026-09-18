@@ -172,18 +172,13 @@ def test_t_merge_15_empty_document():
     assert result3.has_conflicts is True
 
 def test_t_merge_16_markdown_region_token_updates():
-    base = "![[crop_1|region_id=A]]\n"
-    local = "![[crop_1|region_id=B]]\n"
-    remote = "![[crop_1|region_id=C]]\n"
+    base = "paragraph 1\n\n![[crop_1|region_id=A]]\n"
+    local = "paragraph 1 modified\n\n![[crop_1|region_id=A]]\n"
+    remote = "paragraph 1\n\n![[crop_1|region_id=B]]\n"
     
     result = three_way_merge(base, local, remote)
-    assert result.has_conflicts is True
-    
-    local2 = "![[crop_2|region_id=A]]\n"
-    remote2 = "![[crop_1|region_id=C]]\n"
-    
-    result2 = three_way_merge(base, local2, remote2)
-    assert result2.has_conflicts is True
+    assert result.has_conflicts is False
+    assert result.clean_text == "paragraph 1 modified\n\n![[crop_1|region_id=B]]\n"
 
 def test_t_merge_17_markdown_text_with_conflict_markers():
     base = "some text\n<<<<<<<\n=======\n>>>>>>>\n"
