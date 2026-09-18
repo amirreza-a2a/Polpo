@@ -16,6 +16,7 @@ Item {
     Layout.fillWidth: true
     Layout.fillHeight: true
 
+    property var syncCoordinator: typeof reviewWorkspaceSyncCoordinator !== "undefined" ? reviewWorkspaceSyncCoordinator : null
     property bool splitterInitialized: false
 
     function initializeSplitter() {
@@ -283,6 +284,7 @@ Item {
                     MarkdownEditorPane {
                         id: markdownEditorPane
                         objectName: "markdownEditorPane"
+                        syncCoordinator: reviewWorkspaceRoot.syncCoordinator
                         visible: false
                         width: 0
                         height: rightSplitView.height
@@ -293,6 +295,7 @@ Item {
                     MarkdownView {
                         id: markdownView
                         objectName: "markdownView"
+                        syncCoordinator: reviewWorkspaceRoot.syncCoordinator
                         visible: true
                         height: rightSplitView.height
                         SplitView.minimumWidth: visible ? 150 : 0

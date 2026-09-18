@@ -17,6 +17,16 @@ from application.services.markdown_viewer_service import MarkdownViewerService
 from interfaces.desktop.models.markdown_document_model import MarkdownDocumentModel
 from interfaces.desktop.controllers.markdown_editor_controller import MarkdownEditorController
 from interfaces.desktop.controllers.markdown_viewer_controller import MarkdownViewerController
+from interfaces.desktop.qt_compat import QGuiApplication
+
+
+@pytest.fixture(scope="session", autouse=True)
+def qapp():
+    app = QGuiApplication.instance()
+    if app is None:
+        app = QGuiApplication(["-platform", "offscreen"])
+    return app
+
 
 
 class TestTask1ASTLineMappingAndDTOPropagation:
@@ -399,3 +409,84 @@ class TestTask4ReviewWorkspaceSyncCoordinator:
         # Preview scroll does not sync
         viewer.reportUserScrolled(1, viewer.model.model_generation)
         assert viewport_scrolls == []
+
+    def test_t_sync_22_continuous_source_scroll_drives_preview_progress(self):
+        editor, viewer, coord, SyncOrigin = self._setup_env()
+        coord.setDualPaneActive(True)
+
+        preview_progress_events = []
+        coord.requestScrollPreviewToProgress.connect(preview_progress_events.append)
+
+        # Source reports 45% scroll progress
+        coord.reportSourceScrollProgress(0.45)
+
+        assert preview_progress_events == [0.45]
+        assert coord.sync_origin == SyncOrigin.SOURCE_USER
+
+    def test_t_sync_23_continuous_preview_scroll_drives_source_progress(self):
+        editor, viewer, coord, SyncOrigin = self._setup_env()
+        coord.setDualPaneActive(True)
+
+        source_progress_events = []
+        coord.requestScrollSourceToProgress.connect(source_progress_events.append)
+
+        # Preview reports 70% scroll progress
+        coord.reportPreviewScrollProgress(0.70)
+
+        assert source_progress_events == [0.70]
+        assert coord.sync_origin == SyncOrigin.PREVIEW_USER
+
+    def test_t_sync_24_continuous_scroll_directional_lock_suppresses_echo(self):
+        editor, viewer, coord, SyncOrigin = self._setup_env()
+        coord.setDualPaneActive(True)
+
+        source_progress_events = []
+        preview_progress_events = []
+        coord.requestScrollSourceToProgress.connect(source_progress_events.append)
+        coord.requestScrollPreviewToProgress.connect(preview_progress_events.append)
+
+        # 1. Source initiates continuous scroll
+        coord.reportSourceScrollProgress(0.3)
+        assert coord.sync_origin == SyncOrigin.SOURCE_USER
+        assert preview_progress_events == [0.3]
+
+        # 2. While SOURCE_USER is active, incoming preview scroll reports are dropped
+        coord.reportPreviewScrollProgress(0.5)
+        assert source_progress_events == []
+
+    def test_t_sync_25_continuous_scroll_lock_releases_after_idle(self):
+        editor, viewer, coord, SyncOrigin = self._setup_env()
+        coord.setDualPaneActive(True)
+
+        coord.reportSourceScrollProgress(0.6)
+        assert coord.sync_origin == SyncOrigin.SOURCE_USER
+
+        # Trigger timeout directly to simulate idle settling
+        coord._on_lock_release_timer_fired()
+        assert coord.sync_origin == SyncOrigin.IDLE
+
+    def test_t_sync_26_active_draft_suppresses_preview_recenter_on_reconcile(self):
+        editor, viewer, coord, _ = self._setup_env()
+        coord.setDualPaneActive(True)
+
+        # User is actively editing a draft -> viewer has active draft
+        viewer._has_active_draft = True
+
+        scroll_nodes = []
+        viewer.requestScrollToNode.connect(scroll_nodes.append)
+
+        # Trigger model reconciliation (e.g. background draft live preview finishes compiling)
+        parser = MarkdownItParser()
+        service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
+        new_text = "# Title\n\nParagraph 1\n\nParagraph 2 while typing\n"
+        new_dto = service.render_text(raw_text=new_text, active_regions=(), job_id=1, version=1)
+
+        viewer.model.reconcile_document(new_dto)
+
+        # Invariant: Must NOT emit requestScrollToNode while draft is active!
+        assert scroll_nodes == []
+
+    def test_t_sync_27_sync_origin_has_no_dead_members(self):
+        from interfaces.desktop.coordinators.review_workspace_sync_coordinator import SyncOrigin
+        member_names = {m.name for m in SyncOrigin}
+        assert member_names == {"IDLE", "SOURCE_USER", "PREVIEW_USER"}

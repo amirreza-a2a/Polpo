@@ -12,6 +12,17 @@ Item {
     objectName: "markdownEditorPane"
 
     property var controller: typeof markdownEditorController !== "undefined" ? markdownEditorController : null
+    property var syncCoordinator: typeof reviewWorkspaceSyncCoordinator !== "undefined" ? reviewWorkspaceSyncCoordinator : null
+    property bool isProgrammaticScrolling: false
+
+    function scrollPositionIntoView(pos) {
+        if (!sourceTextArea || !editorScrollView || !editorScrollView.contentItem) return
+        var rect = sourceTextArea.positionToRectangle(pos)
+        var targetY = Math.max(0, rect.y - editorScrollView.height / 3)
+        isProgrammaticScrolling = true
+        editorScrollView.contentItem.contentY = targetY
+        isProgrammaticScrolling = false
+    }
 
     onControllerChanged: {
         if (controller && sourceTextArea && sourceTextArea.textDocument) {
@@ -25,24 +36,41 @@ Item {
             sourceTextArea.select(start, end)
         }
         function onRequestScrollToPosition(pos) {
-            if (sourceTextArea) {
-                var rect = sourceTextArea.positionToRectangle(pos)
-                if (editorScrollView && editorScrollView.contentItem) {
-                    var targetY = Math.max(0, rect.y - editorScrollView.height / 3)
-                    editorScrollView.contentItem.contentY = targetY
-                }
-            }
+            scrollPositionIntoView(pos)
         }
         function onRequestNavigateToPosition(pos) {
             if (sourceTextArea) {
                 sourceTextArea.cursorPosition = pos
                 sourceTextArea.forceActiveFocus()
-                var rect = sourceTextArea.positionToRectangle(pos)
-                if (editorScrollView && editorScrollView.contentItem) {
-                    var targetY = Math.max(0, rect.y - editorScrollView.height / 3)
-                    editorScrollView.contentItem.contentY = targetY
-                }
             }
+            scrollPositionIntoView(pos)
+        }
+    }
+
+    Connections {
+        target: syncCoordinator
+        function onRequestScrollSourceToProgress(progress) {
+            if (!editorScrollView || !editorScrollView.contentItem) return
+            var flick = editorScrollView.contentItem
+            var maxScroll = flick.contentHeight - flick.height
+            if (maxScroll <= 0) return
+            isProgrammaticScrolling = true
+            flick.contentY = Math.max(0.0, Math.min(maxScroll, progress * maxScroll))
+            isProgrammaticScrolling = false
+        }
+    }
+
+    Connections {
+        target: (editorScrollView && editorScrollView.contentItem) ? editorScrollView.contentItem : null
+        function onContentYChanged() {
+            if (isProgrammaticScrolling) return
+            if (!syncCoordinator || !syncCoordinator.isDualPane) return
+            var flick = editorScrollView.contentItem
+            if (!flick) return
+            var maxScroll = flick.contentHeight - flick.height
+            if (maxScroll <= 0) return
+            var progress = Math.max(0.0, Math.min(1.0, flick.contentY / maxScroll))
+            syncCoordinator.reportSourceScrollProgress(progress)
         }
     }
 

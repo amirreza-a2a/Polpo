@@ -15,9 +15,7 @@ class SyncOrigin(Enum):
     """Origin of a navigation/scroll synchronization action."""
     IDLE = auto()
     SOURCE_USER = auto()
-    SOURCE_SYNC = auto()
     PREVIEW_USER = auto()
-    PREVIEW_SYNC = auto()
 
 
 class ReviewWorkspaceSyncCoordinator(QObject):
@@ -28,19 +26,24 @@ class ReviewWorkspaceSyncCoordinator(QObject):
     Key Architectural Invariants:
       1. Presentation-Only & Ephemeral: Coordinates transient UI viewports without mutating
          canonical versions, database state, or OCC revision tokens.
-      2. Caret vs. Viewport Separation: Preview scrolling adjusts the editor viewport only
+      2. Continuous Viewport Tracking: Bidirectional proportional progress tracking provides
+         fluid 60fps scrolling across wheel and scrollbar interactions.
+      3. Caret vs. Viewport Separation: Preview scrolling adjusts the editor viewport only
          (preserving caret position and active selection). Explicit preview block clicks
          navigate the editor caret.
-      3. Directional Feedback Suppression: Directional lock prevents cyclic feedback loops
+      4. Directional Feedback Suppression: Directional lock prevents cyclic feedback loops
          between editor and preview.
-      4. Snapshot Identity Validation: All preview-driven events validate model_generation
+      5. Snapshot Identity Validation: All preview-driven events validate model_generation
          against current presentation model to prevent stale layout jumps.
-      5. Self-Healing Re-Anchoring: When model updates/reconciles during editing, the preview
-         automatically re-anchors to the active editor cursor line.
+      6. Self-Healing Re-Anchoring: When model updates/reconciles during editing, the preview
+         automatically re-anchors to the active editor cursor line without disturbing active typing.
     """
 
     dualPaneActiveChanged = Signal(bool)
     syncOriginChanged = Signal()
+
+    requestScrollPreviewToProgress = Signal(float)  # (progress: 0.0 .. 1.0)
+    requestScrollSourceToProgress = Signal(float)   # (progress: 0.0 .. 1.0)
 
     def __init__(
         self,
@@ -49,6 +52,7 @@ class ReviewWorkspaceSyncCoordinator(QObject):
         debounce_source_ms: int = 40,
         debounce_preview_ms: int = 60,
         lock_release_ms: int = 100,
+        throttle_ms: int = 16,
         parent: Optional[QObject] = None,
     ):
         super().__init__(parent)
@@ -66,6 +70,10 @@ class ReviewWorkspaceSyncCoordinator(QObject):
         self._debounce_source_ms = debounce_source_ms
         self._debounce_preview_ms = debounce_preview_ms
         self._lock_release_ms = lock_release_ms
+        self._throttle_ms = throttle_ms
+
+        self._pending_preview_progress: Optional[float] = None
+        self._pending_source_progress: Optional[float] = None
 
         # Timers
         self._source_scroll_timer = QTimer(self)
@@ -79,6 +87,14 @@ class ReviewWorkspaceSyncCoordinator(QObject):
         self._lock_release_timer = QTimer(self)
         self._lock_release_timer.setSingleShot(True)
         self._lock_release_timer.timeout.connect(self._on_lock_release_timer_fired)
+
+        self._source_progress_timer = QTimer(self)
+        self._source_progress_timer.setSingleShot(True)
+        self._source_progress_timer.timeout.connect(self._on_source_progress_timer_fired)
+
+        self._preview_progress_timer = QTimer(self)
+        self._preview_progress_timer.setSingleShot(True)
+        self._preview_progress_timer.timeout.connect(self._on_preview_progress_timer_fired)
 
         # Wire controller signals
         self.editor_controller.cursorMetricsChanged.connect(self._on_editor_cursor_metrics_changed)
@@ -110,19 +126,103 @@ class ReviewWorkspaceSyncCoordinator(QObject):
         return self._sync_origin
 
     # -----------------------------------------------------------------------
-    # Source -> Preview Synchronization
+    # Continuous Proportional Viewport Synchronization
+    # -----------------------------------------------------------------------
+
+    @Slot(float)
+    def reportSourceScrollProgress(self, progress: float) -> None:
+        """
+        Reports continuous scroll progress (0.0 .. 1.0) from the Markdown source editor.
+        Synchronously acquires SOURCE_USER lock and drives the rendered preview viewport.
+        """
+        if not self._is_dual_pane or self._is_shutdown:
+            return
+        if self._sync_origin == SyncOrigin.PREVIEW_USER:
+            return
+
+        self._set_sync_origin(SyncOrigin.SOURCE_USER)
+        self._start_lock_release_timer()
+
+        progress = max(0.0, min(1.0, float(progress)))
+
+        if self._throttle_ms <= 0:
+            self.requestScrollPreviewToProgress.emit(progress)
+            return
+
+        self._pending_preview_progress = progress
+        if not self._source_progress_timer.isActive():
+            # Leading edge: immediate emission on first frame for responsive movement
+            self.requestScrollPreviewToProgress.emit(progress)
+            self._pending_preview_progress = None
+            self._source_progress_timer.start(self._throttle_ms)
+
+    def _on_source_progress_timer_fired(self) -> None:
+        if not self._is_dual_pane or self._is_shutdown:
+            return
+        if self._sync_origin == SyncOrigin.PREVIEW_USER:
+            return
+        if self._pending_preview_progress is not None:
+            prog = self._pending_preview_progress
+            self._pending_preview_progress = None
+            self.requestScrollPreviewToProgress.emit(prog)
+            self._source_progress_timer.start(self._throttle_ms)
+
+    @Slot(float)
+    def reportPreviewScrollProgress(self, progress: float) -> None:
+        """
+        Reports continuous scroll progress (0.0 .. 1.0) from the rendered preview pane.
+        Synchronously acquires PREVIEW_USER lock and drives the source editor viewport.
+        """
+        if not self._is_dual_pane or self._is_shutdown:
+            return
+        if self._sync_origin == SyncOrigin.SOURCE_USER:
+            return
+
+        self._set_sync_origin(SyncOrigin.PREVIEW_USER)
+        self._start_lock_release_timer()
+
+        progress = max(0.0, min(1.0, float(progress)))
+
+        if self._throttle_ms <= 0:
+            self.requestScrollSourceToProgress.emit(progress)
+            return
+
+        self._pending_source_progress = progress
+        if not self._preview_progress_timer.isActive():
+            # Leading edge: immediate emission on first frame
+            self.requestScrollSourceToProgress.emit(progress)
+            self._pending_source_progress = None
+            self._preview_progress_timer.start(self._throttle_ms)
+
+    def _on_preview_progress_timer_fired(self) -> None:
+        if not self._is_dual_pane or self._is_shutdown:
+            return
+        if self._sync_origin == SyncOrigin.SOURCE_USER:
+            return
+        if self._pending_source_progress is not None:
+            prog = self._pending_source_progress
+            self._pending_source_progress = None
+            self.requestScrollSourceToProgress.emit(prog)
+            self._preview_progress_timer.start(self._throttle_ms)
+
+    # -----------------------------------------------------------------------
+    # Source Cursor -> Preview Synchronization
     # -----------------------------------------------------------------------
 
     def _on_editor_cursor_metrics_changed(self) -> None:
         if not self._is_dual_pane or self._is_shutdown:
             return
         # If preview is driving, suppress feedback
-        if self._sync_origin in (SyncOrigin.PREVIEW_USER, SyncOrigin.PREVIEW_SYNC):
+        if self._sync_origin == SyncOrigin.PREVIEW_USER:
             return
 
         line = self.editor_controller.cursorLine
         if line == self._last_synced_line:
             return
+
+        # Immediate lock acquisition
+        self._set_sync_origin(SyncOrigin.SOURCE_USER)
+        self._start_lock_release_timer()
 
         if self._debounce_source_ms <= 0:
             self._on_source_scroll_timer_fired()
@@ -132,12 +232,10 @@ class ReviewWorkspaceSyncCoordinator(QObject):
     def _on_source_scroll_timer_fired(self) -> None:
         if not self._is_dual_pane or self._is_shutdown:
             return
-        if self._sync_origin in (SyncOrigin.PREVIEW_USER, SyncOrigin.PREVIEW_SYNC):
+        if self._sync_origin == SyncOrigin.PREVIEW_USER:
             return
 
         line = self.editor_controller.cursorLine
-        self._set_sync_origin(SyncOrigin.SOURCE_USER)
-
         model = self.viewer_controller.model
         node_idx = model.nodeIndexAtLine(line)
         if node_idx >= 0 and node_idx != self.viewer_controller.selectedNodeIndex:
@@ -156,12 +254,15 @@ class ReviewWorkspaceSyncCoordinator(QObject):
         if not self._is_dual_pane or self._is_shutdown:
             return
         # Validate snapshot generation
-        current_gen = self.viewer_controller.model.model_generation
+        current_gen = self.viewer_controller.modelGeneration()
         if model_generation != current_gen:
             return
         # If source is driving, suppress feedback
-        if self._sync_origin in (SyncOrigin.SOURCE_USER, SyncOrigin.SOURCE_SYNC):
+        if self._sync_origin == SyncOrigin.SOURCE_USER:
             return
+
+        self._set_sync_origin(SyncOrigin.PREVIEW_USER)
+        self._start_lock_release_timer()
 
         self._pending_preview_node = node_index
 
@@ -173,7 +274,7 @@ class ReviewWorkspaceSyncCoordinator(QObject):
     def _on_preview_scroll_timer_fired(self) -> None:
         if not self._is_dual_pane or self._is_shutdown:
             return
-        if self._sync_origin in (SyncOrigin.SOURCE_USER, SyncOrigin.SOURCE_SYNC):
+        if self._sync_origin == SyncOrigin.SOURCE_USER:
             return
 
         node_index = self._pending_preview_node
@@ -201,10 +302,10 @@ class ReviewWorkspaceSyncCoordinator(QObject):
         if not self._is_dual_pane or self._is_shutdown:
             return
         # Validate snapshot generation
-        current_gen = self.viewer_controller.model.model_generation
+        current_gen = self.viewer_controller.modelGeneration()
         if model_generation != current_gen:
             return
-        if self._sync_origin in (SyncOrigin.SOURCE_USER, SyncOrigin.SOURCE_SYNC):
+        if self._sync_origin == SyncOrigin.SOURCE_USER:
             return
 
         if self._preview_scroll_timer.isActive():
@@ -229,6 +330,11 @@ class ReviewWorkspaceSyncCoordinator(QObject):
 
     def _on_viewer_model_reconciled(self, generation: int) -> None:
         if not self._is_dual_pane or self._is_shutdown:
+            return
+
+        # Suppress preview snapping if viewer has an active typing draft.
+        # Background draft compilation must not disrupt cursor focus or view position.
+        if self.viewer_controller.has_active_draft:
             return
 
         line = self.editor_controller.cursorLine
@@ -265,6 +371,12 @@ class ReviewWorkspaceSyncCoordinator(QObject):
             self._preview_scroll_timer.stop()
         if self._lock_release_timer.isActive():
             self._lock_release_timer.stop()
+        if self._source_progress_timer.isActive():
+            self._source_progress_timer.stop()
+        if self._preview_progress_timer.isActive():
+            self._preview_progress_timer.stop()
+        self._pending_preview_progress = None
+        self._pending_source_progress = None
 
     def shutdown(self) -> None:
         self._is_shutdown = True

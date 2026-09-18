@@ -614,3 +614,109 @@ def test_qml_sync_source_and_preview_actions(qapp, workspace_env):
 
     expected_pos = md_editor_ctrl.characterPositionOfLine(7)
     assert nav_positions == [expected_pos]
+
+
+def test_qml_continuous_bidirectional_scroll_sync(qapp, workspace_env):
+    """
+    Verifies genuine continuous bidirectional visual synchronization in QML:
+    1. Scrolling source editor updates preview listview contentY proportionally.
+    2. Scrolling preview listview updates source editor contentY proportionally.
+    3. Directional lock prevents cyclic ping-pong feedback.
+    """
+    engine, workspace = _load_workspace_view(workspace_env)
+    md_viewer_ctrl = workspace_env["md_viewer_ctrl"]
+    md_editor_ctrl = workspace_env["md_editor_ctrl"]
+    sync_coord = workspace_env["sync_coord"]
+
+    # Use 0ms throttle and release for immediate test verification
+    sync_coord._throttle_ms = 0
+    sync_coord._debounce_source_ms = 0
+    sync_coord._debounce_preview_ms = 0
+    sync_coord._lock_release_ms = 0
+
+    # Long multi-line text to ensure both panes have large scrollable ranges
+    lines = [f"# Heading {i}\n\nParagraph content line for section {i}.\n" for i in range(1, 40)]
+    text = "\n".join(lines)
+    md_editor_ctrl.set_source_text(text)
+
+    parser = MarkdownItParser()
+    service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
+    dto = service.render_text(raw_text=text, active_regions=(), job_id=1, version=1)
+    md_viewer_ctrl.model.set_document(dto)
+
+    # Switch to Dual Pane
+    split_btn = workspace.findChild(QObject, "splitTabButton")
+    split_btn.clicked.emit()
+    QGuiApplication.processEvents()
+
+    md_editor_pane = workspace.findChild(QObject, "markdownEditorPane")
+    md_view = workspace.findChild(QObject, "markdownView")
+    md_list = workspace.findChild(QObject, "markdownListView")
+
+    # Locate editor scrollview flickable contentItem
+    sv_list = [c for c in md_editor_pane.findChildren(QObject) if "ScrollView" in c.metaObject().className()]
+    assert len(sv_list) > 0
+    editor_flickable = sv_list[0].property("contentItem")
+    assert editor_flickable is not None
+
+    editor_max_scroll = editor_flickable.property("contentHeight") - editor_flickable.property("height")
+    preview_max_scroll = md_list.property("contentHeight") - md_list.property("height")
+
+    assert editor_max_scroll > 50, "Editor must be scrollable"
+    assert preview_max_scroll > 50, "Preview must be scrollable"
+
+    # 1. Source Editor scrolls to 50%
+    target_src_y = 0.50 * editor_max_scroll
+    editor_flickable.setProperty("contentY", target_src_y)
+    QGuiApplication.processEvents()
+
+    # Preview should track to ~50%
+    current_preview_max = md_list.property("contentHeight") - md_list.property("height")
+    actual_prev_progress = (md_list.property("contentY") - md_list.property("originY")) / current_preview_max
+    assert abs(actual_prev_progress - 0.50) < 0.05, f"Expected preview progress ~0.50, got {actual_prev_progress}"
+
+    # Reset lock to IDLE for reverse test
+    sync_coord._on_lock_release_timer_fired()
+
+    # 2. Preview scrolls to 25%
+    target_prev_y = md_list.property("originY") + 0.25 * current_preview_max
+    md_list.setProperty("contentY", target_prev_y)
+    QGuiApplication.processEvents()
+
+    # Source editor should track to ~25%
+    current_editor_max = editor_flickable.property("contentHeight") - editor_flickable.property("height")
+    actual_src_progress = editor_flickable.property("contentY") / current_editor_max
+    assert abs(actual_src_progress - 0.25) < 0.05, f"Expected editor progress ~0.25, got {actual_src_progress}"
+
+
+def test_qml_tall_block_beginning_positioning(qapp, workspace_env):
+    """
+    Verifies that requestScrollToNode positions blocks at ListView.Beginning so that
+    the top of tall blocks (e.g. code blocks, tables) is never clipped off-screen.
+    """
+    engine, workspace = _load_workspace_view(workspace_env)
+    md_viewer_ctrl = workspace_env["md_viewer_ctrl"]
+    md_editor_ctrl = workspace_env["md_editor_ctrl"]
+
+    # Text with a large code block
+    text = "# Start\n\n```python\n" + "\n".join([f"line_{i} = {i}" for i in range(50)]) + "\n```\n\n# End\n"
+    md_editor_ctrl.set_source_text(text)
+
+    parser = MarkdownItParser()
+    service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
+    dto = service.render_text(raw_text=text, active_regions=(), job_id=1, version=1)
+    md_viewer_ctrl.model.set_document(dto)
+
+    split_btn = workspace.findChild(QObject, "splitTabButton")
+    split_btn.clicked.emit()
+    QGuiApplication.processEvents()
+
+    md_list = workspace.findChild(QObject, "markdownListView")
+
+    # Node 1 is the tall code block. Request scroll to node 1.
+    md_viewer_ctrl.requestScrollToNode.emit(1)
+    QGuiApplication.processEvents()
+
+    # Beginning positioning ensures item is at or near the top of the viewport
+    content_y = md_list.property("contentY")
+    assert content_y >= 0

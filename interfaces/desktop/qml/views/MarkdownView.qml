@@ -13,6 +13,7 @@ Item {
     objectName: "markdownView"
 
     property var controller: typeof markdownViewerController !== "undefined" ? markdownViewerController : null
+    property var syncCoordinator: typeof reviewWorkspaceSyncCoordinator !== "undefined" ? reviewWorkspaceSyncCoordinator : null
 
     ColumnLayout {
         anchors.fill: parent
@@ -207,26 +208,12 @@ Item {
                 property bool isProgrammaticScrolling: false
 
                 onContentYChanged: {
-                    if (!isProgrammaticScrolling) {
-                        userScrollDebounceTimer.restart()
-                    }
-                }
-
-                onMovementEnded: {
-                    if (!isProgrammaticScrolling) {
-                        reportTopVisibleNode()
-                    }
-                }
-
-                Timer {
-                    id: userScrollDebounceTimer
-                    interval: 60
-                    repeat: false
-                    onTriggered: {
-                        if (!markdownListView.isProgrammaticScrolling) {
-                            markdownListView.reportTopVisibleNode()
-                        }
-                    }
+                    if (isProgrammaticScrolling) return
+                    if (!syncCoordinator || !syncCoordinator.isDualPane) return
+                    var maxScroll = markdownListView.contentHeight - markdownListView.height
+                    if (maxScroll <= 0) return
+                    var progress = Math.max(0.0, Math.min(1.0, (markdownListView.contentY - markdownListView.originY) / maxScroll))
+                    syncCoordinator.reportPreviewScrollProgress(progress)
                 }
 
                 Timer {
@@ -236,23 +223,27 @@ Item {
                     onTriggered: markdownListView.isProgrammaticScrolling = false
                 }
 
-                function reportTopVisibleNode() {
-                    if (!controller) return
-                    var topY = markdownListView.contentY + 20
-                    var topIdx = markdownListView.indexAt(10, topY)
-                    if (topIdx >= 0) {
-                        controller.reportUserScrolled(topIdx, controller.modelGeneration())
-                    }
-                }
-
                 Connections {
                     target: controller
                     function onRequestScrollToNode(nodeIndex) {
                         if (nodeIndex >= 0 && nodeIndex < markdownListView.count) {
                             markdownListView.isProgrammaticScrolling = true
-                            markdownListView.positionViewAtIndex(nodeIndex, ListView.Center)
+                            markdownListView.positionViewAtIndex(nodeIndex, ListView.Beginning)
                             scrollResetTimer.restart()
                         }
+                    }
+                }
+
+                Connections {
+                    target: syncCoordinator
+                    function onRequestScrollPreviewToProgress(progress) {
+                        if (!markdownListView) return
+                        var maxScroll = markdownListView.contentHeight - markdownListView.height
+                        if (maxScroll <= 0) return
+                        markdownListView.isProgrammaticScrolling = true
+                        var targetY = markdownListView.originY + progress * maxScroll
+                        markdownListView.contentY = Math.max(markdownListView.originY, Math.min(markdownListView.originY + maxScroll, targetY))
+                        markdownListView.isProgrammaticScrolling = false
                     }
                 }
             }
