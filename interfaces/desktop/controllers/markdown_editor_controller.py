@@ -10,7 +10,6 @@ from typing import List, Optional, Tuple
 from application.dtos.merge_dto import MergeAnalysisResultDTO
 from application.services.markdown_editor_service import MarkdownEditorService
 from application.services.markdown_merge_service import MarkdownMergeService
-from core.entities.artifact import ArtifactHandle, ArtifactType, StorageBackendType
 from core.exceptions.domain_exceptions import StaleDocumentVersionError
 from interfaces.desktop.models.conflict_session import ConflictSession
 from interfaces.desktop.qt_compat import (
@@ -322,7 +321,9 @@ class MarkdownEditorController(QObject):
         self.errorChanged.emit()
         self._has_conflict = False
         self._conflict_message = ""
+        self._active_conflict_session = None
         self.conflictChanged.emit()
+        self.mergeSessionStateChanged.emit()
 
         def _task():
             try:
@@ -341,7 +342,9 @@ class MarkdownEditorController(QObject):
         self.activeJobChanged.emit()
         self._has_conflict = False
         self._conflict_message = ""
+        self._active_conflict_session = None
         self.conflictChanged.emit()
+        self.mergeSessionStateChanged.emit()
 
         try:
             text, ver = self.editor_service.load_source_text(job_id)
@@ -353,14 +356,12 @@ class MarkdownEditorController(QObject):
     # Conflict Resolution Slots
     # -----------------------------------------------------------------------
 
-    @Slot()
-    def acceptCurrentHunkLocal(self) -> None:
-        """Accepts local hunk for active conflict and updates editor buffer."""
+    def _resolve_current_hunk(self, choice: str) -> None:
         if not self._active_conflict_session:
             return
         hunk = self._active_conflict_session.get_current_hunk()
         idx = hunk.hunk_index if hunk is not None else self._active_conflict_session.currentHunkIndex
-        self._active_conflict_session.resolve_hunk(idx, "local")
+        self._active_conflict_session.resolve_hunk(idx, choice)
         self._source_text = self._active_conflict_session.generate_in_buffer_markdown()
         if self._headless_doc is not None and self._headless_doc.toPlainText() != self._source_text:
             self._headless_doc.setPlainText(self._source_text)
@@ -369,40 +370,21 @@ class MarkdownEditorController(QObject):
         self.sourceTextChanged.emit()
         self.dirtyChanged.emit()
         self.documentMetricsChanged.emit()
+
+    @Slot()
+    def acceptCurrentHunkLocal(self) -> None:
+        """Accepts local hunk for active conflict and updates editor buffer."""
+        self._resolve_current_hunk("local")
 
     @Slot()
     def acceptCurrentHunkIncoming(self) -> None:
         """Accepts incoming/remote hunk for active conflict and updates editor buffer."""
-        if not self._active_conflict_session:
-            return
-        hunk = self._active_conflict_session.get_current_hunk()
-        idx = hunk.hunk_index if hunk is not None else self._active_conflict_session.currentHunkIndex
-        self._active_conflict_session.resolve_hunk(idx, "remote")
-        self._source_text = self._active_conflict_session.generate_in_buffer_markdown()
-        if self._headless_doc is not None and self._headless_doc.toPlainText() != self._source_text:
-            self._headless_doc.setPlainText(self._source_text)
-        self._character_count = len(self._source_text)
-        self._word_count = len(re.findall(r"\S+", self._source_text))
-        self.sourceTextChanged.emit()
-        self.dirtyChanged.emit()
-        self.documentMetricsChanged.emit()
+        self._resolve_current_hunk("remote")
 
     @Slot()
     def acceptCurrentHunkBoth(self) -> None:
         """Accepts both local and remote hunk modifications and updates editor buffer."""
-        if not self._active_conflict_session:
-            return
-        hunk = self._active_conflict_session.get_current_hunk()
-        idx = hunk.hunk_index if hunk is not None else self._active_conflict_session.currentHunkIndex
-        self._active_conflict_session.resolve_hunk(idx, "both")
-        self._source_text = self._active_conflict_session.generate_in_buffer_markdown()
-        if self._headless_doc is not None and self._headless_doc.toPlainText() != self._source_text:
-            self._headless_doc.setPlainText(self._source_text)
-        self._character_count = len(self._source_text)
-        self._word_count = len(re.findall(r"\S+", self._source_text))
-        self.sourceTextChanged.emit()
-        self.dirtyChanged.emit()
-        self.documentMetricsChanged.emit()
+        self._resolve_current_hunk("both")
 
     @Slot()
     def nextConflictHunk(self) -> None:
@@ -438,8 +420,6 @@ class MarkdownEditorController(QObject):
                     self._headless_doc.setPlainText(clean_text)
                 self.sourceTextChanged.emit()
                 base_ver = self._active_conflict_session.canonicalVersion
-                self._has_conflict = False
-                self.conflictChanged.emit()
             else:
                 self._error_message = "Cannot save: unresolved conflicts exist."
                 self.errorChanged.emit()
@@ -492,8 +472,6 @@ class MarkdownEditorController(QObject):
                     self._headless_doc.setPlainText(clean_text)
                 self.sourceTextChanged.emit()
                 base_ver = self._active_conflict_session.canonicalVersion
-                self._has_conflict = False
-                self.conflictChanged.emit()
             else:
                 self._error_message = "Cannot save: unresolved conflicts exist."
                 self.errorChanged.emit()
@@ -1095,19 +1073,7 @@ class MarkdownEditorController(QObject):
         if not result_dto.has_conflicts:
             # Clean Auto-Merge (D03 / T-MERGE-41)
             self._source_text = result_dto.clean_text or ""
-            handle = ArtifactHandle(
-                storage_backend=StorageBackendType.LOCAL_FS,
-                uri="",
-                artifact_type=getattr(ArtifactType, "TRANSCRIPTION", ArtifactType.OUTPUT_MARKDOWN),
-                job_id=result_dto.job_id,
-                filename=f"output_{result_dto.job_id}_v{result_dto.canonical_version}.md",
-            )
-            storage = getattr(self.merge_service, "storage", getattr(self.editor_service, "storage", None))
-            if storage is not None and storage.exists(handle):
-                raw_data = storage.retrieve(handle)
-                self._saved_source_text = raw_data.decode("utf-8") if isinstance(raw_data, bytes) else str(raw_data)
-            else:
-                self._saved_source_text = ""
+            self._saved_source_text = result_dto.canonical_text or ""
 
             self._active_version = result_dto.canonical_version
             self._is_dirty = (self._source_text != self._saved_source_text)

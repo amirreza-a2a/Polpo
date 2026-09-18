@@ -37,3 +37,4 @@ class MergeAnalysisResultDTO:
     hunks: Tuple[ConflictHunkDTO, ...]
     conflict_count: int
     auto_merged_count: int
+    canonical_text: Optional[str] = None

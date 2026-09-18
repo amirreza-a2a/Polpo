@@ -169,4 +169,5 @@ class MarkdownMergeService:
             hunks=tuple(hunk_dtos),
             conflict_count=merge_result.conflict_count,
             auto_merged_count=merge_result.auto_merged_count,
+            canonical_text=canonical_text,
         )

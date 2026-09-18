@@ -68,6 +68,7 @@ def _make_analysis_result(
     canonical_version: int = 2,
     has_conflicts: bool = True,
     clean_text: Optional[str] = None,
+    canonical_text: Optional[str] = None,
 ) -> MergeAnalysisResultDTO:
     conflict_count = sum(1 for h in hunks if (h.hunk_type or "").upper() == "CONFLICT")
     auto_merged_count = len(hunks) - conflict_count
@@ -81,6 +82,7 @@ def _make_analysis_result(
         hunks=tuple(hunks),
         conflict_count=conflict_count,
         auto_merged_count=auto_merged_count,
+        canonical_text=canonical_text,
     )
 
 
@@ -129,9 +131,6 @@ def test_t_merge_41_clean_auto_merge(qapp, mock_editor_service, mock_merge_servi
     T-MERGE-41: Clean auto-merge sets _source_text = MERGED, _saved_source_text = canonical_text,
     _active_version = N+1, _is_dirty = True, _has_conflict = False, and emits autoMergeNotified.
     """
-    mock_merge_service.storage.exists.return_value = True
-    mock_merge_service.storage.retrieve.return_value = b"# Canonical v2 Remote Text"
-
     ctrl = MarkdownEditorController(editor_service=mock_editor_service, merge_service=mock_merge_service)
     try:
         ctrl.load_source_sync(job_id=1)
@@ -153,6 +152,7 @@ def test_t_merge_41_clean_auto_merge(qapp, mock_editor_service, mock_merge_servi
             canonical_version=2,
             has_conflicts=False,
             clean_text="# Merged Document\nLine 1 local edit\nLine 2 remote",
+            canonical_text="# Canonical v2 Remote Text",
         )
 
         ctrl._on_internal_merge_analyzed(1, clean_result)
@@ -460,5 +460,48 @@ def test_t_merge_47_stale_merge_result_dropped_cleanly(qapp, mock_editor_service
         assert ctrl.sourceText != "Stale Merged Text From Session 1"
         assert ctrl.activeVersion != 2
         assert ctrl.mergeSessionActive is False
+    finally:
+        ctrl.shutdown()
+
+
+def test_resolution_slots_incoming_and_both(qapp, mock_editor_service, mock_merge_service):
+    """
+    Verifies acceptCurrentHunkIncoming and acceptCurrentHunkBoth slots update buffer text.
+    """
+    ctrl = MarkdownEditorController(editor_service=mock_editor_service, merge_service=mock_merge_service)
+    try:
+        ctrl.load_source_sync(job_id=1)
+        ctrl.setSourceText("Local text")
+        ctrl.notifyCanonicalDocumentAdvance(2)
+
+        conflict_hunk = _make_hunk(
+            hunk_index=0,
+            hunk_type="CONFLICT",
+            base_text="Base text",
+            local_text="Local text",
+            remote_text="Remote text",
+        )
+        conflict_result = _make_analysis_result(
+            hunks=[conflict_hunk],
+            job_id=1,
+            merge_session_id=1,
+            base_version=1,
+            canonical_version=2,
+            has_conflicts=True,
+        )
+        ctrl._on_internal_merge_analyzed(1, conflict_result)
+
+        # 1. Accept incoming
+        ctrl.acceptCurrentHunkIncoming()
+        assert "Remote text" in ctrl.sourceText
+        assert "<<<<<<<" not in ctrl.sourceText
+        assert ctrl.canSaveConflict is True
+
+        # 2. Re-resolve as both
+        ctrl.acceptCurrentHunkBoth()
+        assert "Local text" in ctrl.sourceText
+        assert "Remote text" in ctrl.sourceText
+        assert "<<<<<<<" not in ctrl.sourceText
+        assert ctrl.canSaveConflict is True
     finally:
         ctrl.shutdown()
