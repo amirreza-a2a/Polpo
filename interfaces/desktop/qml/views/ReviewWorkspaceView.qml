@@ -91,7 +91,27 @@ Item {
             SplitView.fillWidth: true
             color: "#0f0f13"
 
-            property int currentTab: 0  // 0 = Preview, 1 = Editor
+            property int currentTab: 0  // 0 = Preview, 1 = Editor, 2 = Dual Pane
+
+            function setTab(tab) {
+                currentTab = tab;
+                if (typeof markdownViewerController !== "undefined" && markdownViewerController) {
+                    markdownViewerController.flushLivePreview();
+                }
+                if (rightSplitView) {
+                    rightSplitView.updateSplitLayout(tab);
+                }
+            }
+
+            onCurrentTabChanged: {
+                if (rightSplitView) {
+                    rightSplitView.updateSplitLayout(currentTab);
+                }
+            }
+
+            Component.onCompleted: {
+                setTab(currentTab);
+            }
 
             ColumnLayout {
                 anchors.fill: parent
@@ -121,7 +141,7 @@ Item {
                                 implicitHeight: 26
                                 flat: rightPane.currentTab !== 0
                                 highlighted: rightPane.currentTab === 0
-                                onClicked: rightPane.currentTab = 0
+                                onClicked: rightPane.setTab(0)
                             }
 
                             Button {
@@ -131,7 +151,17 @@ Item {
                                 implicitHeight: 26
                                 flat: rightPane.currentTab !== 1
                                 highlighted: rightPane.currentTab === 1
-                                onClicked: rightPane.currentTab = 1
+                                onClicked: rightPane.setTab(1)
+                            }
+
+                            Button {
+                                id: splitTabBtn
+                                objectName: "splitTabButton"
+                                text: "Dual Pane"
+                                implicitHeight: 26
+                                flat: rightPane.currentTab !== 2
+                                highlighted: rightPane.currentTab === 2
+                                onClicked: rightPane.setTab(2)
                             }
                         }
 
@@ -139,24 +169,114 @@ Item {
                     }
                 }
 
-                // StackLayout hosting Preview and Editor
-                StackLayout {
+                // Preview Error Banner
+                Rectangle {
+                    id: previewErrorBanner
+                    objectName: "previewErrorBanner"
+                    Layout.fillWidth: true
+                    implicitHeight: 28
+                    color: "#3b1c1c"
+                    border.color: "#ef4444"
+                    border.width: 1
+                    visible: (typeof markdownViewerController !== "undefined" && markdownViewerController && markdownViewerController.hasPreviewError) ? true : false
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 10
+                        anchors.rightMargin: 10
+
+                        Text {
+                            id: previewErrorText
+                            objectName: "previewErrorText"
+                            text: "⚠️ Live preview error: " + (typeof markdownViewerController !== "undefined" && markdownViewerController ? markdownViewerController.previewErrorMessage : "")
+                            color: "#fca5a5"
+                            font.pixelSize: 11
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+                    }
+                }
+
+                // Inner SplitView hosting Source Editor on Left and Rendered Preview on Right
+                SplitView {
+                    id: rightSplitView
+                    objectName: "rightSplitView"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    currentIndex: rightPane.currentTab
+                    orientation: Qt.Horizontal
 
-                    MarkdownView {
-                        id: markdownView
-                        objectName: "markdownView"
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
+                    function updateSplitLayout(tab) {
+                        var handleW = 4;
+                        var totalW = width;
+                        if (totalW <= 0) return;
+
+                        if (tab === 0) {
+                            // Mode 0: Preview Only (100% width)
+                            markdownEditorPane.visible = false;
+                            markdownEditorPane.width = 0;
+                            markdownEditorPane.SplitView.preferredWidth = 0;
+
+                            markdownView.visible = true;
+                            markdownView.width = totalW;
+                            markdownView.SplitView.preferredWidth = totalW;
+                        } else if (tab === 1) {
+                            // Mode 1: Editor Only (100% width)
+                            markdownEditorPane.visible = true;
+                            markdownEditorPane.width = totalW;
+                            markdownEditorPane.SplitView.preferredWidth = totalW;
+
+                            markdownView.visible = false;
+                            markdownView.width = 0;
+                            markdownView.SplitView.preferredWidth = 0;
+                        } else if (tab === 2) {
+                            // Mode 2: Dual-Pane Side-by-Side (50% / 50%)
+                            var half = Math.floor((totalW - handleW) / 2);
+                            markdownEditorPane.visible = true;
+                            markdownEditorPane.width = half;
+                            markdownEditorPane.SplitView.preferredWidth = half;
+
+                            markdownView.visible = true;
+                            markdownView.width = totalW - handleW - half;
+                            markdownView.SplitView.preferredWidth = totalW - handleW - half;
+                        }
+                    }
+
+                    onWidthChanged: {
+                        if (width > 0) {
+                            if (rightPane.currentTab === 0) {
+                                markdownView.width = width;
+                                markdownView.SplitView.preferredWidth = width;
+                            } else if (rightPane.currentTab === 1) {
+                                markdownEditorPane.width = width;
+                                markdownEditorPane.SplitView.preferredWidth = width;
+                            } else if (rightPane.currentTab === 2) {
+                                updateSplitLayout(2);
+                            }
+                        }
+                    }
+
+                    handle: Rectangle {
+                        id: rightSplitHandle
+                        objectName: "rightSplitHandle"
+                        implicitWidth: 4
+                        visible: rightPane.currentTab === 2
+                        color: SplitHandle.pressed ? "#3b82f6" : (SplitHandle.hovered ? "#60a5fa" : "#2a2a35")
                     }
 
                     MarkdownEditorPane {
                         id: markdownEditorPane
                         objectName: "markdownEditorPane"
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
+                        visible: false
+                        width: 0
+                        SplitView.preferredWidth: 0
+                        SplitView.minimumWidth: visible ? 150 : 0
+                    }
+
+                    MarkdownView {
+                        id: markdownView
+                        objectName: "markdownView"
+                        visible: true
+                        SplitView.minimumWidth: visible ? 150 : 0
                     }
                 }
             }

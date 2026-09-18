@@ -98,7 +98,8 @@ def test_viewer_version_change_notifies_editor(workspace_env):
     md_editor_ctrl.notifyCanonicalDocumentAdvance.assert_called_once_with(4)
 
 
-def test_qml_review_workspace_instantiation(qapp, workspace_env):
+def _load_workspace_view(workspace_env):
+    """Helper to instantiate ReviewWorkspaceView with injected controller context properties."""
     doc_ctrl = workspace_env["doc_ctrl"]
     md_viewer_ctrl = workspace_env["md_viewer_ctrl"]
     md_editor_ctrl = workspace_env["md_editor_ctrl"]
@@ -110,11 +111,17 @@ def test_qml_review_workspace_instantiation(qapp, workspace_env):
     ctx.setContextProperty("markdownEditorController", md_editor_ctrl)
 
     qml_file = Path(__file__).parent.parent.parent / "interfaces" / "desktop" / "qml" / "views" / "ReviewWorkspaceView.qml"
-    component = engine.load(str(qml_file))
+    engine.load(str(qml_file))
 
     root_objs = engine.rootObjects()
-    assert len(root_objs) > 0
+    assert len(root_objs) > 0, "Failed to load ReviewWorkspaceView.qml"
     workspace = root_objs[-1]
+    QGuiApplication.processEvents()
+    return engine, workspace
+
+
+def test_qml_review_workspace_instantiation(qapp, workspace_env):
+    engine, workspace = _load_workspace_view(workspace_env)
 
     # Invariant: documentViewerView, markdownPane, markdownView, and markdownEditorPane exist
     pdf_pane = workspace.findChild(QObject, "documentViewerView")
@@ -142,6 +149,171 @@ def test_qml_review_workspace_instantiation(qapp, workspace_env):
     assert md_pane.property("currentTab") == 1
     preview_btn.clicked.emit()
     assert md_pane.property("currentTab") == 0
+
+
+def test_qml_splitview_tab0_preview_only(qapp, workspace_env):
+    """T-F3-QML-01: In Tab 0, verify markdownView.width > 0 and markdownEditorPane.width == 0."""
+    engine, workspace = _load_workspace_view(workspace_env)
+    md_pane = workspace.findChild(QObject, "markdownPane")
+    md_view = workspace.findChild(QObject, "markdownView")
+    md_editor = workspace.findChild(QObject, "markdownEditorPane")
+
+    assert md_pane.property("currentTab") == 0
+    assert md_view.property("visible") is True
+    assert md_editor.property("visible") is False
+    assert md_view.property("width") > 0
+    assert md_editor.property("width") == 0
+
+
+def test_qml_splitview_tab1_editor_only(qapp, workspace_env):
+    """T-F3-QML-02: In Tab 1, verify markdownEditorPane.width > 0 and markdownView.width == 0."""
+    engine, workspace = _load_workspace_view(workspace_env)
+    md_pane = workspace.findChild(QObject, "markdownPane")
+    md_view = workspace.findChild(QObject, "markdownView")
+    md_editor = workspace.findChild(QObject, "markdownEditorPane")
+    editor_btn = workspace.findChild(QObject, "editorTabButton")
+
+    editor_btn.clicked.emit()
+    QGuiApplication.processEvents()
+
+    assert md_pane.property("currentTab") == 1
+    assert md_editor.property("visible") is True
+    assert md_view.property("visible") is False
+    assert md_editor.property("width") > 0
+    assert md_view.property("width") == 0
+
+
+def test_qml_splitview_tab2_dual_pane_and_handle(qapp, workspace_env):
+    """T-F3-QML-03: In Tab 2, verify markdownEditorPane.width > 0, markdownView.width > 0, and splitter handle is visible."""
+    engine, workspace = _load_workspace_view(workspace_env)
+    md_pane = workspace.findChild(QObject, "markdownPane")
+    md_view = workspace.findChild(QObject, "markdownView")
+    md_editor = workspace.findChild(QObject, "markdownEditorPane")
+    split_btn = workspace.findChild(QObject, "splitTabButton")
+    preview_btn = workspace.findChild(QObject, "previewTabButton")
+
+    assert split_btn is not None, "splitTabButton must exist"
+    split_btn.clicked.emit()
+    QGuiApplication.processEvents()
+
+    assert md_pane.property("currentTab") == 2
+    assert md_editor.property("visible") is True
+    assert md_view.property("visible") is True
+    assert md_editor.property("width") > 0
+    assert md_view.property("width") > 0
+
+    handle = workspace.findChild(QObject, "rightSplitHandle")
+    assert handle is not None, "rightSplitHandle must exist"
+    assert handle.property("visible") is True
+
+    # Switching back to Tab 0 hides the handle
+    preview_btn.clicked.emit()
+    QGuiApplication.processEvents()
+    assert handle.property("visible") is False
+
+
+def test_qml_dual_pane_tab_switching_preserves_editor_state(qapp, workspace_env):
+    """T-F3-QML-04: Type text in Editor (Tab 1), switch to Tab 2, switch to Tab 0, switch back to Tab 1; verify text, cursor, and undo history are preserved."""
+    engine, workspace = _load_workspace_view(workspace_env)
+    md_pane = workspace.findChild(QObject, "markdownPane")
+    editor_btn = workspace.findChild(QObject, "editorTabButton")
+    split_btn = workspace.findChild(QObject, "splitTabButton")
+    preview_btn = workspace.findChild(QObject, "previewTabButton")
+
+    # Switch to Editor tab
+    editor_btn.clicked.emit()
+    QGuiApplication.processEvents()
+
+    source_text_area = workspace.findChild(QObject, "markdownSourceTextArea")
+    assert source_text_area is not None
+
+    # Insert text to establish undo history
+    source_text_area.insert(0, "# Edited Document Line 1\nLine 2 content")
+    QGuiApplication.processEvents()
+    source_text_area.setProperty("cursorPosition", 8)
+    QGuiApplication.processEvents()
+
+    assert source_text_area.property("text") == "# Edited Document Line 1\nLine 2 content"
+    assert source_text_area.property("cursorPosition") == 8
+    assert source_text_area.property("canUndo") is True
+
+    # Switch to Dual Pane (Tab 2)
+    assert split_btn is not None
+    split_btn.clicked.emit()
+    QGuiApplication.processEvents()
+    assert md_pane.property("currentTab") == 2
+
+    # Switch to Preview Only (Tab 0)
+    preview_btn.clicked.emit()
+    QGuiApplication.processEvents()
+    assert md_pane.property("currentTab") == 0
+
+    # Switch back to Editor Only (Tab 1)
+    editor_btn.clicked.emit()
+    QGuiApplication.processEvents()
+    assert md_pane.property("currentTab") == 1
+
+    # Invariant: text, cursor, and undo history are preserved
+    assert source_text_area.property("text") == "# Edited Document Line 1\nLine 2 content"
+    assert source_text_area.property("cursorPosition") == 8
+    assert source_text_area.property("canUndo") is True
+
+
+def test_qml_dual_pane_preview_error_banner(qapp, workspace_env):
+    """T-F3-QML-05: Set hasPreviewError = True on controller; verify previewErrorBanner becomes visible with expected error text."""
+    engine, workspace = _load_workspace_view(workspace_env)
+    md_viewer_ctrl = workspace_env["md_viewer_ctrl"]
+
+    banner = workspace.findChild(QObject, "previewErrorBanner")
+    assert banner is not None, "previewErrorBanner must exist"
+    assert banner.property("visible") is False
+
+    # Simulate preview error
+    md_viewer_ctrl._has_preview_error = True
+    md_viewer_ctrl._preview_error_message = "Syntax error in math block"
+    md_viewer_ctrl.hasPreviewErrorChanged.emit()
+    md_viewer_ctrl.previewErrorChanged.emit()
+    QGuiApplication.processEvents()
+
+    assert banner.property("visible") is True
+    error_text = workspace.findChild(QObject, "previewErrorText")
+    assert error_text is not None
+    assert "Syntax error in math block" in error_text.property("text")
+
+    # Clear preview error
+    md_viewer_ctrl._has_preview_error = False
+    md_viewer_ctrl._preview_error_message = ""
+    md_viewer_ctrl.hasPreviewErrorChanged.emit()
+    md_viewer_ctrl.previewErrorChanged.emit()
+    QGuiApplication.processEvents()
+
+    assert banner.property("visible") is False
+
+
+def test_qml_dual_pane_responsive_resizing(qapp, workspace_env):
+    """T-F3-QML-06: In Tab 2, resize window width from 600 to 1000; verify both editor and preview expand responsively."""
+    engine, workspace = _load_workspace_view(workspace_env)
+    md_view = workspace.findChild(QObject, "markdownView")
+    md_editor = workspace.findChild(QObject, "markdownEditorPane")
+    split_btn = workspace.findChild(QObject, "splitTabButton")
+
+    assert split_btn is not None
+    split_btn.clicked.emit()
+    workspace.setProperty("width", 600)
+    QGuiApplication.processEvents()
+
+    w_editor_600 = md_editor.property("width")
+    w_view_600 = md_view.property("width")
+    assert w_editor_600 > 0
+    assert w_view_600 > 0
+
+    workspace.setProperty("width", 1000)
+    QGuiApplication.processEvents()
+
+    w_editor_1000 = md_editor.property("width")
+    w_view_1000 = md_view.property("width")
+    assert w_editor_1000 > w_editor_600, f"Editor width {w_editor_1000} should be > {w_editor_600}"
+    assert w_view_1000 > w_view_600, f"View width {w_view_1000} should be > {w_view_600}"
 
 
 def test_qml_editor_pane_save_activation_and_shortcut(qapp, workspace_env):
