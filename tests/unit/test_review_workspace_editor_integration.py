@@ -59,7 +59,7 @@ def workspace_env(tmp_path):
     md_viewer_ctrl = MarkdownViewerController(viewer_service=md_viewer_service)
     md_editor_ctrl = MarkdownEditorController(editor_service=md_editor_service)
 
-    wire_review_workspace_sync(doc_ctrl, md_viewer_ctrl, md_editor_ctrl)
+    sync_coord = wire_review_workspace_sync(doc_ctrl, md_viewer_ctrl, md_editor_ctrl)
 
     return {
         "uow_factory": uow_factory,
@@ -68,6 +68,7 @@ def workspace_env(tmp_path):
         "doc_ctrl": doc_ctrl,
         "md_viewer_ctrl": md_viewer_ctrl,
         "md_editor_ctrl": md_editor_ctrl,
+        "sync_coord": sync_coord,
     }
 
 
@@ -103,12 +104,15 @@ def _load_workspace_view(workspace_env):
     doc_ctrl = workspace_env["doc_ctrl"]
     md_viewer_ctrl = workspace_env["md_viewer_ctrl"]
     md_editor_ctrl = workspace_env["md_editor_ctrl"]
+    sync_coord = workspace_env.get("sync_coord")
 
     engine = QQmlApplicationEngine()
     ctx = engine.rootContext()
     ctx.setContextProperty("documentViewerController", doc_ctrl)
     ctx.setContextProperty("markdownViewerController", md_viewer_ctrl)
     ctx.setContextProperty("markdownEditorController", md_editor_ctrl)
+    if sync_coord is not None:
+        ctx.setContextProperty("reviewWorkspaceSyncCoordinator", sync_coord)
 
     qml_file = Path(__file__).parent.parent.parent / "interfaces" / "desktop" / "qml" / "views" / "ReviewWorkspaceView.qml"
     engine.load(str(qml_file))
@@ -523,3 +527,90 @@ def test_qml_editor_pane_save_activation_and_shortcut(qapp, workspace_env):
 
     assert md_editor_ctrl.isDirty is False
     assert save_btn.property("enabled") is False
+
+
+def test_qml_sync_coordinator_dual_pane_tab_switching(qapp, workspace_env):
+    engine, workspace = _load_workspace_view(workspace_env)
+    sync_coord = workspace_env["sync_coord"]
+    assert sync_coord is not None
+
+    right_pane = workspace.findChild(QObject, "markdownPane")
+    split_btn = workspace.findChild(QObject, "splitTabButton")
+    preview_btn = workspace.findChild(QObject, "previewTabButton")
+    editor_btn = workspace.findChild(QObject, "editorTabButton")
+
+    # Initial Tab is 0: isDualPane should be False
+    assert right_pane.property("currentTab") == 0
+    assert sync_coord.is_dual_pane() is False
+
+    # Switch to Dual Pane (Tab 2)
+    split_btn.clicked.emit()
+    QGuiApplication.processEvents()
+    assert right_pane.property("currentTab") == 2
+    assert sync_coord.is_dual_pane() is True
+
+    # Switch to Source Editor (Tab 1)
+    editor_btn.clicked.emit()
+    QGuiApplication.processEvents()
+    assert right_pane.property("currentTab") == 1
+    assert sync_coord.is_dual_pane() is False
+
+    # Switch back to Dual Pane (Tab 2)
+    split_btn.clicked.emit()
+    QGuiApplication.processEvents()
+    assert right_pane.property("currentTab") == 2
+    assert sync_coord.is_dual_pane() is True
+
+    # Switch to Rendered Preview (Tab 0)
+    preview_btn.clicked.emit()
+    QGuiApplication.processEvents()
+    assert right_pane.property("currentTab") == 0
+    assert sync_coord.is_dual_pane() is False
+
+
+def test_qml_sync_source_and_preview_actions(qapp, workspace_env):
+    engine, workspace = _load_workspace_view(workspace_env)
+    md_viewer_ctrl = workspace_env["md_viewer_ctrl"]
+    md_editor_ctrl = workspace_env["md_editor_ctrl"]
+    sync_coord = workspace_env["sync_coord"]
+
+    # Configure debounce and lock release to 0 for instant sync testing
+    sync_coord._debounce_source_ms = 0
+    sync_coord._debounce_preview_ms = 0
+    sync_coord._lock_release_ms = 0
+
+    # Load multi-block document
+    text = "# Section 1\n\nParagraph 1\n\n# Section 2\n\nParagraph 2\n"
+    md_editor_ctrl.set_source_text(text)
+
+    parser = MarkdownItParser()
+    service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
+    dto = service.render_text(raw_text=text, active_regions=(), job_id=1, version=1)
+    md_viewer_ctrl.model.set_document(dto)
+
+    # Activate Dual Pane
+    split_btn = workspace.findChild(QObject, "splitTabButton")
+    split_btn.clicked.emit()
+    QGuiApplication.processEvents()
+    assert sync_coord.is_dual_pane() is True
+
+    scroll_nodes = []
+    md_viewer_ctrl.requestScrollToNode.connect(scroll_nodes.append)
+
+    # 1. Editor cursor moves to Section 2 (line 5)
+    pos = md_editor_ctrl.characterPositionOfLine(5)
+    md_editor_ctrl.updateCursorPosition(pos)
+    QGuiApplication.processEvents()
+
+    assert md_viewer_ctrl.selectedNodeIndex == 2
+    assert 2 in scroll_nodes
+
+    # 2. Preview block clicked: node 3 (Paragraph 2 at line 7)
+    nav_positions = []
+    md_editor_ctrl.requestNavigateToPosition.connect(nav_positions.append)
+
+    md_viewer_ctrl.reportNodeClicked(3, md_viewer_ctrl.model.model_generation)
+    QGuiApplication.processEvents()
+
+    expected_pos = md_editor_ctrl.characterPositionOfLine(7)
+    assert nav_positions == [expected_pos]

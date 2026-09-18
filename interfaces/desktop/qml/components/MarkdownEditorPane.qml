@@ -24,6 +24,26 @@ Item {
         function onMatchSelected(start, end) {
             sourceTextArea.select(start, end)
         }
+        function onRequestScrollToPosition(pos) {
+            if (sourceTextArea) {
+                var rect = sourceTextArea.positionToRectangle(pos)
+                if (editorScrollView && editorScrollView.contentItem) {
+                    var targetY = Math.max(0, rect.y - editorScrollView.height / 3)
+                    editorScrollView.contentItem.contentY = targetY
+                }
+            }
+        }
+        function onRequestNavigateToPosition(pos) {
+            if (sourceTextArea) {
+                sourceTextArea.cursorPosition = pos
+                sourceTextArea.forceActiveFocus()
+                var rect = sourceTextArea.positionToRectangle(pos)
+                if (editorScrollView && editorScrollView.contentItem) {
+                    var targetY = Math.max(0, rect.y - editorScrollView.height / 3)
+                    editorScrollView.contentItem.contentY = targetY
+                }
+            }
+        }
     }
 
     ColumnLayout {

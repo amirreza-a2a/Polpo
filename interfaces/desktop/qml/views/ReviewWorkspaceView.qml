@@ -98,12 +98,18 @@ Item {
                 if (typeof markdownViewerController !== "undefined" && markdownViewerController) {
                     markdownViewerController.flushLivePreview();
                 }
+                if (typeof reviewWorkspaceSyncCoordinator !== "undefined" && reviewWorkspaceSyncCoordinator) {
+                    reviewWorkspaceSyncCoordinator.setDualPaneActive(tab === 2);
+                }
                 if (rightSplitView) {
                     rightSplitView.updateSplitLayout(tab);
                 }
             }
 
             onCurrentTabChanged: {
+                if (typeof reviewWorkspaceSyncCoordinator !== "undefined" && reviewWorkspaceSyncCoordinator) {
+                    reviewWorkspaceSyncCoordinator.setDualPaneActive(currentTab === 2);
+                }
                 if (rightSplitView) {
                     rightSplitView.updateSplitLayout(currentTab);
                 }

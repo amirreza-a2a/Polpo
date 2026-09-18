@@ -204,11 +204,54 @@ Item {
                     policy: ScrollBar.AsNeeded
                 }
 
+                property bool isProgrammaticScrolling: false
+
+                onContentYChanged: {
+                    if (!isProgrammaticScrolling) {
+                        userScrollDebounceTimer.restart()
+                    }
+                }
+
+                onMovementEnded: {
+                    if (!isProgrammaticScrolling) {
+                        reportTopVisibleNode()
+                    }
+                }
+
+                Timer {
+                    id: userScrollDebounceTimer
+                    interval: 60
+                    repeat: false
+                    onTriggered: {
+                        if (!markdownListView.isProgrammaticScrolling) {
+                            markdownListView.reportTopVisibleNode()
+                        }
+                    }
+                }
+
+                Timer {
+                    id: scrollResetTimer
+                    interval: 150
+                    repeat: false
+                    onTriggered: markdownListView.isProgrammaticScrolling = false
+                }
+
+                function reportTopVisibleNode() {
+                    if (!controller) return
+                    var topY = markdownListView.contentY + 20
+                    var topIdx = markdownListView.indexAt(10, topY)
+                    if (topIdx >= 0) {
+                        controller.reportUserScrolled(topIdx, controller.modelGeneration())
+                    }
+                }
+
                 Connections {
                     target: controller
                     function onRequestScrollToNode(nodeIndex) {
                         if (nodeIndex >= 0 && nodeIndex < markdownListView.count) {
+                            markdownListView.isProgrammaticScrolling = true
                             markdownListView.positionViewAtIndex(nodeIndex, ListView.Center)
+                            scrollResetTimer.restart()
                         }
                     }
                 }

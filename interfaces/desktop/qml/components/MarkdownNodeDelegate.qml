@@ -35,6 +35,17 @@ Item {
         }
     }
 
+    MouseArea {
+        id: blockClickArea
+        objectName: "nodeClickArea"
+        anchors.fill: parent
+        onClicked: {
+            if (controller) {
+                controller.reportNodeClicked(index, controller.modelGeneration())
+            }
+        }
+    }
+
     Item {
         id: delegateContent
         anchors.top: parent.top
