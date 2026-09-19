@@ -4,7 +4,7 @@
 
 **Blocked by:** 01: Canonical Visual Token Grammar & Immutable Value Objects, 03: Crop Artifact Staging Service, 05: Legacy Document Version Backfill.
 
-**Status:** ready-for-agent
+**Status:** complete
 
 ## Scope
 
@@ -99,17 +99,17 @@ Executed once during application bootstrap. Handles all 6 crash recovery scenari
 
 ## Acceptance Criteria
 
-- [ ] `publish_initial()` enforces all 6 preconditions in the documented order.
-- [ ] `publish_version()` enforces OCC against `document_versions`, not artifact watermarks.
-- [ ] All 4 protocol phases execute in order with explicit `BEGIN IMMEDIATE` transactions.
-- [ ] `FLUSHED` status transition is durable (explicit SQLite transaction, fsync before).
-- [ ] `reconcile_startup_intents()` correctly handles all 6 crash scenarios.
-- [ ] Recovery never deletes pre-existing artifacts (matching SHA-256 treated as already promoted).
-- [ ] `PublicationInProgressError` raised on concurrent intent, never timeout-based.
-- [ ] `CanonicalDocumentIntegrityError` raised for quarantined documents.
-- [ ] Staging cleanup occurs after successful publication and after crash reconciliation.
-- [ ] Zero references to `output_artifact_version_watermark` or `active_markdown_version` in the service.
-- [ ] All new tests pass. No existing tests broken.
+- [x] `publish_initial()` enforces all 6 preconditions in the documented order.
+- [x] `publish_version()` enforces OCC against `document_versions`, not artifact watermarks.
+- [x] All 4 protocol phases execute in order with explicit `BEGIN IMMEDIATE` transactions.
+- [x] `FLUSHED` status transition is durable (explicit SQLite transaction, fsync before).
+- [x] `reconcile_startup_intents()` correctly handles all 6 crash scenarios.
+- [x] Recovery never deletes pre-existing artifacts (matching SHA-256 treated as already promoted).
+- [x] `PublicationInProgressError` raised on concurrent intent, never timeout-based.
+- [x] `CanonicalDocumentIntegrityError` raised for quarantined documents.
+- [x] Staging cleanup occurs after successful publication and after crash reconciliation.
+- [x] Zero references to `output_artifact_version_watermark` or `active_markdown_version` in the service.
+- [x] All new tests pass. No existing tests broken.
 
 ## Tests Required
 

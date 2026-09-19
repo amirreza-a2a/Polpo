@@ -57,3 +57,25 @@ class StaleDocumentVersionError(DomainError):
         self.job_id = job_id
         self.base_version = base_version
         self.current_version = current_version
+
+
+class PublicationInProgressError(DomainError):
+    """Raised when a publication operation is attempted while an active intent exists for the job."""
+    def __init__(self, job_id: int, message: str = ""):
+        msg = message or f"A publication operation is already in progress for job {job_id}."
+        super().__init__(msg)
+        self.job_id = job_id
+
+
+class CanonicalDocumentIntegrityError(DomainError):
+    """Raised when publication or access is rejected due to document quarantine or missing version history."""
+    def __init__(self, message: str):
+        super().__init__(message)
+
+
+class DocumentAlreadyExistsError(DomainError):
+    """Raised when initial publication is attempted on a job that already has canonical version history."""
+    def __init__(self, job_id: int, message: str = ""):
+        msg = message or f"Canonical document already exists for job {job_id}."
+        super().__init__(msg)
+        self.job_id = job_id
