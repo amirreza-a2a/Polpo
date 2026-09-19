@@ -25,9 +25,9 @@ logger = logging.getLogger("polpot.ai.executor")
 
 class RateLimitedAIExecutor(IAIExecutionService):
     """
-    پیاده‌سازی ارکستراتور اجرای هوش مصنوعی و چرخه Fallback در لایه زیرساخت.
-    تنها استثناهای استاندارد دامنه (AIError) را جهت سوئیچ مدیریت کرده
-    و خطاهای برنامه‌نویسی یا سیستم را مستقیماً به بالا پرتاب می‌کند.
+    Infrastructure implementation of the AI execution orchestrator and fallback chain.
+    Catches only standardized domain exceptions (AIError) to handle fallback switching,
+    allowing system or programming errors to bubble up directly.
     """
 
     def __init__(

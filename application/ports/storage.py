@@ -9,7 +9,7 @@ from core.entities.artifact import ArtifactHandle, ArtifactType
 
 class IArtifactStorage(ABC):
     """
-    درگاه ذخیره‌سازی و بازیابی فایل‌ها و آرتیفکت‌های سیستم.
+    Port for storing and retrieving system artifacts and files.
     """
 
     @abstractmethod

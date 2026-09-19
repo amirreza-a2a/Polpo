@@ -11,7 +11,7 @@ from core.exceptions.domain_exceptions import EntityNotFoundError
 
 class ApiManagementService:
     """
-    سرویس مدیریت کلیدهای API خصوصی کاربران و اهداهای عمومی.
+    Application service managing user private API keys and public donations.
     """
 
     def __init__(

@@ -26,8 +26,8 @@ logger = logging.getLogger("ai.google_adapter")
 
 class GoogleAdapter(AIProviderPort):
     """
-    تطبیق‌دهنده ارتباط با Google Gemini API با استفاده از SDK رسمی google-genai.
-    این کلاس اینترفیس AIProviderPort لایه Application را پیاده‌سازی می‌کند.
+    Adapter communicating with Google Gemini API via official google-genai SDK.
+    Implements the application layer AIProviderPort interface.
     """
 
     PROVIDER_NAME = "google"
@@ -46,7 +46,7 @@ class GoogleAdapter(AIProviderPort):
         self.timeout = timeout
 
     def _normalize_error(self, err: Exception, model: str) -> AIError:
-        """تبدیل خطاهای خاص Google SDK به استثناهای استاندارد دامنه."""
+        """Normalizes Google SDK-specific exceptions into standard domain AIError exceptions."""
         err_msg = str(err).lower()
         status_code = getattr(err, "code", None) or getattr(err, "status_code", None)
         err_type = type(err).__name__.lower()

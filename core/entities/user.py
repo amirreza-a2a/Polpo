@@ -9,7 +9,7 @@ from typing import Optional
 
 @dataclass
 class UserPreferences:
-    """تنظیمات و ترجیحات رفتاری کاربر."""
+    """User behavioral settings and preferences."""
     use_public_fallback: bool = True
     auto_retry: bool = False
     auto_pipeline2: bool = False
@@ -19,7 +19,7 @@ class UserPreferences:
 
 @dataclass
 class QuotaAllocation:
-    """اطلاعات سهمیه روزانه و میزان مصرف کاربر."""
+    """User daily quota allocation and usage tracking."""
     daily_limit: int = 50
     daily_pages_used: int = 0
     last_active_date: Optional[date] = None
@@ -35,7 +35,7 @@ class QuotaAllocation:
 
 @dataclass
 class User:
-    """موجودیت کاربر در سیستم."""
+    """User domain entity."""
     id: Optional[int]
     telegram_id: Optional[int] = None
     username: Optional[str] = None

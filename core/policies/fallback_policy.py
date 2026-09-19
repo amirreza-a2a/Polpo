@@ -10,7 +10,7 @@ from core.entities.job import Job
 
 class FallbackChainPolicy:
     """
-    سیاست حل اسلات‌ها و پیشروی زنجیره Fallback در لایه دامنه.
+    Domain policy for slot resolution and fallback chain progression.
     """
 
     @classmethod
@@ -22,8 +22,8 @@ class FallbackChainPolicy:
         at_page: int,
     ) -> Tuple[Optional[ApiSlot], int, dict]:
         """
-        محاسبه اسلات بعدی در زنجیره و ساخت رویداد سوئیچ.
-        خروجی: (next_slot, new_index, switch_event_dict)
+        Calculates the next slot in the chain and constructs a switch event.
+        Returns: (next_slot, new_index, switch_event_dict)
         """
         if not chain:
             return None, 0, {}

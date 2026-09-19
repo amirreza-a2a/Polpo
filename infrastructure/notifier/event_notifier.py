@@ -13,7 +13,7 @@ logger = logging.getLogger("polpot.notifier")
 
 class InMemoryEventNotifier(IProgressNotifier):
     """
-    اطلاع‌رسان پیشرفت کارها در حافظه با قابلیت انتشار رویداد به شنوندگان SSE و کلاینت‌ها.
+    In-memory job progress notifier with event broadcasting for listeners and clients.
     """
 
     def __init__(self):

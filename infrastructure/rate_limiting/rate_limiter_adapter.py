@@ -12,7 +12,7 @@ from utils.rate_limiter import (
 
 class RateLimiterAdapter(IRateLimiter):
     """
-    آداپتور زیرساختی کنترل نرخ درخواست‌ها با بهره‌گیری از rate_limiter اتمیک.
+    Infrastructure adapter for request rate limiting leveraging the atomic rate limiter.
     """
 
     def wait_if_needed(self, slot: ApiSlot) -> None:

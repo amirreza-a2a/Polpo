@@ -25,8 +25,8 @@ logger = logging.getLogger("ai.openai_adapter")
 
 class OpenAIAdapter(AIProviderPort):
     """
-    تطبیق‌دهنده ارتباط با سرویس‌های سازگار با OpenAI (شامل OpenAI، OpenRouter و اندپوینت‌های سفارشی).
-    این کلاس اینترفیس AIProviderPort لایه Application را پیاده‌سازی می‌کند.
+    Adapter communicating with OpenAI-compatible endpoints (OpenAI, OpenRouter, and custom URLs).
+    Implements the application layer AIProviderPort interface.
     """
 
     DEFAULT_OPENAI_MODEL = "gpt-4o"
@@ -47,7 +47,7 @@ class OpenAIAdapter(AIProviderPort):
         self.timeout = timeout
 
     def _normalize_error(self, err: Exception, model: str) -> AIError:
-        """تبدیل خطاهای OpenAI SDK به استثناهای استاندارد دامنه."""
+        """Normalizes OpenAI SDK exceptions into standard domain AIError exceptions."""
         err_msg = str(err).lower()
         status_code = getattr(err, "status_code", None) or getattr(err, "code", None)
         err_type = type(err).__name__
@@ -114,7 +114,7 @@ class OpenAIAdapter(AIProviderPort):
         )
 
     def _get_client(self):
-        """ایجاد کلاینت OpenAI SDK با پیکربندی مشخص."""
+        """Instantiates the OpenAI SDK client with active configuration."""
         import openai
         kwargs = {
             "api_key": self.api_key,
@@ -125,7 +125,7 @@ class OpenAIAdapter(AIProviderPort):
         return openai.OpenAI(**kwargs)
 
     def generate_vision(self, request: VisionPromptRequest) -> AIResponse:
-        """ارسال تصویر و پرامپت به OpenAI / OpenRouter."""
+        """Sends image and prompt to OpenAI / OpenRouter endpoint."""
         fallback_model = self.DEFAULT_OPENROUTER_MODEL if self.provider_name == "openrouter" else self.DEFAULT_OPENAI_MODEL
         model = request.model or self.default_model or fallback_model
         img_b64 = base64.b64encode(request.image_bytes).decode("utf-8")
@@ -159,7 +159,7 @@ class OpenAIAdapter(AIProviderPort):
             raise norm_err from e
 
     def generate_text(self, request: TextPromptRequest) -> AIResponse:
-        """ارسال متن و پرامپت به OpenAI / OpenRouter."""
+        """Sends text prompt to OpenAI / OpenRouter endpoint."""
         fallback_model = self.DEFAULT_OPENROUTER_MODEL if self.provider_name == "openrouter" else self.DEFAULT_OPENAI_MODEL
         model = request.model or self.default_model or fallback_model
 

@@ -3,12 +3,12 @@
 # ============================================================
 
 class DomainError(Exception):
-    """خطای پایه برای تمام خطاهای منطق دامنه."""
+    """Base exception for all domain logic errors."""
     pass
 
 
 class EntityNotFoundError(DomainError):
-    """خطای عدم یافتن موجودیت مورد نظر."""
+    """Raised when a requested domain entity is not found."""
     def __init__(self, entity_name: str, entity_id: any):
         super().__init__(f"{entity_name} with identifier '{entity_id}' was not found.")
         self.entity_name = entity_name
@@ -16,26 +16,26 @@ class EntityNotFoundError(DomainError):
 
 
 class QuotaExceededError(DomainError):
-    """خطای اتمام یا ناکافی بودن سهمیه روزانه."""
+    """Raised when user daily quota is exhausted or insufficient."""
     def __init__(self, message: str = "Daily page quota exceeded."):
         super().__init__(message)
 
 
 class QueueFullError(DomainError):
-    """خطای تکمیل ظرفیت صف پردازش."""
+    """Raised when the processing queue capacity has been reached."""
     def __init__(self, message: str = "Processing queue is currently full."):
         super().__init__(message)
 
 
 class ArtifactNotFoundError(DomainError):
-    """خطای عدم دسترسی یا ناموجود بودن فایل/آرتیفکت در مخزن."""
+    """Raised when a requested artifact or file cannot be located in storage."""
     def __init__(self, uri: str):
         super().__init__(f"Artifact not found at URI: {uri}")
         self.uri = uri
 
 
 class AuthenticationError(DomainError):
-    """خطای عدم احراز هویت یا نامعتبر بودن توکن/کلید دسترسی."""
+    """Raised when authentication fails or access credentials are invalid."""
     def __init__(self, message: str = "Authentication failed or token expired."):
         super().__init__(message)
 

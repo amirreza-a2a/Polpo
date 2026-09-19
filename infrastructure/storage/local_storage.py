@@ -15,7 +15,7 @@ from config import OUTPUT_DIR
 
 class LocalStorageAdapter(IArtifactStorage):
     """
-    پیاده‌سازی امن درگاه ذخیره‌سازی آرتیفکت‌ها بر روی دیسک محلی با اعتبارسنجی مهار مسیر (Path Containment).
+    Secure local filesystem artifact storage adapter enforcing strict path containment validation.
     """
 
     def __init__(self, base_dir: Optional[Path] = None):
@@ -24,7 +24,7 @@ class LocalStorageAdapter(IArtifactStorage):
 
     def _sanitize_filename(self, filename: str) -> str:
         base = os.path.basename(filename).strip()
-        # حذف کاراکترهای خطرناک و پیمایش دایرکتوری
+        # Strip dangerous characters and directory traversal elements
         clean = base.replace("..", "").replace("/", "").replace("\\", "")
         return clean or "unnamed_artifact"
 
@@ -42,7 +42,7 @@ class LocalStorageAdapter(IArtifactStorage):
 
         file_path = (job_dir / clean_name).resolve()
 
-        # بررسی مهار مسیر (Path Traversal Protection)
+        # Path traversal protection check
         if not file_path.is_relative_to(job_dir):
             raise DomainError(f"Security error: Artifact path '{filename}' escapes job directory.")
 

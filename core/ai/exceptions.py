@@ -7,9 +7,9 @@ from typing import Optional
 
 class AIError(Exception):
     """
-    خطای پایه برای تمام خطاهای لایه هوش مصنوعی.
-    تنها فراداده‌های مستقل از زیرساخت (message, provider, model, status_code) را نگهداری می‌کند
-    و هیچ شیء خامی از SDKهای خارجی در این لایه ذخیره نمی‌شود.
+    Base exception for all AI layer errors.
+    Preserves infrastructure-neutral metadata (message, provider, model, status_code)
+    without retaining raw SDK objects within the domain layer.
     """
     def __init__(
         self,
@@ -26,45 +26,45 @@ class AIError(Exception):
 
 
 class AIRetryableError(AIError):
-    """خطای گذرا و قابل بازآزمایی (Rate limit، Timeout، قطعی موقت سرور)."""
+    """Transient, retryable error (rate limit, timeout, temporary server outage)."""
     pass
 
 
 class AIRateLimitError(AIRetryableError):
-    """خطای محدودیت نرخ درخواست (429 Too Many Requests / Quota Exceeded)."""
+    """Rate limit or quota exhaustion error (429 Too Many Requests / Quota Exceeded)."""
     pass
 
 
 class AITimeoutError(AIRetryableError):
-    """خطای اتمام مهلت زمانی درخواست."""
+    """Request timeout error."""
     pass
 
 
 class AIProviderUnavailableError(AIRetryableError):
-    """خطای عدم دسترسی یا خطای داخلی سرور سرویس‌دهنده (500, 502, 503, 504)."""
+    """Provider service unavailability or internal server error (500, 502, 503, 504)."""
     pass
 
 
 class AINonRetryableError(AIError):
-    """خطای غیرقابل بازآزمایی با همان کلید/پارامترها (کلید نامعتبر، مدل ناموجود، فیلتر محتوا)."""
+    """Non-retryable error under the same key or parameters (invalid key, model not found, content filter)."""
     pass
 
 
 class AIAuthenticationError(AINonRetryableError):
-    """خطای اعتبارسنجی کلید API (401 / 403 Invalid API Key)."""
+    """API key authentication or authorization error (401 / 403 Invalid API Key)."""
     pass
 
 
 class AIModelNotFoundError(AINonRetryableError):
-    """خطای عدم وجود مدل درخواستی (404 Model Not Found)."""
+    """Requested model not found error (404 Model Not Found)."""
     pass
 
 
 class AIContentFilterError(AINonRetryableError):
-    """خطای فیلتر ایمنی و محتوای سرویس‌دهنده."""
+    """Provider safety or content filter violation error."""
     pass
 
 
 class AIChainExhaustedError(AIError):
-    """خطای اتمام تمام اسلات‌های زنجیره API بدون موفقیت."""
+    """Raised when all slots in the API fallback chain have been exhausted without success."""
     pass

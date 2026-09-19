@@ -29,7 +29,7 @@ class PromptType(str, Enum):
 
 @dataclass
 class Prompt:
-    """موجودیت پرامپت استخراج یا تبدیل در سیستم."""
+    """Extraction or conversion prompt domain entity."""
     id: Optional[int]
     name: str
     text: str

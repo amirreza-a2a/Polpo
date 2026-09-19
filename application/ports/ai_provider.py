@@ -8,16 +8,16 @@ from core.ai.types import VisionPromptRequest, TextPromptRequest, AIResponse
 
 class AIProviderPort(ABC):
     """
-    درگاه کاربردی (Application Port) برای تطبیق‌دهنده‌های سرویس‌های هوش مصنوعی.
-    لایه Application وابسته به این Interface است و لایه Infrastructure آن را پیاده‌سازی می‌کند.
+    Application port for AI service provider adapters.
+    The application layer depends on this interface, and the infrastructure layer implements it.
     """
 
     @abstractmethod
     def generate_vision(self, request: VisionPromptRequest) -> AIResponse:
-        """ارسال درخواست بینایی ماشین (تصویر + پرامپت) و دریافت پاسخ استاندارد."""
+        """Dispatches a vision request (image + prompt) and returns a standardized response."""
         pass
 
     @abstractmethod
     def generate_text(self, request: TextPromptRequest) -> AIResponse:
-        """ارسال درخواست متنی خالص و دریافت پاسخ استاندارد."""
+        """Dispatches a pure text prompt request and returns a standardized response."""
         pass

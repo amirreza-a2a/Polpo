@@ -27,8 +27,8 @@ class ArtifactType(str, Enum):
 @dataclass(frozen=True)
 class ArtifactHandle:
     """
-    شناسه دسترسی به فایل‌های ذخیره شده.
-    مستقل از محل فیزیکی فایل (دیسک محلی، کانال تلگرام یا فضای ابری).
+    Access handle for stored artifact files.
+    Independent of physical storage backend (local filesystem, Telegram channel, or cloud storage).
     """
     storage_backend: StorageBackendType
     uri: str

@@ -12,7 +12,7 @@ from core.exceptions.domain_exceptions import EntityNotFoundError
 
 class UserManagementService:
     """
-    سرویس مدیریت کاربران، سهمیه روزانه و ترجیحات سیستمی.
+    Application service managing user profiles, daily quotas, and preferences.
     """
 
     def __init__(self, uow_factory: IUnitOfWorkFactory):

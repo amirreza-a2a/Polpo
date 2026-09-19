@@ -12,7 +12,7 @@ from pathlib import Path
 
 class SecretRedactingFilter(logging.Filter):
     """
-    فیلتر امنیتی برای لاگ‌ها جهت حذف خودکار توکن‌ها، پسوردها و کلیدهای API.
+    Security filter for log records to automatically redact tokens, passwords, and API keys.
     """
     def __init__(self, secrets_to_mask: list[str] = None):
         super().__init__()
@@ -22,7 +22,7 @@ class SecretRedactingFilter(logging.Filter):
                 if s and isinstance(s, str) and len(s) > 3:
                     self.secrets.add(s)
 
-        # الگوهای متداول کلیدهای API و توکن‌ها
+        # Common API key and token regex patterns
         self.patterns = [
             re.compile(r'(\d{8,12}:[A-Za-z0-9_-]{35})'),       # Telegram Bot Token
             re.compile(r'(AIza[A-Za-z0-9_-]{30,})'),           # Google API Key
@@ -53,7 +53,7 @@ class SecretRedactingFilter(logging.Filter):
 
 def setup_logging(log_level: int = logging.INFO, log_dir: str = None) -> logging.Logger:
     """
-    راه‌اندازی سیستم لاگینگ ساختاریافته با لاگ چرخشی (Rotating File) و کنسول.
+    Initializes structured logging with rotating file and console handlers.
     """
     if log_dir is None:
         project_root = Path(__file__).resolve().parent.parent.parent
@@ -64,7 +64,7 @@ def setup_logging(log_level: int = logging.INFO, log_dir: str = None) -> logging
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "polpot.log"
 
-    # جمع‌آوری رازهای حساس برای فیلتر امنیتی
+    # Collect sensitive credentials for the redaction filter
     known_secrets = []
     try:
         import config
@@ -80,14 +80,14 @@ def setup_logging(log_level: int = logging.INFO, log_dir: str = None) -> logging
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
 
-    # جلوگیری از اضافه کردن هندلرهای تکراری در صورت اجرای چندباره setup
+    # Prevent attaching duplicate handlers on repeated setup invocations
     if not root_logger.handlers:
         formatter = logging.Formatter(
             fmt="%(asctime)s [%(levelname)s] %(name)s (%(filename)s:%(lineno)d): %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
 
-        # ─── 1. هندلر فایل چرخشی (5 مگابایت، تا 5 فایل پشتیبان) ──────────
+        # 1. Rotating file handler (5 MB, up to 5 backups)
         file_handler = RotatingFileHandler(
             filename=str(log_file),
             maxBytes=5 * 1024 * 1024,
@@ -99,7 +99,7 @@ def setup_logging(log_level: int = logging.INFO, log_dir: str = None) -> logging
         file_handler.addFilter(redacting_filter)
         root_logger.addHandler(file_handler)
 
-        # ─── 2. هندلر کنسول (stdout) ──────────────────────────────────
+        # 2. Console handler (stdout)
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(log_level)
         console_handler.setFormatter(formatter)
@@ -112,5 +112,5 @@ def setup_logging(log_level: int = logging.INFO, log_dir: str = None) -> logging
 
 
 def get_logger(name: str = "polpot") -> logging.Logger:
-    """دریافت یک لاگر نام‌گذاری‌شده."""
+    """Retrieves a named logger instance."""
     return logging.getLogger(name)

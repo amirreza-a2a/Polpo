@@ -11,7 +11,7 @@ from core.exceptions.domain_exceptions import EntityNotFoundError
 
 class PromptService:
     """
-    سرویس مدیریت پرامپت‌های استخراج و بازنویسی اسناد.
+    Application service managing extraction and rewriting prompts.
     """
 
     def __init__(self, uow_factory: IUnitOfWorkFactory):

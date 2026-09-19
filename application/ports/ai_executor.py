@@ -9,7 +9,7 @@ from core.entities.api_slot import ApiSlot
 
 class IAIExecutionService(ABC):
     """
-    درگاه ارکستراسیون اجرای هوش مصنوعی، کنترل نرخ درخواست‌ها و مدیریت چرخه Fallback.
+    Port for orchestrating AI execution, rate limiting, and fallback chain progression.
     """
 
     @abstractmethod
@@ -23,8 +23,8 @@ class IAIExecutionService(ABC):
         on_switch: Optional[Callable[[str, str, str, int], None]] = None,
     ) -> Tuple[Optional[str], Optional[ApiSlot]]:
         """
-        ارسال تصویر به هوش مصنوعی با اعمال متمرکز Fallback و Rate Limiting.
-        خروجی: (محتوای تولیدشده, اسلات API موفق)
+        Executes a vision request with centralized rate limiting and fallback progression.
+        Returns: (generated_content, successful_api_slot)
         """
         pass
 
@@ -38,7 +38,7 @@ class IAIExecutionService(ABC):
         on_switch: Optional[Callable[[str, str, str, int], None]] = None,
     ) -> Tuple[Optional[str], Optional[ApiSlot]]:
         """
-        ارسال متن به هوش مصنوعی با اعمال متمرکز Fallback و Rate Limiting.
-        خروجی: (محتوای تولیدشده, اسلات API موفق)
+        Executes a text request with centralized rate limiting and fallback progression.
+        Returns: (generated_content, successful_api_slot)
         """
         pass

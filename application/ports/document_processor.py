@@ -32,17 +32,17 @@ class ExtractedCrop:
 
 class IDocumentProcessor(ABC):
     """
-    درگاه پردازش و رندر اسناد PDF و استخراج بخش‌های تصویر.
+    Port for processing and rendering PDF documents and extracting image regions.
     """
 
     @abstractmethod
     def get_page_count(self, pdf_bytes: bytes) -> int:
-        """محاسبه تعداد کل صفحات سند PDF."""
+        """Calculates total page count of a PDF document."""
         pass
 
     @abstractmethod
     def render_page_to_jpeg(self, pdf_bytes: bytes, page_number: int, dpi: int = 150) -> bytes:
-        """رندر یک صفحه منفرد PDF به فرمت بایت‌های تصویر JPEG."""
+        """Renders a single PDF page to JPEG image bytes."""
         pass
 
     @abstractmethod
@@ -63,7 +63,7 @@ class IDocumentProcessor(ABC):
 
     @abstractmethod
     def unify_markdown(self, raw_text: str) -> str:
-        """یکپارچه‌سازی و حذف سرتیترهای صفحات و جداکننده‌ها از مارک‌داون."""
+        """Unifies multi-page markdown by removing page headers and redundant separators."""
         pass
 
     @abstractmethod

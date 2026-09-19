@@ -24,24 +24,24 @@ _DEFAULT_MODEL = {
 
 
 def get_default_base_url(provider: str) -> Optional[str]:
-    """دریافت Base URL پیش‌فرض برای ارائه‌دهنده."""
+    """Returns the default base URL for the given provider."""
     return _DEFAULT_BASE_URL.get(provider.lower()) if provider else None
 
 
 def get_default_model(provider: str) -> str:
-    """دریافت مدل پیش‌فرض برای ارائه‌دهنده."""
+    """Returns the default model for the given provider."""
     return _DEFAULT_MODEL.get(provider.lower(), "gemini-3.5-flash") if provider else "gemini-3.5-flash"
 
 
 def detect_provider_and_models(api_key: str, base_url: Optional[str] = None) -> Tuple[Optional[str], List[str]]:
     """
-    تشخیص خودکار ارائه‌دهنده هوش مصنوعی و فهرست مدل‌های در دسترس با کلید ارائه‌شده.
-    خروجی: (نام_ارائه‌دهنده, لیست_مدل‌ها)
+    Automatically detects AI provider and discovers available models using the provided key.
+    Returns: (provider_name, list_of_models)
     """
     if not api_key:
         return None, []
 
-    # 1. تست Google Gemini در صورت نبود base_url
+    # 1. Test Google Gemini if no custom base_url is specified
     if not base_url:
         try:
             from google import genai
@@ -58,7 +58,7 @@ def detect_provider_and_models(api_key: str, base_url: Optional[str] = None) -> 
         except Exception as e:
             logger.debug(f"Google discovery attempt failed: {e}")
 
-    # 2. تست OpenAI و ارائه‌دهندگان سازگار (مانند OpenRouter)
+    # 2. Test OpenAI and compatible providers (e.g., OpenRouter)
     try:
         import openai
         kwargs = {"api_key": api_key}
@@ -80,7 +80,7 @@ def detect_provider_and_models(api_key: str, base_url: Optional[str] = None) -> 
     except Exception as e:
         logger.debug(f"OpenAI discovery attempt failed: {e}")
 
-    # 3. تست ثانویه OpenRouter پیش‌فرض در صورت نبود base_url
+    # 3. Secondary check for default OpenRouter endpoint if no custom base_url is specified
     if not base_url:
         try:
             import openai
@@ -101,7 +101,7 @@ def detect_provider_and_models(api_key: str, base_url: Optional[str] = None) -> 
 
 class AIProviderDetector(IProviderDetector):
     """
-    پیاده‌سازی انطباقی پورت IProviderDetector در لایه زیرساخت.
+    Infrastructure implementation of the IProviderDetector port.
     """
 
     def detect_provider_and_models(
