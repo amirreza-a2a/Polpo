@@ -1,0 +1,250 @@
+# ============================================================
+#  tests/unit/test_legacy_document_backfill.py
+#  Tests for Legacy Document Version Backfill (Ticket 10E.3a-05)
+# ============================================================
+
+import hashlib
+from pathlib import Path
+import stat
+import pytest
+
+from core.entities.job import Job, JobStatus
+from infrastructure.persistence.sqlite.connection import SQLiteDatabaseManager
+from infrastructure.persistence.sqlite.migration_runner import SQLiteMigrationRunner
+from infrastructure.persistence.sqlite.unit_of_work import SQLiteUnitOfWork, SQLiteUnitOfWorkFactory
+from application.services.legacy_document_backfill import backfill_legacy_document_versions
+
+
+@pytest.fixture
+def db_manager(tmp_path: Path) -> SQLiteDatabaseManager:
+    db_file = tmp_path / "test_polpot.db"
+    mgr = SQLiteDatabaseManager(str(db_file))
+    runner = SQLiteMigrationRunner(db_manager=mgr)
+    runner.run_migrations()
+    return mgr
+
+
+@pytest.fixture
+def uow_factory(db_manager: SQLiteDatabaseManager) -> SQLiteUnitOfWorkFactory:
+    return SQLiteUnitOfWorkFactory(db_manager)
+
+
+def _create_test_job(
+    uow: SQLiteUnitOfWork,
+    file_name: str = "test.pdf",
+    output_path: str = None,
+    watermark: int = 0,
+    status: JobStatus = JobStatus.DONE,
+) -> Job:
+    cur = uow._conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO jobs (
+            file_name, file_path, status, output_path,
+            output_artifact_version_watermark, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            file_name,
+            f"/input/{file_name}",
+            status.value,
+            output_path,
+            watermark,
+            "2026-09-19T10:00:00+00:00",
+            "2026-09-19T10:30:00+00:00",
+        ),
+    )
+    job_id = cur.lastrowid
+    return uow.jobs.get_by_id(job_id)
+
+
+def test_backfill_existing_job_with_file(uow_factory: SQLiteUnitOfWorkFactory, tmp_path: Path):
+    doc_file = tmp_path / "output_1_v1.md"
+    content = "# Document Title\n\nSome canonical text."
+    doc_file.write_text(content, encoding="utf-8")
+    expected_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    with uow_factory.create() as uow:
+        job = _create_test_job(uow, output_path=str(doc_file))
+        job_id = job.id
+        uow.commit()
+
+    summary = backfill_legacy_document_versions(uow_factory)
+
+    assert summary.scanned_jobs >= 1
+    assert summary.valid_documents == 1
+    assert summary.quarantined_documents == 0
+    assert summary.newly_inserted_versions == 1
+
+    with uow_factory.create() as uow:
+        latest = uow.document_versions.get_latest_document_version(job_id)
+        assert latest is not None
+        assert latest.version == 1
+        assert latest.sha256 == expected_sha256
+        assert latest.integrity_status == "VALID"
+        assert latest.published_by == "LEGACY_BACKFILL"
+        assert latest.output_path == str(doc_file)
+        assert latest.created_at == "2026-09-19T10:30:00+00:00"
+
+
+def test_backfill_empty_file_valid(uow_factory: SQLiteUnitOfWorkFactory, tmp_path: Path):
+    empty_file = tmp_path / "output_2_v1.md"
+    empty_file.write_bytes(b"")
+    expected_empty_sha256 = hashlib.sha256(b"").hexdigest()
+    assert expected_empty_sha256 == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+    with uow_factory.create() as uow:
+        job = _create_test_job(uow, output_path=str(empty_file))
+        job_id = job.id
+        uow.commit()
+
+    summary = backfill_legacy_document_versions(uow_factory)
+    assert summary.valid_documents == 1
+    assert summary.quarantined_documents == 0
+
+    with uow_factory.create() as uow:
+        latest = uow.document_versions.get_latest_document_version(job_id)
+        assert latest is not None
+        assert latest.version == 1
+        assert latest.sha256 == expected_empty_sha256
+        assert latest.integrity_status == "VALID"
+
+
+def test_backfill_missing_file_quarantined(uow_factory: SQLiteUnitOfWorkFactory, tmp_path: Path):
+    missing_file = tmp_path / "nonexistent_output.md"
+
+    with uow_factory.create() as uow:
+        job = _create_test_job(uow, output_path=str(missing_file))
+        job_id = job.id
+        uow.commit()
+
+    summary = backfill_legacy_document_versions(uow_factory)
+    assert summary.quarantined_documents == 1
+    assert summary.valid_documents == 0
+
+    with uow_factory.create() as uow:
+        latest = uow.document_versions.get_latest_document_version(job_id)
+        assert latest is not None
+        assert latest.version == 1
+        assert latest.sha256 is None
+        assert latest.integrity_status == "QUARANTINED"
+        assert latest.published_by == "LEGACY_BACKFILL"
+
+
+def test_backfill_unreadable_file_quarantined(uow_factory: SQLiteUnitOfWorkFactory, tmp_path: Path):
+    unreadable_file = tmp_path / "unreadable_output.md"
+    unreadable_file.write_text("secret content")
+    unreadable_file.chmod(0)
+
+    try:
+        with uow_factory.create() as uow:
+            job = _create_test_job(uow, output_path=str(unreadable_file))
+            job_id = job.id
+            uow.commit()
+
+        summary = backfill_legacy_document_versions(uow_factory)
+        # Note: on some environments running as root chmod(0) is readable; handle both
+        with uow_factory.create() as uow:
+            latest = uow.document_versions.get_latest_document_version(job_id)
+            assert latest is not None
+            if summary.quarantined_documents == 1:
+                assert latest.sha256 is None
+                assert latest.integrity_status == "QUARANTINED"
+            else:
+                assert latest.integrity_status == "VALID"
+    finally:
+        unreadable_file.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+def test_backfill_idempotent(uow_factory: SQLiteUnitOfWorkFactory, tmp_path: Path):
+    doc_file = tmp_path / "output_5_v1.md"
+    doc_file.write_text("Content")
+
+    with uow_factory.create() as uow:
+        job = _create_test_job(uow, output_path=str(doc_file))
+        job_id = job.id
+        uow.commit()
+
+    summary1 = backfill_legacy_document_versions(uow_factory)
+    assert summary1.newly_inserted_versions == 1
+
+    summary2 = backfill_legacy_document_versions(uow_factory)
+    assert summary2.newly_inserted_versions == 0
+
+    with uow_factory.create() as uow:
+        all_versions = uow.document_versions.get_by_job_id(job_id)
+        assert len(all_versions) == 1
+
+
+def test_backfill_null_output_path_skipped(uow_factory: SQLiteUnitOfWorkFactory):
+    with uow_factory.create() as uow:
+        job1 = _create_test_job(uow, output_path=None)
+        job2 = _create_test_job(uow, output_path="")
+        job3 = _create_test_job(uow, output_path="   ")
+        j1_id, j2_id, j3_id = job1.id, job2.id, job3.id
+        uow.commit()
+
+    summary = backfill_legacy_document_versions(uow_factory)
+    assert summary.scanned_jobs == 0
+    assert summary.newly_inserted_versions == 0
+
+    with uow_factory.create() as uow:
+        assert uow.document_versions.get_latest_document_version(j1_id) is None
+        assert uow.document_versions.get_latest_document_version(j2_id) is None
+        assert uow.document_versions.get_latest_document_version(j3_id) is None
+
+
+def test_backfill_version_from_filename(uow_factory: SQLiteUnitOfWorkFactory, tmp_path: Path):
+    doc_file = tmp_path / "output_7_v4.md"
+    doc_file.write_text("Content v4")
+
+    with uow_factory.create() as uow:
+        # Deliberately set watermark to 99 to ensure watermark is ignored
+        job = _create_test_job(uow, output_path=str(doc_file), watermark=99)
+        job_id = job.id
+        uow.commit()
+
+    backfill_legacy_document_versions(uow_factory)
+
+    with uow_factory.create() as uow:
+        latest = uow.document_versions.get_latest_document_version(job_id)
+        assert latest is not None
+        assert latest.version == 4  # Extracted from v4, not watermark 99!
+
+
+def test_backfill_quarantine_sets_error_message(uow_factory: SQLiteUnitOfWorkFactory, tmp_path: Path):
+    missing_file = tmp_path / "missing_file_to_quarantine.md"
+
+    with uow_factory.create() as uow:
+        job = _create_test_job(uow, output_path=str(missing_file))
+        job_id = job.id
+        uow.commit()
+
+    backfill_legacy_document_versions(uow_factory)
+
+    with uow_factory.create() as uow:
+        updated_job = uow.jobs.get_by_id(job_id)
+        assert updated_job is not None
+        assert updated_job.error_message is not None
+        assert "[INTEGRITY_QUARANTINE]" in updated_job.error_message
+
+
+def test_backfill_file_uri_support(uow_factory: SQLiteUnitOfWorkFactory, tmp_path: Path):
+    doc_file = tmp_path / "output_10_v2.md"
+    doc_file.write_text("URI content")
+
+    uri = f"file://{doc_file.as_posix()}"
+
+    with uow_factory.create() as uow:
+        job = _create_test_job(uow, output_path=uri)
+        job_id = job.id
+        uow.commit()
+
+    backfill_legacy_document_versions(uow_factory)
+
+    with uow_factory.create() as uow:
+        latest = uow.document_versions.get_latest_document_version(job_id)
+        assert latest is not None
+        assert latest.version == 2
+        assert latest.integrity_status == "VALID"
+        assert latest.output_path == uri

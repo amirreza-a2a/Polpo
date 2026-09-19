@@ -36,6 +36,10 @@ class IJobRepository(ABC):
     @abstractmethod
     def list(self, limit: int = 50, offset: int = 0, status: Optional[JobStatus] = None) -> List[Job]: ...
 
+    def get_jobs_with_output(self) -> List[Job]:
+        """Lists all jobs having a non-null, non-empty output_path."""
+        raise NotImplementedError
+
     def claim_job(self, job_id: int) -> Optional[Job]:
         """Atomically claims a specific job for execution."""
         raise NotImplementedError

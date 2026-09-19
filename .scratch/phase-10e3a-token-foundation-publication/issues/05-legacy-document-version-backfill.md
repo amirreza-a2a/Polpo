@@ -4,7 +4,7 @@
 
 **Blocked by:** 04: SQLite Schema 004 — Tables & Indexes Only.
 
-**Status:** ready-for-agent
+**Status:** complete
 
 ## Scope
 
@@ -38,14 +38,14 @@
 
 ## Acceptance Criteria
 
-- [ ] All existing jobs with non-null `output_path` and existing readable files receive a `document_versions` row with real SHA-256 and `integrity_status = 'VALID'`.
-- [ ] 0-byte readable canonical files are backfilled normally with their real SHA-256.
-- [ ] Missing/unreadable canonical files receive `integrity_status = 'QUARANTINED'` and `sha256 = NULL`.
-- [ ] Quarantined jobs have `jobs.error_message` updated with a diagnostic string.
-- [ ] Running backfill twice produces no duplicate rows (`INSERT OR IGNORE`).
-- [ ] Jobs with `output_path IS NULL` are skipped (remain at version 0).
-- [ ] Version is derived from `parse_canonical_markdown_version()`, not from artifact watermarks.
-- [ ] All new tests pass. No existing tests broken.
+- [x] All existing jobs with non-null `output_path` and existing readable files receive a `document_versions` row with real SHA-256 and `integrity_status = 'VALID'`.
+- [x] 0-byte readable canonical files are backfilled normally with their real SHA-256.
+- [x] Missing/unreadable canonical files receive `integrity_status = 'QUARANTINED'` and `sha256 = NULL`.
+- [x] Quarantined jobs have `jobs.error_message` updated with a diagnostic string.
+- [x] Running backfill twice produces no duplicate rows (`INSERT OR IGNORE`).
+- [x] Jobs with `output_path IS NULL` are skipped (remain at version 0).
+- [x] Version is derived from `parse_canonical_markdown_version()`, not from artifact watermarks.
+- [x] All new tests pass. No existing tests broken.
 
 ## Tests Required
 

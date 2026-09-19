@@ -79,6 +79,15 @@ class IDocumentVersionRepository(ABC):
         pass
 
     @abstractmethod
-    def insert_document_version(self, record: DocumentVersionRecord) -> DocumentVersionRecord:
+    def insert_document_version(
+        self, record: DocumentVersionRecord, or_ignore: bool = False
+    ) -> DocumentVersionRecord:
         """Inserts a new immutable document version record."""
         pass
+
+    def insert_document_version_if_absent(self, record: DocumentVersionRecord) -> bool:
+        """
+        Inserts a document version record using INSERT OR IGNORE.
+        Returns True if a new row was inserted, False if it was ignored (already exists).
+        """
+        raise NotImplementedError

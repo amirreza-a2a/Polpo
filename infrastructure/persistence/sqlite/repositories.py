@@ -629,6 +629,13 @@ class SQLiteJobRepository(IJobRepository):
             )
         return [self._row_to_entity(r) for r in cur.fetchall()]
 
+    def get_jobs_with_output(self) -> List[Job]:
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT * FROM jobs WHERE output_path IS NOT NULL AND TRIM(output_path) != '' ORDER BY id ASC"
+        )
+        return [self._row_to_entity(r) for r in cur.fetchall()]
+
     def claim_next_pending(self, due_before: Optional[datetime] = None) -> Optional[Job]:
         """
         Atomically claims the next eligible pending job.
@@ -1276,13 +1283,16 @@ class SQLiteDocumentVersionRepository(IDocumentVersionRepository):
             return None
         return self._to_record(row)
 
-    def insert_document_version(self, record: DocumentVersionRecord) -> DocumentVersionRecord:
+    def insert_document_version(
+        self, record: DocumentVersionRecord, or_ignore: bool = False
+    ) -> DocumentVersionRecord:
         _ensure_transaction(self.conn)
         cur = self.conn.cursor()
         created_at = record.created_at or _format_iso_dt(datetime.now(timezone.utc))
+        verb = "INSERT OR IGNORE INTO" if or_ignore else "INSERT INTO"
         cur.execute(
-            """
-            INSERT INTO document_versions (
+            f"""
+            {verb} document_versions (
                 job_id, version, output_path, sha256,
                 integrity_status, published_by, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -1297,9 +1307,37 @@ class SQLiteDocumentVersionRepository(IDocumentVersionRepository):
                 created_at,
             ),
         )
-        record.id = cur.lastrowid
+        if cur.rowcount > 0:
+            record.id = cur.lastrowid
         record.created_at = created_at
         return record
+
+    def insert_document_version_if_absent(self, record: DocumentVersionRecord) -> bool:
+        _ensure_transaction(self.conn)
+        cur = self.conn.cursor()
+        created_at = record.created_at or _format_iso_dt(datetime.now(timezone.utc))
+        cur.execute(
+            """
+            INSERT OR IGNORE INTO document_versions (
+                job_id, version, output_path, sha256,
+                integrity_status, published_by, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.job_id,
+                record.version,
+                record.output_path,
+                record.sha256,
+                record.integrity_status,
+                record.published_by,
+                created_at,
+            ),
+        )
+        if cur.rowcount > 0:
+            record.id = cur.lastrowid
+            record.created_at = created_at
+            return True
+        return False
 
     def _to_record(self, row: sqlite3.Row) -> DocumentVersionRecord:
         return DocumentVersionRecord(
