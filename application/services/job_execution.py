@@ -23,6 +23,7 @@ from core.entities.visual_region import VisualRegion, RegionOrigin, ReviewStatus
 from core.entities.bounding_box_parser import BoundingBoxParser
 from core.policies.job_state_policy import JobStateTransitionPolicy
 from core.exceptions.domain_exceptions import ArtifactNotFoundError, EntityNotFoundError, DomainError
+from application.services.document_publication_service import DocumentPublicationService
 
 logger = logging.getLogger("polpot.execution")
 
@@ -42,6 +43,7 @@ class JobExecutionService:
         ai_executor: IAIExecutionService,
         event_publisher: Optional[Any] = None,
         notifier: Optional[Any] = None,
+        document_publication_service: Optional[DocumentPublicationService] = None,
     ):
         self.uow_factory = uow_factory
         self.storage = storage
@@ -49,6 +51,16 @@ class JobExecutionService:
         self.ai_executor = ai_executor
         self._lock = threading.Lock()
         self._pause_requested_jobs: set[int] = set()
+
+        if document_publication_service is not None:
+            self.document_publication_service: Optional[DocumentPublicationService] = document_publication_service
+        elif hasattr(storage, "base_dir"):
+            self.document_publication_service = DocumentPublicationService(
+                uow_factory=self.uow_factory,
+                artifacts_dir=getattr(storage, "base_dir", "."),
+            )
+        else:
+            self.document_publication_service = None
 
         pub_candidate = event_publisher if event_publisher is not None else notifier
         if pub_candidate is not None:
@@ -296,15 +308,17 @@ class JobExecutionService:
             if self._is_pause_requested(job.id):
                 return self._handle_pause(job)
 
-            # 3. Finalize job and store output Markdown artifact
+            # 3. Finalize job and publish initial canonical Markdown document via publication authority
             full_document = "\n\n".join(accumulated_markdown)
-            output_handle = self.storage.store(
+            if self.document_publication_service is None:
+                raise RuntimeError("DocumentPublicationService is required for initial document publication.")
+
+            pub_record = self.document_publication_service.publish_initial(
                 job_id=job.id,
-                artifact_type=ArtifactType.OUTPUT_MARKDOWN,
-                filename=f"output_{job.id}.md",
-                data=full_document.encode("utf-8"),
-                mime_type="text/markdown",
+                markdown_text=full_document,
+                published_by="PIPELINE_1_EXECUTION",
             )
+            output_uri = pub_record.output_path
 
             with self.uow_factory.create() as uow:
                 # Check for cancellation or pause race inside final commit transaction
@@ -320,9 +334,9 @@ class JobExecutionService:
 
                 JobStateTransitionPolicy.validate_transition(job.status, JobStatus.DONE)
                 job.status = JobStatus.DONE
-                job.output_path = output_handle.uri
-                job.output_artifact_version_watermark = 1
-                uow.jobs.update_progress(job.id, job.processed_pages, job.api_switch_log, output_path=output_handle.uri)
+                job.output_path = output_uri
+                # Note: output_artifact_version_watermark is not touched as a document-version authority
+                uow.jobs.update_progress(job.id, job.processed_pages, job.api_switch_log, output_path=output_uri)
                 uow.jobs.save(job)
                 uow.jobs.update_status(job.id, JobStatus.DONE)
 
@@ -332,7 +346,7 @@ class JobExecutionService:
                         source_job_id=job.id,
                         prompt_id=job.pipeline2_prompt_id,
                         status=JobStatus.PENDING,
-                        input_path=output_handle.uri,
+                        input_path=output_uri,
                         api_chain=job.api_chain,
                         current_api_index=0,
                     )
@@ -341,7 +355,7 @@ class JobExecutionService:
                 uow.commit()
 
             self._publish_state_changed(job.id, JobStatus.PROCESSING, JobStatus.DONE)
-            self._publish_completed(job.id, output_handle.uri)
+            self._publish_completed(job.id, output_uri)
             return job
         finally:
             with self._lock:
@@ -402,6 +416,8 @@ class JobExecutionService:
             uow.pipeline2_jobs.update_status(p2_job.id, JobStatus.DONE)
             uow.commit()
 
+        p2_job.status = JobStatus.DONE
+        p2_job.output_path = output_handle.uri
         self._publish_completed(p2_job.source_job_id, output_handle.uri)
         return p2_job
 
@@ -490,7 +506,9 @@ class JobExecutionService:
     def _is_cancellation_requested(self, job_id: int) -> bool:
         with self.uow_factory.create() as uow:
             job = uow.jobs.get_by_id(job_id)
-            return bool(job and getattr(job, "cancel_requested", False) is True)
+            return bool(
+                job and (getattr(job, "cancel_requested", False) is True or job.status == JobStatus.CANCELLED)
+            )
 
     def _handle_cancellation(self, job: Job) -> Job:
         with self._lock:

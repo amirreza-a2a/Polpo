@@ -124,6 +124,15 @@ class DesktopAppContainer:
         self.quick_convert_service = QuickConvertService(self.uow_factory, self.ai_executor)
         self.job_query_service = JobQueryService(self.uow_factory)
 
+        self.crop_staging_service = CropArtifactStagingService(
+            base_dir=artifacts_dir,
+        )
+        self.document_publication_service = DocumentPublicationService(
+            uow_factory=self.uow_factory,
+            artifacts_dir=artifacts_dir,
+            staging_service=self.crop_staging_service,
+        )
+
         self.job_submission_service = JobSubmissionService(
             uow_factory=self.uow_factory,
             storage=self.storage,
@@ -137,6 +146,7 @@ class DesktopAppContainer:
             doc_processor=self.doc_processor,
             ai_executor=self.ai_executor,
             event_publisher=self.event_bus,
+            document_publication_service=self.document_publication_service,
         )
 
         self.job_recovery_service = JobRecoveryService(
@@ -166,15 +176,6 @@ class DesktopAppContainer:
         self.markdown_editor_service = MarkdownEditorService(
             uow_factory=self.uow_factory,
             storage=self.storage,
-        )
-
-        self.crop_staging_service = CropArtifactStagingService(
-            base_dir=artifacts_dir,
-        )
-        self.document_publication_service = DocumentPublicationService(
-            uow_factory=self.uow_factory,
-            artifacts_dir=artifacts_dir,
-            staging_service=self.crop_staging_service,
         )
 
         # 6. Desktop Concurrent Runtime & Persistent Scheduler

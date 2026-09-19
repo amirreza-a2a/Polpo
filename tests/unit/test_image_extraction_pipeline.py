@@ -378,7 +378,7 @@ class TestImageExtractionPipeline(unittest.TestCase):
             self.assertGreater(crop_path.stat().st_size, 1000)
 
         # 5. Verify final output markdown content contains all 4 distinct image tags
-        out_md_path = job_dir / f"output_{job_id}.md"
+        out_md_path = job_dir / f"output_{job_id}_v1.md"
         self.assertTrue(out_md_path.exists())
         final_md_text = out_md_path.read_text(encoding="utf-8")
 

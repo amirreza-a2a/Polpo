@@ -4,7 +4,7 @@
 
 **Blocked by:** 06: Crash-Consistent Document Publication Service.
 
-**Status:** ready-for-agent
+**Status:** complete
 
 ## Scope
 
@@ -54,13 +54,13 @@ job.output_path = record.output_path
 
 ## Acceptance Criteria
 
-- [ ] Pipeline 1 calls `DocumentPublicationService.publish_initial()` upon completing document conversion.
-- [ ] Completed job has `jobs.output_path` set to the canonical published URI.
-- [ ] `document_versions` has a row with `version = 1`, `integrity_status = 'VALID'`, and real SHA-256 matching the file.
-- [ ] Auto-Pipeline 2 trigger correctly picks up the published URI as `input_path`.
-- [ ] Cancellation checks before publication remain intact.
-- [ ] Pipeline 2 execution logic is not modified.
-- [ ] All existing pipeline execution tests pass or are updated to reflect the publication service delegation.
+- [x] Pipeline 1 calls `DocumentPublicationService.publish_initial()` upon completing document conversion.
+- [x] Completed job has `jobs.output_path` set to the canonical published URI.
+- [x] `document_versions` has a row with `version = 1`, `integrity_status = 'VALID'`, and real SHA-256 matching the file.
+- [x] Auto-Pipeline 2 trigger correctly picks up the published URI as `input_path`.
+- [x] Cancellation checks before publication remain intact.
+- [x] Pipeline 2 execution logic is not modified.
+- [x] All existing pipeline execution tests pass or are updated to reflect the publication service delegation.
 
 ## Tests Required
 

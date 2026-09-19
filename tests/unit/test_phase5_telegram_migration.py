@@ -323,14 +323,72 @@ class MockDonationRepo:
         return list(self.donations.values())
 
 
+class MockPublishIntentRepo:
+    def __init__(self):
+        self.intents = {}
+
+    def get_by_id(self, intent_id: str):
+        return self.intents.get(intent_id)
+
+    def get_by_job_id(self, job_id: int):
+        for it in self.intents.values():
+            if it.job_id == job_id:
+                return it
+        return None
+
+    def insert_intent(self, intent):
+        self.intents[intent.intent_id] = intent
+        return intent
+
+    def update_status(self, intent_id: str, status: str):
+        if intent_id in self.intents:
+            self.intents[intent_id].status = status
+
+    def update_intent_status(self, intent_id: str, status: str):
+        self.update_status(intent_id, status)
+
+    def delete_intent(self, intent_id: str):
+        self.intents.pop(intent_id, None)
+
+
+class MockDocumentVersionRepo:
+    def __init__(self):
+        self.versions = {}
+
+    def get_latest(self, job_id: int):
+        job_vers = [v for v in self.versions.values() if v.job_id == job_id]
+        if not job_vers:
+            return None
+        return max(job_vers, key=lambda v: v.version)
+
+    def get_latest_document_version(self, job_id: int):
+        return self.get_latest(job_id)
+
+    def insert_document_version(self, version_record, or_ignore: bool = False):
+        self.versions[(version_record.job_id, version_record.version)] = version_record
+        return version_record
+
+
 class MockUnitOfWork(IUnitOfWork):
-    def __init__(self, job_repo, p2_repo, user_repo, prompt_repo, api_repo, don_repo):
+    def __init__(
+        self,
+        job_repo,
+        p2_repo,
+        user_repo,
+        prompt_repo,
+        api_repo,
+        don_repo,
+        publish_intent_repo=None,
+        doc_version_repo=None,
+    ):
         self.jobs = job_repo
         self.pipeline2_jobs = p2_repo
         self.users = user_repo
         self.prompts = prompt_repo
         self.apis = api_repo
         self.donations = don_repo
+        self.publish_intents = publish_intent_repo or MockPublishIntentRepo()
+        self.document_versions = doc_version_repo or MockDocumentVersionRepo()
 
     def __enter__(self):
         return self
@@ -353,6 +411,8 @@ class MockUnitOfWorkFactory(IUnitOfWorkFactory):
         self.prompt_repo = MockPromptRepo()
         self.api_repo = MockApiRepo()
         self.don_repo = MockDonationRepo()
+        self.publish_intent_repo = MockPublishIntentRepo()
+        self.doc_version_repo = MockDocumentVersionRepo()
 
     def create(self) -> IUnitOfWork:
         return MockUnitOfWork(
@@ -362,6 +422,8 @@ class MockUnitOfWorkFactory(IUnitOfWorkFactory):
             self.prompt_repo,
             self.api_repo,
             self.don_repo,
+            self.publish_intent_repo,
+            self.doc_version_repo,
         )
 
 

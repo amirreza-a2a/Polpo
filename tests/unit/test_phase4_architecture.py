@@ -279,6 +279,8 @@ class TestApplicationServices(unittest.TestCase):
         self.mock_uow.jobs.claim_next_pending.side_effect = mock_claim
         self.mock_uow.jobs.get_next_pending.return_value = job
         self.mock_uow.jobs.get_by_id.return_value = job
+        self.mock_uow.publish_intents.get_by_job_id.return_value = None
+        self.mock_uow.document_versions.get_latest.return_value = None
 
         self.mock_doc_processor.render_page_to_jpeg.return_value = b"\xff\xd8\xff\xe0FakeJPEG"
         self.mock_doc_processor.extract_and_crop_images.return_value = ("Page text markdown", [("crop_1.jpg", b"CropData")])
