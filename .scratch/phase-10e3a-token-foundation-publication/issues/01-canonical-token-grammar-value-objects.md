@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** complete
 
 ## Scope
 
@@ -64,13 +64,13 @@ class VisualOccurrenceToken:
 
 ## Acceptance Criteria
 
-- [ ] `VisualOccurrenceToken` is frozen, hashable, and contains no mutable fields.
-- [ ] Canonical serialization produces exact CommonMark image syntax with title attribute.
-- [ ] Round-trip: `serialize(parse_fields(token_string))` produces a canonical form (not necessarily byte-identical to arbitrary source, but deterministic).
-- [ ] UUID validation rejects non-UUID4 strings.
-- [ ] Unicode, Persian characters, and escaped brackets/quotes in alt text are handled correctly.
-- [ ] Diagnostic classification enum covers all five categories.
-- [ ] All new tests pass. No existing tests broken.
+- [x] `VisualOccurrenceToken` is frozen, hashable, and contains no mutable fields.
+- [x] Canonical serialization produces exact CommonMark image syntax with title attribute.
+- [x] Round-trip: `serialize(parse_fields(token_string))` produces a canonical form (not necessarily byte-identical to arbitrary source, but deterministic).
+- [x] UUID validation rejects non-UUID4 strings.
+- [x] Unicode, Persian characters, and escaped brackets/quotes in alt text are handled correctly.
+- [x] Diagnostic classification enum covers all five categories.
+- [x] All new tests pass. No existing tests broken.
 
 ## Tests Required
 
