@@ -32,7 +32,6 @@ from application.services.api_key_service import ApiKeyService
 from application.services.settings_service import LocalSettingsService
 from application.services.prompt_service import PromptService
 from application.services.artifact_service import ArtifactService
-from application.services.apply_review_service import ApplyReviewService
 from application.services.document_viewer_service import DocumentViewerService
 from application.services.markdown_viewer_service import MarkdownViewerService
 from application.services.markdown_editor_service import MarkdownEditorService
@@ -153,12 +152,6 @@ class DesktopAppContainer:
         self.job_recovery_service = JobRecoveryService(
             uow_factory=self.uow_factory,
             event_publisher=self.event_bus,
-        )
-
-        self.apply_review_service = ApplyReviewService(
-            uow_factory=self.uow_factory,
-            storage=self.storage,
-            doc_processor=self.doc_processor,
         )
 
         self.document_viewer_service = DocumentViewerService(

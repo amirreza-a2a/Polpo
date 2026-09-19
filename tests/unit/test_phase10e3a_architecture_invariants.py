@@ -115,6 +115,7 @@ def test_ast_sole_active_runtime_publisher():
     comp_tree = ast.parse(comp_path.read_text(encoding="utf-8"))
 
     found_pub_service_instantiation = False
+    found_apply_review_service_instantiation = False
     job_exec_wires_pub_service = False
     editor_wires_pub_service = False
 
@@ -123,6 +124,8 @@ def test_ast_sole_active_runtime_publisher():
             func_id = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
             if func_id == "DocumentPublicationService":
                 found_pub_service_instantiation = True
+            elif func_id == "ApplyReviewService":
+                found_apply_review_service_instantiation = True
             elif func_id == "JobExecutionService":
                 for kw in node.keywords:
                     if kw.arg == "document_publication_service":
@@ -133,8 +136,32 @@ def test_ast_sole_active_runtime_publisher():
                         editor_wires_pub_service = True
 
     assert found_pub_service_instantiation, "DesktopAppContainer must instantiate DocumentPublicationService."
+    assert not found_apply_review_service_instantiation, "DesktopAppContainer must not instantiate quarantined ApplyReviewService."
     assert job_exec_wires_pub_service, "DesktopAppContainer must inject DocumentPublicationService into JobExecutionService."
     assert editor_wires_pub_service, "DesktopAppContainer must inject DocumentPublicationService into MarkdownEditorService."
+
+
+def test_ast_composition_container_omits_quarantined_apply_review_service():
+    """
+    Invariant: DesktopAppContainer in interfaces/desktop/composition.py omits
+    quarantined ApplyReviewService instantiation and imports.
+    """
+    comp_path = REPO_ROOT / "interfaces" / "desktop" / "composition.py"
+    comp_tree = ast.parse(comp_path.read_text(encoding="utf-8"))
+
+    for node in ast.walk(comp_tree):
+        if isinstance(node, ast.Call):
+            func_id = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            assert func_id != "ApplyReviewService", (
+                f"Found forbidden ApplyReviewService call node at line {node.lineno} in composition.py"
+            )
+
+    for node in ast.walk(comp_tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                assert alias.name != "ApplyReviewService", (
+                    f"Found forbidden ApplyReviewService import at line {node.lineno} in composition.py"
+                )
 
 
 class _CanonicalStoreVisitor(ast.NodeVisitor):

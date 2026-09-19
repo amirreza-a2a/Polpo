@@ -31,7 +31,8 @@ class ApplyReviewService:
     """
     [QUARANTINED LEGACY SERVICE EXCEPTION]
     This service contains legacy direct canonical Markdown writing logic and is quarantined
-    from runtime execution in Phase 10E.3a. It is disconnected at the desktop composition level.
+    from runtime execution in Phase 10E.3a. It is omitted from active desktop presentation
+    wiring in app.py:237.
     Formal replacement/removal scheduled for Phase 10E.3b.
 
     Application Service implementing the Recoverable Immutable Staging and Re-crop Engine.

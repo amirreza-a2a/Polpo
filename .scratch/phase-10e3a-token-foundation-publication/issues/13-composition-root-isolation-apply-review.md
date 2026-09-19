@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** complete
 
 ## Scope & Boundary
 
@@ -25,10 +25,10 @@
 
 ## Acceptance Criteria
 
-- [ ] `DesktopAppContainer` in `composition.py` does not instantiate or retain `ApplyReviewService`.
-- [ ] `ApplyReviewService` class docstring accurately documents that quarantine disconnection happens at presentation controller wiring in `app.py:237`.
-- [ ] Static AST invariant tests pass with the tightened assertion verifying zero `ApplyReviewService` instantiation in `composition.py`.
-- [ ] All desktop bootstrap and container tests pass cleanly.
+- [x] `DesktopAppContainer` in `composition.py` does not instantiate or retain `ApplyReviewService`.
+- [x] `ApplyReviewService` class docstring accurately documents that quarantine disconnection happens at presentation controller wiring in `app.py:237`.
+- [x] Static AST invariant tests pass with the tightened assertion verifying zero `ApplyReviewService` instantiation in `composition.py`.
+- [x] All desktop bootstrap and container tests pass cleanly.
 
 ## Tests Required
 
