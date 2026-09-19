@@ -1,26 +1,20 @@
-# ── Telegram Bot ──────────────────────────────────────────────────────
+# ── Telegram Bot (Frozen Legacy Transport) ────────────────────────────
 python-telegram-bot==21.5
 
-# ── PDF Processing ─────────────────────────────────────────────────────
+# ── Document & PDF Processing ─────────────────────────────────────────
 PyMuPDF==1.24.10
-
-# ── Image Processing ───────────────────────────────────────────────────
 Pillow==10.4.0
+markdown-it-py>=3.0.0
 
 # ── AI APIs ────────────────────────────────────────────────────────────
-google-genai==1.16.1          # 1.16.0 was yanked by PyPI; 1.16.1 is the stable patch
-openai==1.82.0                # ⚠️ در requirements قدیمی نبود ولی در کد هست
+google-genai==1.16.1
+openai==1.82.0
 
-# ── Database ───────────────────────────────────────────────────────────
+# ── Database (Legacy Transport Only) ──────────────────────────────────
 PyMySQL==1.1.1
 
-# ── Async Helper ───────────────────────────────────────────────────────
-nest-asyncio==1.6.0           # ⚠️ در requirements قدیمی نبود ولی در backup.py هست
-
-# ── Configuration & Secrets ────────────────────────────────────────────
+# ── Configuration & Environment ────────────────────────────────────────
 python-dotenv==1.0.1
-
-# ── Data Validation (dependency داخلی python-telegram-bot) ─────────────
 pydantic==2.13.5
 
 # ── Desktop Presentation & Security (Embedded Serverless Desktop) ──────
