@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import re
 from typing import Dict, List, Optional, Set, Tuple
 from interfaces.desktop.qt_compat import Property, QObject, Signal, Slot
-from application.dtos.merge_dto import ConflictHunkDTO, MergeAnalysisResultDTO
+from application.dto.merge_dto import ConflictHunkDTO, MergeAnalysisResultDTO
 
 
 @dataclass(frozen=True)

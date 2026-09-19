@@ -7,7 +7,7 @@ import os
 from unittest.mock import MagicMock
 import pytest
 
-from application.dtos.merge_dto import MergeAnalysisResultDTO
+from application.dto.merge_dto import MergeAnalysisResultDTO
 from application.services.markdown_merge_service import MarkdownMergeService
 from application.services.markdown_viewer_service import MarkdownViewerService
 from core.entities.artifact import ArtifactType

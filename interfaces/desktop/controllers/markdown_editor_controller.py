@@ -7,7 +7,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional, Tuple
 
-from application.dtos.merge_dto import MergeAnalysisResultDTO
+from application.dto.merge_dto import MergeAnalysisResultDTO
 from application.services.markdown_editor_service import MarkdownEditorService
 from application.services.markdown_merge_service import MarkdownMergeService
 from core.exceptions.domain_exceptions import StaleDocumentVersionError

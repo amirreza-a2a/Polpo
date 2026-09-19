@@ -7,7 +7,7 @@ import html
 import re
 from typing import List
 
-from application.dtos.merge_dto import ConflictHunkDTO, MergeAnalysisResultDTO
+from application.dto.merge_dto import ConflictHunkDTO, MergeAnalysisResultDTO
 from application.ports.storage import IArtifactStorage
 from application.ports.unit_of_work import IUnitOfWorkFactory
 from application.services.markdown_viewer_service import MarkdownViewerService

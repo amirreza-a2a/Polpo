@@ -6,7 +6,7 @@
 from typing import Optional, Sequence
 import pytest
 
-from application.dtos.merge_dto import ConflictHunkDTO, MergeAnalysisResultDTO
+from application.dto.merge_dto import ConflictHunkDTO, MergeAnalysisResultDTO
 from interfaces.desktop.models.conflict_session import ConflictSession
 
 

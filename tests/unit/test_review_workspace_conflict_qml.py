@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 import pytest
 
-from application.dtos.merge_dto import ConflictHunkDTO, MergeAnalysisResultDTO
+from application.dto.merge_dto import ConflictHunkDTO, MergeAnalysisResultDTO
 from interfaces.desktop.app import create_app
 from interfaces.desktop.controllers.markdown_editor_controller import MarkdownEditorController
 from interfaces.desktop.controllers.markdown_viewer_controller import MarkdownViewerController
