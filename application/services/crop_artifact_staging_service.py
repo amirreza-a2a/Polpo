@@ -27,7 +27,11 @@ class CropArtifactStagingService:
 
     def __init__(self, base_dir: Optional[Path] = None):
         if base_dir:
-            self.base_dir = Path(base_dir).resolve()
+            resolved = Path(base_dir).resolve()
+            if resolved.name != ".staging":
+                self.base_dir = (resolved / ".staging").resolve()
+            else:
+                self.base_dir = resolved
         else:
             self.base_dir = _DEFAULT_STAGING_DIR.resolve()
         self.base_dir.mkdir(parents=True, exist_ok=True)

@@ -59,7 +59,7 @@ class DocumentPublicationService:
         self.uow_factory = uow_factory
         self.artifacts_dir = Path(artifacts_dir).resolve()
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
-        self.staging_service = staging_service or CropArtifactStagingService(self.artifacts_dir)
+        self.staging_service = staging_service or CropArtifactStagingService(self.artifacts_dir / ".staging")
 
     def publish_initial(
         self,

@@ -80,7 +80,8 @@ class DesktopAppContainer:
             if vault_path is None:
                 vault_path = db_path.parent / "credentials.enc"
 
-        Path(artifacts_dir).mkdir(parents=True, exist_ok=True)
+        artifacts_dir = Path(artifacts_dir).resolve()
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
 
         # 2. Persistence & Security Infrastructure
         self.db_manager = SQLiteDatabaseManager(db_path)
@@ -125,7 +126,7 @@ class DesktopAppContainer:
         self.job_query_service = JobQueryService(self.uow_factory)
 
         self.crop_staging_service = CropArtifactStagingService(
-            base_dir=artifacts_dir,
+            base_dir=artifacts_dir / ".staging",
         )
         self.document_publication_service = DocumentPublicationService(
             uow_factory=self.uow_factory,

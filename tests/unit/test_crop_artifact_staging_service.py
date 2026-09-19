@@ -156,3 +156,14 @@ def test_staging_parameter_validations(staging_service: CropArtifactStagingServi
 
 def test_staging_idempotent_discard(staging_service: CropArtifactStagingService):
     staging_service.discard_staging("non-existent-session-id")
+
+
+def test_staging_base_dir_always_resolves_to_dot_staging(tmp_path: Path):
+    """Verifies that base_dir always resolves to a .staging subfolder for filesystem isolation."""
+    svc1 = CropArtifactStagingService(base_dir=tmp_path)
+    assert svc1.base_dir.name == ".staging"
+    assert svc1.base_dir == tmp_path / ".staging"
+
+    svc2 = CropArtifactStagingService(base_dir=tmp_path / ".staging")
+    assert svc2.base_dir.name == ".staging"
+    assert svc2.base_dir == tmp_path / ".staging"

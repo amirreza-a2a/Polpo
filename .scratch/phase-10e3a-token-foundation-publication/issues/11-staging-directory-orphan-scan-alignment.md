@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** complete
 
 ## Scope & Boundary
 
@@ -29,10 +29,10 @@
 
 ## Acceptance Criteria
 
-- [ ] All staged crops and staging directories are stored strictly under `<artifacts_dir>/.staging/<staging_id>/` (never bare `<artifacts_dir>/<staging_id>/`).
-- [ ] `DocumentPublicationService._scan_orphan_staging()` successfully discovers and purges uncommitted staging directories older than 24 hours created by the real `CropArtifactStagingService`.
-- [ ] Promotion of staged crops to the permanent job artifact directory (`<artifacts_dir>/job_{id}/...`) during `publish_version()` continues to function cleanly.
-- [ ] Pre-fix staging directories directly under `<artifacts_dir>/` are documented as an accepted non-migrated risk with zero runtime crash impact.
+- [x] All staged crops and staging directories are stored strictly under `<artifacts_dir>/.staging/<staging_id>/` (never bare `<artifacts_dir>/<staging_id>/`).
+- [x] `DocumentPublicationService._scan_orphan_staging()` successfully discovers and purges uncommitted staging directories older than 24 hours created by the real `CropArtifactStagingService`.
+- [x] Promotion of staged crops to the permanent job artifact directory (`<artifacts_dir>/job_{id}/...`) during `publish_version()` continues to function cleanly.
+- [x] Pre-fix staging directories directly under `<artifacts_dir>/` are documented as an accepted non-migrated risk with zero runtime crash impact.
 
 ## Tests Required
 

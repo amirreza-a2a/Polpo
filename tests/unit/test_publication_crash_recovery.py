@@ -414,3 +414,43 @@ def test_staging_orphan_scan(pub_service: DocumentPublicationService, tmp_path: 
     # Old dir is pruned; fresh dir is kept
     assert not old_dir.exists()
     assert fresh_dir.exists()
+
+
+def test_staging_directory_under_dot_staging_and_orphan_scanner_discovers_it(
+    pub_service: DocumentPublicationService, tmp_path: Path
+):
+    """
+    Ticket 11 Regression Test:
+    Stage a crop using CropArtifactStagingService wired via artifacts_dir / ".staging",
+    assert that the resulting file path is located within <artifacts_dir>/.staging/<staging_id>/,
+    artificially age the staging directory (st_mtime > 25 hours),
+    invoke reconcile_startup_intents(), and assert that the orphan directory is removed cleanly.
+    """
+    artifacts_dir = tmp_path / "artifacts"
+    staging_svc = pub_service.staging_service
+
+    staging_id = "orphan-aged-staging-session"
+    handle = staging_svc.stage_crop(
+        job_id=99,
+        staging_id=staging_id,
+        region_id="reg-orphan",
+        version=1,
+        image_bytes=b"staged-orphan-crop-data",
+    )
+
+    staged_file = Path(handle.staging_path)
+    assert staged_file.is_file()
+    # Assert staged file is strictly inside <artifacts_dir>/.staging/<staging_id>/
+    expected_staging_dir = (artifacts_dir / ".staging" / staging_id).resolve()
+    assert staged_file.parent.resolve() == expected_staging_dir
+    assert ".staging" in staged_file.parts
+
+    # Artificially age the staging directory by setting mtime to 30 hours ago
+    old_mtime = time.time() - (30 * 3600)
+    os.utime(expected_staging_dir, (old_mtime, old_mtime))
+
+    # Run startup reconciliation without active intents
+    pub_service.reconcile_startup_intents()
+
+    # The orphan staging directory must be cleanly removed
+    assert not expected_staging_dir.exists()
