@@ -29,6 +29,11 @@ from core.markdown import capture_canonical_markdown_snapshot, parse_canonical_m
 
 class ApplyReviewService:
     """
+    [QUARANTINED LEGACY SERVICE EXCEPTION]
+    This service contains legacy direct canonical Markdown writing logic and is quarantined
+    from runtime execution in Phase 10E.3a. It is disconnected at the desktop composition level.
+    Formal replacement/removal scheduled for Phase 10E.3b.
+
     Application Service implementing the Recoverable Immutable Staging and Re-crop Engine.
     Coordinates on-demand page raster rendering, bounding box coordinate cropping,
     immutable versioned artifact staging, canonical Markdown document regeneration,

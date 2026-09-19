@@ -4,7 +4,7 @@
 
 **Blocked by:** 02: Lossless Character-Level Micro-Lexer (FSM), 07: Desktop Bootstrap Integration (Backfill + Reconciliation Wiring), 08: Writer Migration — Pipeline 1 Initial Document, 09: Writer Migration — MarkdownEditorService.
 
-**Status:** ready-for-agent
+**Status:** complete
 
 ## Scope
 
@@ -43,13 +43,13 @@
 
 ## Acceptance Criteria
 
-- [ ] AST test passes: `DocumentPublicationService` contains zero references to `output_artifact_version_watermark`.
-- [ ] AST test passes: `DocumentPublicationService` contains zero references to `active_markdown_version`.
-- [ ] AST test passes: `DocumentViewerController` in `app.py` is constructed with `apply_review_service=None`.
-- [ ] AST test passes: `ApplyReviewService` is the only source file outside `DocumentPublicationService` containing direct canonical Markdown writes, tagged as quarantined legacy exception.
-- [ ] E2E tests pass: initial publication, sequential version increments, OCC collision rejection, and all 6 crash recovery scenarios.
-- [ ] `git diff --check HEAD~10..HEAD` passes cleanly for all Phase 10E.3a commits.
-- [ ] Full project test suite passes with zero failures.
+- [x] AST test passes: `DocumentPublicationService` contains zero references to `output_artifact_version_watermark`.
+- [x] AST test passes: `DocumentPublicationService` contains zero references to `active_markdown_version`.
+- [x] AST test passes: `DocumentViewerController` in `app.py` is constructed with `apply_review_service=None`.
+- [x] AST test passes: `ApplyReviewService` is the only source file outside `DocumentPublicationService` containing direct canonical Markdown writes, tagged as quarantined legacy exception.
+- [x] E2E tests pass: initial publication, sequential version increments, OCC collision rejection, and all 6 crash recovery scenarios.
+- [x] `git diff --check HEAD~10..HEAD` passes cleanly for all Phase 10E.3a commits.
+- [x] Full project test suite passes with zero failures.
 
 ## Tests Required
 
