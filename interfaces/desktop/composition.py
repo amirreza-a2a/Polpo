@@ -176,6 +176,7 @@ class DesktopAppContainer:
         self.markdown_editor_service = MarkdownEditorService(
             uow_factory=self.uow_factory,
             storage=self.storage,
+            document_publication_service=self.document_publication_service,
         )
 
         # 6. Desktop Concurrent Runtime & Persistent Scheduler

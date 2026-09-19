@@ -1,20 +1,19 @@
 # ============================================================
 #  application/services/markdown_editor_service.py
-#  Phase 10F.1 — Markdown Editor Service
+#  Phase 10E.3a: Migrated to Publication Authority (Ticket 10E.3a-09)
 # ============================================================
 
 import os
-from datetime import datetime, timezone
 from typing import Optional, Tuple
 
 from application.ports.storage import IArtifactStorage
 from application.ports.unit_of_work import IUnitOfWorkFactory
+from application.services.document_publication_service import DocumentPublicationService
 from core.entities.artifact import ArtifactHandle, ArtifactType, StorageBackendType
 from core.exceptions.domain_exceptions import (
     ArtifactNotFoundError,
     DomainError,
     EntityNotFoundError,
-    StaleDocumentVersionError,
 )
 from core.markdown import capture_canonical_markdown_snapshot, parse_canonical_markdown_version
 
@@ -22,12 +21,27 @@ from core.markdown import capture_canonical_markdown_snapshot, parse_canonical_m
 class MarkdownEditorService:
     """
     Application service for raw Markdown document loading and optimistic concurrency-controlled saving.
-    Interacts exclusively with application ports (IUnitOfWorkFactory, IArtifactStorage) and core domain entities.
+    Delegates document publication and OCC authority exclusively to DocumentPublicationService.
     """
 
-    def __init__(self, uow_factory: IUnitOfWorkFactory, storage: IArtifactStorage):
+    def __init__(
+        self,
+        uow_factory: IUnitOfWorkFactory,
+        storage: IArtifactStorage,
+        document_publication_service: Optional[DocumentPublicationService] = None,
+    ):
         self.uow_factory = uow_factory
         self.storage = storage
+
+        if document_publication_service is not None:
+            self.document_publication_service: Optional[DocumentPublicationService] = document_publication_service
+        elif hasattr(storage, "base_dir"):
+            self.document_publication_service = DocumentPublicationService(
+                uow_factory=self.uow_factory,
+                artifacts_dir=getattr(storage, "base_dir", "."),
+            )
+        else:
+            self.document_publication_service = None
 
     def load_source_text(self, job_id: int) -> Tuple[str, int]:
         """
@@ -41,11 +55,28 @@ class MarkdownEditorService:
             if not job:
                 raise EntityNotFoundError("Job", job_id)
             output_path = job.output_path
+            latest_doc = None
+            if hasattr(uow, "document_versions"):
+                latest_doc = uow.document_versions.get_latest(job_id)
 
         if not output_path:
             return ("", 0)
 
-        snapshot = capture_canonical_markdown_snapshot(output_path)
+        # Reconcile legacy job into document_versions if needed
+        path_version = parse_canonical_markdown_version(output_path)
+        if latest_doc is None or (path_version > 0 and path_version > latest_doc.version):
+            from application.services.legacy_document_backfill import backfill_legacy_document_versions
+            backfill_legacy_document_versions(self.uow_factory)
+            with self.uow_factory.create() as uow:
+                if hasattr(uow, "document_versions"):
+                    latest_doc = uow.document_versions.get_latest(job_id)
+
+        if latest_doc:
+            active_version = latest_doc.version
+        else:
+            snapshot = capture_canonical_markdown_snapshot(output_path)
+            active_version = snapshot.active_version
+
         handle = ArtifactHandle(
             storage_backend=StorageBackendType.LOCAL_FS,
             uri=output_path,
@@ -56,89 +87,73 @@ class MarkdownEditorService:
 
         try:
             data = self.storage.retrieve(handle)
-            return (data.decode("utf-8"), snapshot.active_version)
+            return (data.decode("utf-8"), active_version)
         except (ArtifactNotFoundError, DomainError, OSError, IOError):
             return ("", 0)
 
-    def commit_source_text(self, job_id: int, raw_text: str, base_version: int) -> int:
+    def commit_source_text(
+        self,
+        job_id: int,
+        raw_text: Optional[str] = None,
+        base_version: int = 0,
+        new_text: Optional[str] = None,
+    ) -> int:
         """
-        Persists raw Markdown text as an immutable new versioned artifact under strict OCC.
-        Watermark allocation and final pointer commit are executed under atomic transactions.
+        Commits user-edited Markdown text by delegating to DocumentPublicationService.publish_version().
+        Enforces optimistic concurrency control (OCC) against document_versions.
+        Returns the newly published document version integer.
 
         Args:
             job_id: The job ID whose document is being saved.
             raw_text: The user-edited raw Markdown string.
-            base_version: The version number the editor started editing from.
+            base_version: The base document version the editor started editing from.
+            new_text: Optional alias for raw_text.
 
         Returns:
-            int: The new canonical document version committed.
+            int: The newly published canonical document version.
 
         Raises:
-            StaleDocumentVersionError: If concurrent edits modified the active document version.
+            StaleDocumentVersionError: If base_version does not match current document version.
+            CanonicalDocumentIntegrityError: If document is quarantined.
+            PublicationInProgressError: If publication intent is already in progress.
             EntityNotFoundError: If the job does not exist.
-            DomainError: If pre-commit file validation fails.
         """
-        # 1. Durable Watermark Reservation & OCC Check 1 (BEGIN IMMEDIATE)
+        if self.document_publication_service is None:
+            raise RuntimeError("DocumentPublicationService is required for document publication.")
+
+        text_to_save = raw_text if raw_text is not None else (new_text if new_text is not None else "")
+
+        # Reconcile legacy job into document_versions if needed
         with self.uow_factory.create() as uow:
-            uow.begin_immediate()
             job = uow.jobs.get_by_id(job_id)
             if not job:
                 raise EntityNotFoundError("Job", job_id)
+            latest_doc = None
+            if hasattr(uow, "document_versions"):
+                latest_doc = uow.document_versions.get_latest(job_id)
 
-            current_snapshot = capture_canonical_markdown_snapshot(job.output_path)
-            if current_snapshot.active_version != base_version:
-                raise StaleDocumentVersionError(
-                    job_id=job_id,
-                    base_version=base_version,
-                    current_version=current_snapshot.active_version,
-                    message=(
-                        f"Cannot save markdown: document was modified concurrently before watermark reservation "
-                        f"(base v{base_version} vs current v{current_snapshot.active_version})"
-                    ),
-                )
+        if job.output_path:
+            path_version = parse_canonical_markdown_version(job.output_path)
+            if latest_doc is None or (path_version > 0 and path_version > latest_doc.version):
+                from application.services.legacy_document_backfill import backfill_legacy_document_versions
+                backfill_legacy_document_versions(self.uow_factory)
+                with self.uow_factory.create() as uow:
+                    if hasattr(uow, "document_versions"):
+                        latest_doc = uow.document_versions.get_latest(job_id)
 
-            target_version = max(job.output_artifact_version_watermark, current_snapshot.active_version) + 1
-            job.output_artifact_version_watermark = target_version
-            uow.jobs.save(job)
-            uow.commit()
+        if base_version == 0 and latest_doc is None:
+            record = self.document_publication_service.publish_initial(
+                job_id=job_id,
+                markdown_text=text_to_save,
+                published_by="MARKDOWN_EDITOR",
+            )
+            return record.version
 
-        # 2. Stage immutable new artifact to storage
-        filename = f"output_{job_id}_v{target_version}.md"
-        data_bytes = raw_text.encode("utf-8")
-        output_handle = self.storage.store(
+        record = self.document_publication_service.publish_version(
             job_id=job_id,
-            artifact_type=ArtifactType.OUTPUT_MARKDOWN,
-            filename=filename,
-            data=data_bytes,
-            mime_type="text/markdown",
+            base_version=base_version,
+            markdown_text=text_to_save,
+            staged_crops=[],
+            published_by="MARKDOWN_EDITOR",
         )
-
-        # 3. Pre-Commit Validation: Assert newly staged artifact genuinely exists on disk
-        if not self.storage.exists(output_handle):
-            raise DomainError(f"Pre-commit invariant failed: Staged markdown '{filename}' missing from disk.")
-
-        # 4. Final OCC Check 2 & SQLite Pointer Commit (BEGIN IMMEDIATE)
-        with self.uow_factory.create() as uow:
-            uow.begin_immediate()
-            job_record = uow.jobs.get_by_id(job_id)
-            if not job_record:
-                raise EntityNotFoundError("Job", job_id)
-
-            final_snapshot = capture_canonical_markdown_snapshot(job_record.output_path)
-            if final_snapshot.active_version != base_version:
-                raise StaleDocumentVersionError(
-                    job_id=job_id,
-                    base_version=base_version,
-                    current_version=final_snapshot.active_version,
-                    message=(
-                        f"Cannot save markdown: document was modified concurrently before final pointer commit "
-                        f"(base v{base_version} vs current v{final_snapshot.active_version})"
-                    ),
-                )
-
-            job_record.output_path = output_handle.uri
-            job_record.updated_at = datetime.now(timezone.utc)
-            uow.jobs.save(job_record)
-            uow.commit()
-
-        return target_version
+        return record.version

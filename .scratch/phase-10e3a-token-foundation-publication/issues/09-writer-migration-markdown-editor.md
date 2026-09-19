@@ -4,7 +4,7 @@
 
 **Blocked by:** 06: Crash-Consistent Document Publication Service.
 
-**Status:** ready-for-agent
+**Status:** complete
 
 ## Scope
 
@@ -56,13 +56,13 @@ def commit_source_text(self, job_id: int, new_text: str, base_version: int) -> i
 
 ## Acceptance Criteria
 
-- [ ] `commit_source_text()` delegates publication to `DocumentPublicationService.publish_version()`.
-- [ ] Successful edit advances document version ($v \to v+1$) and records a row in `document_versions`.
-- [ ] Concurrent modification raises `StaleDocumentVersionError` when `base_version` does not match the latest `document_versions` row.
-- [ ] Quarantined documents raise `CanonicalDocumentIntegrityError`.
-- [ ] In-flight publication raises `PublicationInProgressError`.
-- [ ] Direct calls to `self.storage.store()` and direct SQLite updates in `commit_source_text()` are removed.
-- [ ] All existing editor service tests pass or are updated to reflect publication service delegation.
+- [x] `commit_source_text()` delegates publication to `DocumentPublicationService.publish_version()`.
+- [x] Successful edit advances document version ($v \to v+1$) and records a row in `document_versions`.
+- [x] Concurrent modification raises `StaleDocumentVersionError` when `base_version` does not match the latest `document_versions` row.
+- [x] Quarantined documents raise `CanonicalDocumentIntegrityError`.
+- [x] In-flight publication raises `PublicationInProgressError`.
+- [x] Direct calls to `self.storage.store()` and direct SQLite updates in `commit_source_text()` are removed.
+- [x] All existing editor service tests pass or are updated to reflect publication service delegation.
 
 ## Tests Required
 
