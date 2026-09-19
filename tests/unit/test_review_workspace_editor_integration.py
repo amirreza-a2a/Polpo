@@ -445,6 +445,9 @@ def test_qml_editor_pane_save_activation_and_shortcut(qapp, workspace_env):
         job_id = job.id
         uow.commit()
 
+    from application.services.legacy_document_backfill import backfill_legacy_document_versions
+    backfill_legacy_document_versions(uow_factory)
+
     md_editor_ctrl.load_source_sync(job_id)
 
     engine = QQmlApplicationEngine()

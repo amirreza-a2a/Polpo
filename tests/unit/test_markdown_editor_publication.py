@@ -275,11 +275,13 @@ def test_editor_commit_in_flight_intent_rejected(pub_editor_env):
 def test_editor_load_source_text_backfills_legacy_job(pub_editor_env):
     """
     Verifies that a legacy job with an output_path but no document_versions row
-    is automatically backfilled on load_source_text, allowing subsequent commit.
+    can be read without mutating document_versions, and is backfilled during
+    startup bootstrap before editing.
     """
     uow_factory = pub_editor_env["uow_factory"]
     storage = pub_editor_env["storage"]
     editor_service = pub_editor_env["editor_service"]
+    pub_service = pub_editor_env["pub_service"]
     prompt_id = pub_editor_env["prompt_id"]
 
     with uow_factory.create() as uow:
@@ -303,10 +305,17 @@ def test_editor_load_source_text_backfills_legacy_job(pub_editor_env):
         uow.jobs.save(job)
         uow.commit()
 
-    # Load source text triggers idempotent backfill
+    # 1. Load source text before bootstrap backfill: reads version without mutating document_versions
     text, version = editor_service.load_source_text(job.id)
     assert text == content
     assert version == 1
+
+    with uow_factory.create() as uow:
+        latest = uow.document_versions.get_latest(job.id)
+        assert latest is None, "load_source_text must not mutate database or run inline backfill"
+
+    # 2. Application bootstrap backfill runs (as in DesktopAppContainer.initialize())
+    pub_service.backfill_legacy_document_versions()
 
     # Verify document_versions now has a valid v1 record
     with uow_factory.create() as uow:
@@ -315,6 +324,46 @@ def test_editor_load_source_text_backfills_legacy_job(pub_editor_env):
         assert latest.version == 1
         assert latest.integrity_status == "VALID"
 
-    # Subsequent edit to v2 succeeds cleanly
+    # 3. Subsequent edit to v2 succeeds cleanly
     new_v = editor_service.commit_source_text(job.id, "# Legacy Markdown V2\nUpdated.", base_version=1)
     assert new_v == 2
+
+
+def test_editor_service_does_not_trigger_global_backfill(pub_editor_env):
+    """
+    Verifies that MarkdownEditorService.load_source_text() and commit_source_text()
+    never trigger backfill_legacy_document_versions() or full-table database scans.
+    """
+    from unittest.mock import patch
+
+    uow_factory = pub_editor_env["uow_factory"]
+    pub_service = pub_editor_env["pub_service"]
+    editor_service = pub_editor_env["editor_service"]
+    prompt_id = pub_editor_env["prompt_id"]
+
+    with uow_factory.create() as uow:
+        job = uow.jobs.save(
+            Job(
+                id=None,
+                file_name="nobackfill.pdf",
+                file_path="file:///nobackfill.pdf",
+                total_pages=1,
+                prompt_id=prompt_id,
+                status=JobStatus.DONE,
+            )
+        )
+        uow.commit()
+
+    pub_service.publish_initial(job.id, "# Title\nInitial text.", published_by="PIPELINE_1")
+
+    with patch(
+        "application.services.legacy_document_backfill.backfill_legacy_document_versions"
+    ) as mock_backfill:
+        text, version = editor_service.load_source_text(job.id)
+        assert text == "# Title\nInitial text."
+        assert version == 1
+        assert mock_backfill.call_count == 0
+
+        new_v = editor_service.commit_source_text(job.id, "# Title\nUpdated text.", base_version=1)
+        assert new_v == 2
+        assert mock_backfill.call_count == 0

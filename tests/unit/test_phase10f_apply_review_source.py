@@ -221,6 +221,9 @@ def test_race_a_editor_commits_before_apply_reservation_rejects_apply(apply_env)
         )
         uow.commit()
 
+    from application.services.legacy_document_backfill import backfill_legacy_document_versions
+    backfill_legacy_document_versions(uow_factory)
+
     apply_service = ApplyReviewService(uow_factory=uow_factory, storage=storage, doc_processor=doc_proc)
     editor_service = MarkdownEditorService(uow_factory=uow_factory, storage=storage)
 
@@ -308,6 +311,9 @@ def test_race_b_editor_commits_during_apply_staging_rejects_apply(apply_env):
             )
         )
         uow.commit()
+
+    from application.services.legacy_document_backfill import backfill_legacy_document_versions
+    backfill_legacy_document_versions(uow_factory)
 
     apply_service = ApplyReviewService(uow_factory=uow_factory, storage=storage, doc_processor=doc_proc)
     editor_service = MarkdownEditorService(uow_factory=uow_factory, storage=storage)

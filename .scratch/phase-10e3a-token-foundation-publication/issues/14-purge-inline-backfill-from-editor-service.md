@@ -4,7 +4,7 @@
 
 **Blocked by:** 13: Composition Root Isolation & Quarantine Docstring Precision for ApplyReviewService.
 
-**Status:** ready-for-agent
+**Status:** complete
 
 ## Scope & Boundary
 
@@ -27,11 +27,11 @@
 
 ## Acceptance Criteria
 
-- [ ] Confirmed via `composition.py:initialize()` that bootstrap-level backfill runs before the app becomes usable, making the inline per-request calls in `MarkdownEditorService` strictly redundant.
-- [ ] `load_source_text()` and `commit_source_text()` never trigger `backfill_legacy_document_versions()` or multi-job database scans.
-- [ ] Inline imports of `legacy_document_backfill` are completely removed from `markdown_editor_service.py`.
-- [ ] Single-job optimistic concurrency control and version advancement remain fully functional without global scans.
-- [ ] Legacy document backfill continues to execute deterministically during startup bootstrap via `DesktopAppContainer.initialize()`.
+- [x] Confirmed via `composition.py:initialize()` that bootstrap-level backfill runs before the app becomes usable, making the inline per-request calls in `MarkdownEditorService` strictly redundant.
+- [x] `load_source_text()` and `commit_source_text()` never trigger `backfill_legacy_document_versions()` or multi-job database scans.
+- [x] Inline imports of `legacy_document_backfill` are completely removed from `markdown_editor_service.py`.
+- [x] Single-job optimistic concurrency control and version advancement remain fully functional without global scans.
+- [x] Legacy document backfill continues to execute deterministically during startup bootstrap via `DesktopAppContainer.initialize()`.
 
 ## Tests Required
 

@@ -184,6 +184,16 @@ def test_commit_source_text_success_advances_version_immutably(editor_env):
                 output_path=out_v2.uri,
             )
         )
+        uow.document_versions.insert_document_version(
+            DocumentVersionRecord(
+                job_id=job.id,
+                version=2,
+                output_path=out_v2.uri,
+                sha256=hashlib.sha256(v2_content.encode("utf-8")).hexdigest(),
+                integrity_status="VALID",
+                published_by="TEST",
+            )
+        )
         uow.commit()
 
     service = MarkdownEditorService(uow_factory=uow_factory, storage=storage)
@@ -225,6 +235,16 @@ def test_commit_source_text_occ1_rejection(editor_env):
                 status=JobStatus.DONE,
                 output_path=out_v3.uri,
                 output_artifact_version_watermark=3,
+            )
+        )
+        uow.document_versions.insert_document_version(
+            DocumentVersionRecord(
+                job_id=job.id,
+                version=3,
+                output_path=out_v3.uri,
+                sha256=hashlib.sha256(b"# V3").hexdigest(),
+                integrity_status="VALID",
+                published_by="TEST",
             )
         )
         uow.commit()

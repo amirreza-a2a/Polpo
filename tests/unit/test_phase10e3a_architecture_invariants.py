@@ -164,6 +164,48 @@ def test_ast_composition_container_omits_quarantined_apply_review_service():
                 )
 
 
+def test_ast_markdown_editor_service_omits_inline_backfill():
+    """
+    Invariant: MarkdownEditorService omits inline backfill_legacy_document_versions
+    imports and calls. Backfill belongs strictly to application startup bootstrap.
+    Enforces that neither ImportFrom nor Import can reference legacy_document_backfill.
+    """
+    editor_path = REPO_ROOT / "application" / "services" / "markdown_editor_service.py"
+    editor_tree = ast.parse(editor_path.read_text(encoding="utf-8"))
+
+    for node in ast.walk(editor_tree):
+        if isinstance(node, ast.Call):
+            func_id = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            assert func_id != "backfill_legacy_document_versions", (
+                f"Found forbidden backfill_legacy_document_versions call node at line {node.lineno} in markdown_editor_service.py"
+            )
+
+        elif isinstance(node, ast.ImportFrom):
+            module_name = node.module or ""
+            assert "legacy_document_backfill" not in module_name, (
+                f"Found forbidden legacy_document_backfill ImportFrom at line {node.lineno} in markdown_editor_service.py"
+            )
+            for alias in node.names:
+                assert (
+                    alias.name != "backfill_legacy_document_versions"
+                    and alias.name != "legacy_document_backfill"
+                ), (
+                    f"Found forbidden legacy_document_backfill import alias '{alias.name}' at line {node.lineno} in markdown_editor_service.py"
+                )
+
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                mod_name = alias.name or ""
+                assert (
+                    mod_name != "application.services.legacy_document_backfill"
+                    and not mod_name.endswith(".legacy_document_backfill")
+                    and mod_name != "legacy_document_backfill"
+                ), (
+                    f"Found forbidden legacy_document_backfill Import '{mod_name}' at line {node.lineno} in markdown_editor_service.py"
+                )
+
+
+
 class _CanonicalStoreVisitor(ast.NodeVisitor):
     def __init__(self):
         self.stores_canonical = False

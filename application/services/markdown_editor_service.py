@@ -15,7 +15,7 @@ from core.exceptions.domain_exceptions import (
     DomainError,
     EntityNotFoundError,
 )
-from core.markdown import capture_canonical_markdown_snapshot, parse_canonical_markdown_version
+from core.markdown import capture_canonical_markdown_snapshot
 
 
 class MarkdownEditorService:
@@ -61,15 +61,6 @@ class MarkdownEditorService:
 
         if not output_path:
             return ("", 0)
-
-        # Reconcile legacy job into document_versions if needed
-        path_version = parse_canonical_markdown_version(output_path)
-        if latest_doc is None or (path_version > 0 and path_version > latest_doc.version):
-            from application.services.legacy_document_backfill import backfill_legacy_document_versions
-            backfill_legacy_document_versions(self.uow_factory)
-            with self.uow_factory.create() as uow:
-                if hasattr(uow, "document_versions"):
-                    latest_doc = uow.document_versions.get_latest(job_id)
 
         if latest_doc:
             active_version = latest_doc.version
@@ -123,7 +114,6 @@ class MarkdownEditorService:
 
         text_to_save = raw_text if raw_text is not None else (new_text if new_text is not None else "")
 
-        # Reconcile legacy job into document_versions if needed
         with self.uow_factory.create() as uow:
             job = uow.jobs.get_by_id(job_id)
             if not job:
@@ -131,15 +121,6 @@ class MarkdownEditorService:
             latest_doc = None
             if hasattr(uow, "document_versions"):
                 latest_doc = uow.document_versions.get_latest(job_id)
-
-        if job.output_path:
-            path_version = parse_canonical_markdown_version(job.output_path)
-            if latest_doc is None or (path_version > 0 and path_version > latest_doc.version):
-                from application.services.legacy_document_backfill import backfill_legacy_document_versions
-                backfill_legacy_document_versions(self.uow_factory)
-                with self.uow_factory.create() as uow:
-                    if hasattr(uow, "document_versions"):
-                        latest_doc = uow.document_versions.get_latest(job_id)
 
         if base_version == 0 and latest_doc is None:
             record = self.document_publication_service.publish_initial(

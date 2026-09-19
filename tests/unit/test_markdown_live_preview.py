@@ -680,6 +680,9 @@ def test_save_01_save_advances_canonical_version_and_updates_model(qapp, tmp_pat
         job = uow.jobs.save(job)
         uow.commit()
 
+    from application.services.legacy_document_backfill import backfill_legacy_document_versions
+    backfill_legacy_document_versions(uow_factory)
+
     job_id = job.id
     viewer_ctrl.load_document_sync(job_id)
     editor_ctrl.load_source_sync(job_id)
@@ -1321,6 +1324,9 @@ def test_version_04_editor_save_after_region_mutations_succeeds(qapp, tmp_path):
     assert viewer_ctrl.activeVersion == 24
     assert editor_ctrl.activeVersion == 24
     assert editor_ctrl.hasConflict is False
+
+    from application.services.legacy_document_backfill import backfill_legacy_document_versions
+    backfill_legacy_document_versions(env["uow_factory"])
 
     # User edits in editor
     editor_ctrl.set_source_text(editor_ctrl.sourceText + "\n\nUser appended line.")
