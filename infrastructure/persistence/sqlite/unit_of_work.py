@@ -14,6 +14,8 @@ from infrastructure.persistence.sqlite.repositories import (
     SQLiteJobRepository,
     SQLitePipeline2JobRepository,
     SQLiteVisualRegionRepository,
+    SQLitePublishIntentRepository,
+    SQLiteDocumentVersionRepository,
 )
 
 
@@ -36,6 +38,8 @@ class SQLiteUnitOfWork(IUnitOfWork):
         self.prompts = SQLitePromptRepository(self._conn)
         self.apis = SQLiteApiSlotRepository(self._conn)
         self.visual_regions = SQLiteVisualRegionRepository(self._conn)
+        self.publish_intents = SQLitePublishIntentRepository(self._conn)
+        self.document_versions = SQLiteDocumentVersionRepository(self._conn)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:

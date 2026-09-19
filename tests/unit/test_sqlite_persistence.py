@@ -119,10 +119,11 @@ class TestSQLitePersistence(unittest.TestCase):
             cur = conn.cursor()
             cur.execute("SELECT version, name FROM schema_version ORDER BY version ASC")
             rows = cur.fetchall()
-            self.assertEqual(len(rows), 3)
+            self.assertEqual(len(rows), 4)
             self.assertEqual(rows[0]["version"], 1)
             self.assertEqual(rows[1]["version"], 2)
             self.assertEqual(rows[2]["version"], 3)
+            self.assertEqual(rows[3]["version"], 4)
 
             # Verify all expected tables exist
             cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -241,7 +242,7 @@ class TestSQLitePersistence(unittest.TestCase):
         test_mgr = SQLiteDatabaseManager(db_path)
         test_runner = SQLiteMigrationRunner(test_mgr)
         applied = test_runner.run_migrations()
-        self.assertEqual(applied, [2, 3])
+        self.assertEqual(applied, [2, 3, 4])
 
         # 3. Verify schema_version table
         conn2 = test_mgr.create_connection()
@@ -249,7 +250,7 @@ class TestSQLitePersistence(unittest.TestCase):
             cur = conn2.cursor()
             cur.execute("SELECT version FROM schema_version ORDER BY version ASC")
             versions = [r["version"] for r in cur.fetchall()]
-            self.assertEqual(versions, [1, 2, 3])
+            self.assertEqual(versions, [1, 2, 3, 4])
 
             # Verify watermark columns exist
             cur.execute("PRAGMA table_info(jobs)")
@@ -271,14 +272,14 @@ class TestSQLitePersistence(unittest.TestCase):
 
     def test_migration_fresh_database_from_scratch(self):
         """
-        Verifies that an empty database migrates cleanly through all versions (v0 -> v1 -> v2 -> v3)
+        Verifies that an empty database migrates cleanly through all versions (v0 -> v1 -> v2 -> v3 -> v4)
         without errors.
         """
         fresh_db_path = Path(self.temp_dir.name) / "fresh_scratch.db"
         fresh_mgr = SQLiteDatabaseManager(fresh_db_path)
         fresh_runner = SQLiteMigrationRunner(fresh_mgr)
         applied = fresh_runner.run_migrations()
-        self.assertEqual(applied, [1, 2, 3])
+        self.assertEqual(applied, [1, 2, 3, 4])
 
         # Re-running migrations is completely idempotent
         self.assertEqual(fresh_runner.run_migrations(), [])

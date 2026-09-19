@@ -27,6 +27,11 @@ from application.ports.repositories import (
     IPipeline2JobRepository,
     IVisualRegionRepository,
 )
+from core.entities.document_version import DocumentVersionRecord, PublishIntentRecord
+from application.ports.document_version_repository import (
+    IPublishIntentRepository,
+    IDocumentVersionRepository,
+)
 
 
 def _parse_iso_dt(val: Optional[str]) -> Optional[datetime]:
@@ -1132,3 +1137,178 @@ class SQLiteVisualRegionRepository(IVisualRegionRepository):
         cur = self.conn.cursor()
         cur.execute("DELETE FROM visual_regions WHERE region_id = ?", (region_id,))
         return cur.rowcount > 0
+
+
+# ============================================================
+#  SQLitePublishIntentRepository
+# ============================================================
+
+class SQLitePublishIntentRepository(IPublishIntentRepository):
+    """
+    SQLite repository for publication intent journaling.
+    Guarantees at most one active intent per job via table unique index.
+    """
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def get_by_id(self, intent_id: str) -> Optional[PublishIntentRecord]:
+        cur = self.conn.cursor()
+        cur.execute("SELECT * FROM publish_intents WHERE intent_id = ?", (intent_id,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        return self._to_record(row)
+
+    def get_by_job_id(self, job_id: int) -> Optional[PublishIntentRecord]:
+        cur = self.conn.cursor()
+        cur.execute("SELECT * FROM publish_intents WHERE job_id = ?", (job_id,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        return self._to_record(row)
+
+    def list_all(self) -> List[PublishIntentRecord]:
+        cur = self.conn.cursor()
+        cur.execute("SELECT * FROM publish_intents ORDER BY created_at ASC")
+        return [self._to_record(row) for row in cur.fetchall()]
+
+    def insert_intent(self, intent: PublishIntentRecord) -> PublishIntentRecord:
+        _ensure_transaction(self.conn)
+        cur = self.conn.cursor()
+        created_at = intent.created_at or _format_iso_dt(datetime.now(timezone.utc))
+        cur.execute(
+            """
+            INSERT INTO publish_intents (
+                intent_id, job_id, base_version, target_version,
+                output_filename, output_sha256, staged_artifacts_manifest,
+                status, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                intent.intent_id,
+                intent.job_id,
+                intent.base_version,
+                intent.target_version,
+                intent.output_filename,
+                intent.output_sha256,
+                intent.staged_artifacts_manifest,
+                intent.status,
+                created_at,
+            ),
+        )
+        intent.created_at = created_at
+        return intent
+
+    def update_status(self, intent_id: str, status: str) -> bool:
+        _ensure_transaction(self.conn)
+        cur = self.conn.cursor()
+        cur.execute(
+            "UPDATE publish_intents SET status = ? WHERE intent_id = ?",
+            (status, intent_id),
+        )
+        return cur.rowcount > 0
+
+    def delete_intent(self, intent_id: str) -> bool:
+        _ensure_transaction(self.conn)
+        cur = self.conn.cursor()
+        cur.execute("DELETE FROM publish_intents WHERE intent_id = ?", (intent_id,))
+        return cur.rowcount > 0
+
+    get_intent_by_job_id = get_by_job_id
+    update_intent_status = update_status
+
+    def _to_record(self, row: sqlite3.Row) -> PublishIntentRecord:
+        return PublishIntentRecord(
+            intent_id=row["intent_id"],
+            job_id=row["job_id"],
+            base_version=row["base_version"],
+            target_version=row["target_version"],
+            output_filename=row["output_filename"],
+            output_sha256=row["output_sha256"],
+            staged_artifacts_manifest=row["staged_artifacts_manifest"],
+            status=row["status"],
+            created_at=row["created_at"],
+        )
+
+
+# ============================================================
+#  SQLiteDocumentVersionRepository
+# ============================================================
+
+class SQLiteDocumentVersionRepository(IDocumentVersionRepository):
+    """
+    SQLite repository for immutable document version history.
+    """
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def get_latest(self, job_id: int) -> Optional[DocumentVersionRecord]:
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT * FROM document_versions WHERE job_id = ? ORDER BY version DESC LIMIT 1",
+            (job_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return self._to_record(row)
+
+    get_latest_document_version = get_latest
+
+    def get_by_job_id(self, job_id: int) -> List[DocumentVersionRecord]:
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT * FROM document_versions WHERE job_id = ? ORDER BY version ASC",
+            (job_id,),
+        )
+        return [self._to_record(row) for row in cur.fetchall()]
+
+    def get_by_version(self, job_id: int, version: int) -> Optional[DocumentVersionRecord]:
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT * FROM document_versions WHERE job_id = ? AND version = ?",
+            (job_id, version),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return self._to_record(row)
+
+    def insert_document_version(self, record: DocumentVersionRecord) -> DocumentVersionRecord:
+        _ensure_transaction(self.conn)
+        cur = self.conn.cursor()
+        created_at = record.created_at or _format_iso_dt(datetime.now(timezone.utc))
+        cur.execute(
+            """
+            INSERT INTO document_versions (
+                job_id, version, output_path, sha256,
+                integrity_status, published_by, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.job_id,
+                record.version,
+                record.output_path,
+                record.sha256,
+                record.integrity_status,
+                record.published_by,
+                created_at,
+            ),
+        )
+        record.id = cur.lastrowid
+        record.created_at = created_at
+        return record
+
+    def _to_record(self, row: sqlite3.Row) -> DocumentVersionRecord:
+        return DocumentVersionRecord(
+            id=row["id"],
+            job_id=row["job_id"],
+            version=row["version"],
+            output_path=row["output_path"],
+            sha256=row["sha256"],
+            integrity_status=row["integrity_status"],
+            published_by=row["published_by"],
+            created_at=row["created_at"],
+        )

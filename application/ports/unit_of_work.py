@@ -11,6 +11,10 @@ from application.ports.repositories import (
     IApiRepository,
     IVisualRegionRepository,
 )
+from application.ports.document_version_repository import (
+    IPublishIntentRepository,
+    IDocumentVersionRepository,
+)
 
 
 class IUnitOfWork(ABC):
@@ -24,6 +28,8 @@ class IUnitOfWork(ABC):
     prompts: IPromptRepository
     apis: IApiRepository
     visual_regions: IVisualRegionRepository
+    publish_intents: IPublishIntentRepository
+    document_versions: IDocumentVersionRepository
 
     @abstractmethod
     def __enter__(self) -> "IUnitOfWork":

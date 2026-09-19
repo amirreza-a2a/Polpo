@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** complete
 
 ## Scope
 
@@ -75,13 +75,13 @@ CREATE INDEX IF NOT EXISTS idx_document_versions_job_ver
 
 ## Acceptance Criteria
 
-- [ ] Migration 004 applies cleanly via `SQLiteMigrationRunner` on a fresh database.
-- [ ] Migration 004 applies cleanly on an existing database at schema version 3.
-- [ ] `publish_intents` table exists with all columns and the unique job index.
-- [ ] `document_versions` table exists with all columns, nullable `sha256`, `integrity_status` check, and `UNIQUE(job_id, version)`.
-- [ ] Repository layer provides query methods: `get_intent_by_job_id`, `insert_intent`, `update_intent_status`, `delete_intent`, `get_latest_document_version`, `insert_document_version`.
-- [ ] Schema version table records version 4 after migration.
-- [ ] All new tests pass. No existing tests broken.
+- [x] Migration 004 applies cleanly via `SQLiteMigrationRunner` on a fresh database.
+- [x] Migration 004 applies cleanly on an existing database at schema version 3.
+- [x] `publish_intents` table exists with all columns and the unique job index.
+- [x] `document_versions` table exists with all columns, nullable `sha256`, `integrity_status` check, and `UNIQUE(job_id, version)`.
+- [x] Repository layer provides query methods: `get_intent_by_job_id`, `insert_intent`, `update_intent_status`, `delete_intent`, `get_latest_document_version`, `insert_document_version`.
+- [x] Schema version table records version 4 after migration.
+- [x] All new tests pass. No existing tests broken.
 
 ## Tests Required
 
