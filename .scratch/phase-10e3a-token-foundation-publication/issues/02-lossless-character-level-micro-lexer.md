@@ -4,7 +4,7 @@
 
 **Blocked by:** 01: Canonical Visual Token Grammar & Immutable Value Objects.
 
-**Status:** ready-for-agent
+**Status:** complete
 
 ## Scope
 
@@ -60,15 +60,15 @@ For any replacement at span `[s, e)`:
 
 ## Acceptance Criteria
 
-- [ ] Scanner operates as a character-by-character FSM, not `re.finditer` over the whole document.
-- [ ] Discovers all canonical `polpo:` tokens with exact `[start_char, end_char)` offsets.
-- [ ] `text[token.start_char:token.end_char]` matches the exact token substring in source.
-- [ ] Yields `MalformedOccurrenceTokenDTO` for malformed `polpo:` titles without raising.
-- [ ] Detects and reports duplicate `occ_id` values within a single document.
-- [ ] Ignores standard Markdown images lacking `"polpo:"` title attribute.
-- [ ] `replace_span()` preserves all characters outside the target span (character fidelity).
-- [ ] Handles escaped brackets, escaped quotes, balanced parentheses, multiline syntax, Unicode/Persian text.
-- [ ] All new tests pass. No existing tests broken.
+- [x] Scanner operates as a character-by-character FSM, not `re.finditer` over the whole document.
+- [x] Discovers all canonical `polpo:` tokens with exact `[start_char, end_char)` offsets.
+- [x] `text[token.start_char:token.end_char]` matches the exact token substring in source.
+- [x] Yields `MalformedOccurrenceTokenDTO` for malformed `polpo:` titles without raising.
+- [x] Detects and reports duplicate `occ_id` values within a single document.
+- [x] Ignores standard Markdown images lacking `"polpo:"` title attribute.
+- [x] `replace_span()` preserves all characters outside the target span (character fidelity).
+- [x] Handles escaped brackets, escaped quotes, balanced parentheses, multiline syntax, Unicode/Persian text.
+- [x] All new tests pass. No existing tests broken.
 
 ## Tests Required
 
