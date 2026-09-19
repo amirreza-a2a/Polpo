@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** complete
 
 ## Scope
 
@@ -64,14 +64,14 @@ class CropArtifactStagingService:
 
 ## Acceptance Criteria
 
-- [ ] `StagedCropHandle` is a frozen dataclass in `application/dto/`, not in `core/entities/`.
-- [ ] Staging creates files exclusively under `.staging/{staging_id}/`.
-- [ ] SHA-256 checksum and byte size are computed and stored in the handle upon staging.
-- [ ] `discard_staging(staging_id)` completely removes the staging directory and all its contents.
-- [ ] `list_staged(staging_id)` returns structured handles for all staged crops.
-- [ ] Path traversal attempts (e.g., `../` in region_id) are rejected.
-- [ ] Multiple concurrent staging_ids produce isolated directories with no cross-contamination.
-- [ ] All new tests pass. No existing tests broken.
+- [x] `StagedCropHandle` is a frozen dataclass in `application/dto/`, not in `core/entities/`.
+- [x] Staging creates files exclusively under `.staging/{staging_id}/`.
+- [x] SHA-256 checksum and byte size are computed and stored in the handle upon staging.
+- [x] `discard_staging(staging_id)` completely removes the staging directory and all its contents.
+- [x] `list_staged(staging_id)` returns structured handles for all staged crops.
+- [x] Path traversal attempts (e.g., `../` in region_id) are rejected.
+- [x] Multiple concurrent staging_ids produce isolated directories with no cross-contamination.
+- [x] All new tests pass. No existing tests broken.
 
 ## Tests Required
 
