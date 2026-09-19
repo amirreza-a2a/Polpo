@@ -36,6 +36,8 @@ from application.services.apply_review_service import ApplyReviewService
 from application.services.document_viewer_service import DocumentViewerService
 from application.services.markdown_viewer_service import MarkdownViewerService
 from application.services.markdown_editor_service import MarkdownEditorService
+from application.services.document_publication_service import DocumentPublicationService
+from application.services.crop_artifact_staging_service import CropArtifactStagingService
 from infrastructure.markdown.markdown_it_parser import MarkdownItParser
 from interfaces.desktop.workers.runtime import DesktopJobRuntime
 from interfaces.desktop.workers.scheduler import DesktopJobScheduler
@@ -166,6 +168,15 @@ class DesktopAppContainer:
             storage=self.storage,
         )
 
+        self.crop_staging_service = CropArtifactStagingService(
+            base_dir=artifacts_dir,
+        )
+        self.document_publication_service = DocumentPublicationService(
+            uow_factory=self.uow_factory,
+            artifacts_dir=artifacts_dir,
+            staging_service=self.crop_staging_service,
+        )
+
         # 6. Desktop Concurrent Runtime & Persistent Scheduler
         self.runtime = DesktopJobRuntime(
             uow_factory=self.uow_factory,
@@ -192,12 +203,16 @@ class DesktopAppContainer:
     def initialize(self) -> None:
         """
         Executes deterministic startup sequence:
-        1. Applies SQLite schema migrations.
-        2. Reconciles stale processing jobs to PAUSED.
-        3. Reconciles missed schedules according to AppSettings policy.
+        1. Applies SQLite schema migrations (applies 004).
+        2. Reconciles legacy unversioned canonical documents (idempotent backfill).
+        3. Reconciles crashed publication intents.
+        4. Reconciles stale processing jobs to PAUSED.
+        5. Reconciles missed schedules according to AppSettings policy.
         Sets initialized state flag.
         """
         self.migration_runner.run_migrations()
+        self.document_publication_service.backfill_legacy_document_versions()
+        self.document_publication_service.reconcile_startup_intents()
         self.job_recovery_service.reconcile_stale_jobs()
         self.job_recovery_service.reconcile_missed_schedules()
         self._initialized = True

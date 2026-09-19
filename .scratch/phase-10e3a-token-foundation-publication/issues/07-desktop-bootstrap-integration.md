@@ -4,7 +4,7 @@
 
 **Blocked by:** 06: Crash-Consistent Document Publication Service.
 
-**Status:** ready-for-agent
+**Status:** complete
 
 ## Scope
 
@@ -84,12 +84,12 @@ This is already a supported code path — `DocumentViewerController.__init__` ac
 
 ## Acceptance Criteria
 
-- [ ] `DocumentPublicationService` is constructed in `DesktopAppContainer.__init__()`.
-- [ ] `CropArtifactStagingService` is constructed in `DesktopAppContainer.__init__()`.
-- [ ] `initialize()` calls backfill → reconciliation in correct order between migrations and stale-job recovery.
-- [ ] `DocumentViewerController` is constructed with `apply_review_service=None`.
-- [ ] Application starts and initializes cleanly on both fresh and existing databases.
-- [ ] All existing tests pass. No regressions.
+- [x] `DocumentPublicationService` is constructed in `DesktopAppContainer.__init__()`.
+- [x] `CropArtifactStagingService` is constructed in `DesktopAppContainer.__init__()`.
+- [x] `initialize()` calls backfill → reconciliation in correct order between migrations and stale-job recovery.
+- [x] `DocumentViewerController` is constructed with `apply_review_service=None`.
+- [x] Application starts and initializes cleanly on both fresh and existing databases.
+- [x] All existing tests pass. No regressions.
 
 ## Tests Required
 
