@@ -4,7 +4,7 @@
 
 **Blocked by:** None (independent of Ticket 11, can start immediately).
 
-**Status:** ready-for-agent
+**Status:** complete
 
 ## Scope & Boundary
 
@@ -26,10 +26,10 @@
 
 ## Acceptance Criteria
 
-- [ ] All published document versions in `document_versions.output_path` and `jobs.output_path` store standard RFC 8089 URIs generated via `Path.as_uri()` (three slashes: `file:///...`).
-- [ ] `resolve_canonical_file_path()` correctly round-trips URIs with Windows drive letters without dropping the drive letter or misinterpreting it as netloc.
-- [ ] Backward compatibility: `resolve_canonical_file_path()` correctly resolves legacy Windows-style two-slash `file://` URIs (e.g. `file://C:/artifacts/output_1_v1.md` and `file://D:/...`) that may already exist in `document_versions.output_path` or `jobs.output_path` from before this fix.
-- [ ] Zero manual `f"file://{...}"` string interpolations remain in `DocumentPublicationService` or `legacy_document_backfill.py`.
+- [x] All published document versions in `document_versions.output_path` and `jobs.output_path` store standard RFC 8089 URIs generated via `Path.as_uri()` (three slashes: `file:///...`).
+- [x] `resolve_canonical_file_path()` correctly round-trips URIs with Windows drive letters without dropping the drive letter or misinterpreting it as netloc.
+- [x] Backward compatibility: `resolve_canonical_file_path()` correctly resolves legacy Windows-style two-slash `file://` URIs (e.g. `file://C:/artifacts/output_1_v1.md` and `file://D:/...`) that may already exist in `document_versions.output_path` or `jobs.output_path` from before this fix.
+- [x] Zero manual `f"file://{...}"` string interpolations remain in `DocumentPublicationService` or `legacy_document_backfill.py`.
 
 ## Tests Required
 

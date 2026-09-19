@@ -196,6 +196,12 @@ def test_crash_recovery_case3_forward_roll(pub_service: DocumentPublicationServi
         assert latest.sha256 == final_sha
         assert latest.integrity_status == "VALID"
         assert latest.published_by == "CRASH_RECOVERY_FORWARD_ROLL"
+        assert latest.output_path.startswith("file:///")
+        assert latest.output_path == final_file.resolve().as_uri()
+
+        job_db = uow.jobs.get_by_id(job_id)
+        assert job_db.output_path.startswith("file:///")
+        assert job_db.output_path == final_file.resolve().as_uri()
 
 
 def test_crash_recovery_case4_checksum_mismatch(pub_service: DocumentPublicationService, uow_factory: SQLiteUnitOfWorkFactory, tmp_path: Path):

@@ -9,7 +9,7 @@ import hashlib
 import logging
 from pathlib import Path
 from typing import Optional, Union
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
 from urllib.request import url2pathname
 
 from application.ports.unit_of_work import IUnitOfWork, IUnitOfWorkFactory
@@ -41,12 +41,31 @@ def _format_iso_dt(dt: Optional[datetime]) -> Optional[str]:
 def resolve_canonical_file_path(path_or_uri: str) -> Path:
     """
     Resolves an artifact URI or filesystem path string into a canonical Path object.
-    Supports standard file:// URIs as well as direct POSIX and Windows filesystem paths.
+    Supports standard RFC 8089 file:/// URIs, legacy two-slash Windows file:// URIs,
+    as well as direct POSIX and Windows filesystem paths.
+
+    Preserves percent-encoded characters during drive-letter and leading-slash structural
+    checks so url2pathname() performs single, canonical percent-decoding.
     """
     cleaned = path_or_uri.strip()
     if cleaned.startswith("file://"):
         parsed = urlparse(cleaned)
-        path_str = url2pathname(unquote(parsed.path))
+        netloc = parsed.netloc
+        raw_path = parsed.path
+
+        # Legacy Windows two-slash compatibility:
+        # e.g. file://C:/artifacts/output_1_v1.md parses as netloc='C:', path='/artifacts/output_1_v1.md'.
+        # Detecting a drive-letter netloc and re-prepending preserves the drive letter.
+        if len(netloc) == 2 and netloc[0].isalpha() and netloc[1] == ":":
+            raw_path = f"{netloc}{raw_path}"
+
+        # RFC 8089 Windows file:/// URI cross-platform compatibility:
+        # e.g. file:///C:/artifacts/output_1_v1.md produces raw_path='/C:/artifacts/output_1_v1.md'.
+        # On POSIX platforms, url2pathname does not strip the leading slash preceding drive letters.
+        if len(raw_path) >= 3 and raw_path[0] == "/" and raw_path[1].isalpha() and raw_path[2] == ":":
+            raw_path = raw_path[1:]
+
+        path_str = url2pathname(raw_path)
         return Path(path_str)
     return Path(cleaned)
 

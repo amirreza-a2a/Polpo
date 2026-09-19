@@ -4,7 +4,7 @@
 # ============================================================
 
 import hashlib
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import stat
 import pytest
 
@@ -12,7 +12,10 @@ from core.entities.job import Job, JobStatus
 from infrastructure.persistence.sqlite.connection import SQLiteDatabaseManager
 from infrastructure.persistence.sqlite.migration_runner import SQLiteMigrationRunner
 from infrastructure.persistence.sqlite.unit_of_work import SQLiteUnitOfWork, SQLiteUnitOfWorkFactory
-from application.services.legacy_document_backfill import backfill_legacy_document_versions
+from application.services.legacy_document_backfill import (
+    backfill_legacy_document_versions,
+    resolve_canonical_file_path,
+)
 
 
 @pytest.fixture
@@ -233,7 +236,7 @@ def test_backfill_file_uri_support(uow_factory: SQLiteUnitOfWorkFactory, tmp_pat
     doc_file = tmp_path / "output_10_v2.md"
     doc_file.write_text("URI content")
 
-    uri = f"file://{doc_file.as_posix()}"
+    uri = doc_file.resolve().as_uri()
 
     with uow_factory.create() as uow:
         job = _create_test_job(uow, output_path=uri)
@@ -248,3 +251,76 @@ def test_backfill_file_uri_support(uow_factory: SQLiteUnitOfWorkFactory, tmp_pat
         assert latest.version == 2
         assert latest.integrity_status == "VALID"
         assert latest.output_path == uri
+
+
+def test_resolve_canonical_file_path_accepts_legacy_two_slash_uri():
+    """
+    Regression test for Windows legacy two-slash URIs (e.g. file://C:/...) where urlparse
+    would interpret the drive letter as netloc and drop it, resulting in path truncation.
+    """
+    # Legacy Windows-style two-slash URIs (evaluated lexically across platforms)
+    expected_c = PureWindowsPath("C:/artifacts/job_1/output_1_v1.md")
+    p_c = resolve_canonical_file_path("file://C:/artifacts/job_1/output_1_v1.md")
+    assert p_c.as_posix() == expected_c.as_posix()
+
+    expected_d = PureWindowsPath("D:/data/output_2_v1.md")
+    p_d = resolve_canonical_file_path("file://D:/data/output_2_v1.md")
+    assert p_d.as_posix() == expected_d.as_posix()
+
+    # Lowercase drive letter legacy two-slash
+    expected_lower = PureWindowsPath("c:/artifacts/job_3/output_3_v1.md")
+    p_lower = resolve_canonical_file_path("file://c:/artifacts/job_3/output_3_v1.md")
+    assert p_lower.as_posix() == expected_lower.as_posix()
+
+    # Standard RFC 8089 three-slash URIs with drive letters
+    p_rfc_c = resolve_canonical_file_path("file:///C:/artifacts/job_1/output_1_v1.md")
+    assert p_rfc_c.as_posix() == expected_c.as_posix()
+
+    p_rfc_d = resolve_canonical_file_path("file:///D:/data/output_2_v1.md")
+    assert p_rfc_d.as_posix() == expected_d.as_posix()
+
+    # Standard RFC 8089 POSIX URI (host-native Path on POSIX)
+    p_posix = resolve_canonical_file_path("file:///tmp/artifacts/job_1/output_1_v1.md")
+    assert p_posix.as_posix() == "/tmp/artifacts/job_1/output_1_v1.md"
+    assert p_posix == Path("/tmp/artifacts/job_1/output_1_v1.md")
+
+    # Raw filesystem paths
+    p_raw = resolve_canonical_file_path("/tmp/artifacts/output.md")
+    assert p_raw == Path("/tmp/artifacts/output.md")
+
+    p_raw_win = resolve_canonical_file_path("C:/artifacts/output.md")
+    assert p_raw_win.as_posix() == PureWindowsPath("C:/artifacts/output.md").as_posix()
+
+
+def test_resolve_canonical_file_path_preserves_literal_percent_sequences():
+    """
+    Regression test for double percent-decoding in resolve_canonical_file_path().
+    Verifies that literal '%20' in filenames (encoded as '%2520' in URIs) is not
+    erroneously converted into a space character, while genuine spaces are decoded properly.
+    """
+    # 1. Path with literal '%20' in filename (encoded as %2520)
+    path_literal_pct = Path("/tmp/artifacts/report_%20_v1.md")
+    uri_literal_pct = path_literal_pct.as_uri()
+    assert "%2520" in uri_literal_pct
+
+    resolved_literal = resolve_canonical_file_path(uri_literal_pct)
+    assert resolved_literal.as_posix() == path_literal_pct.as_posix()
+    assert resolved_literal.name == "report_%20_v1.md"
+
+    # 2. Path with genuine space in filename (encoded as %20)
+    path_with_space = Path("/tmp/artifacts/report space v1.md")
+    uri_with_space = path_with_space.as_uri()
+    assert "%20" in uri_with_space
+    assert "%25" not in uri_with_space
+
+    resolved_space = resolve_canonical_file_path(uri_with_space)
+    assert resolved_space.as_posix() == path_with_space.as_posix()
+    assert resolved_space.name == "report space v1.md"
+
+    # 3. Windows vector with literal '%20' in filename
+    win_path = PureWindowsPath("C:/artifacts/job_1/report_%20_v1.md")
+    win_uri = win_path.as_uri()
+    assert "%2520" in win_uri
+
+    resolved_win = resolve_canonical_file_path(win_uri)
+    assert resolved_win.as_posix() == win_path.as_posix()

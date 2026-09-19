@@ -146,7 +146,7 @@ class DocumentPublicationService:
             activated = True
 
             # Phase 4: Atomic SQLite Pointer Update
-            canonical_uri = f"file://{final_file.resolve().as_posix()}"
+            canonical_uri = final_file.resolve().as_uri()
             with self.uow_factory.create() as uow:
                 uow.begin_immediate()
                 job = uow.jobs.get_by_id(job_id)
@@ -295,7 +295,7 @@ class DocumentPublicationService:
             activated = True
 
             # Phase 4: Atomic SQLite Pointer Update
-            canonical_uri = f"file://{final_file.resolve().as_posix()}"
+            canonical_uri = final_file.resolve().as_uri()
             with self.uow_factory.create() as uow:
                 uow.begin_immediate()
                 job = uow.jobs.get_by_id(job_id)
@@ -401,7 +401,7 @@ class DocumentPublicationService:
 
                 # Case 3: Final file exists + SHA matches + DB at base version -> Forward Roll
                 if final_exists and final_sha == intent.output_sha256 and current_db_version == intent.base_version:
-                    canonical_uri = f"file://{final_file.resolve().as_posix()}"
+                    canonical_uri = final_file.resolve().as_uri()
                     job = uow.jobs.get_by_id(job_id)
                     if job:
                         uow.jobs.update_progress(
