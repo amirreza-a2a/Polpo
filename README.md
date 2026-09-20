@@ -1,5 +1,8 @@
 # PolpoT — Desktop Document Intelligence & Review Workspace
 
+[![CI](https://github.com/amirreza-a2a/Polpo/actions/workflows/ci.yml/badge.svg)](https://github.com/amirreza-a2a/Polpo/actions/workflows/ci.yml)
+[![Periodic & Pre-Release Validation](https://github.com/amirreza-a2a/Polpo/actions/workflows/periodic-validation.yml/badge.svg)](https://github.com/amirreza-a2a/Polpo/actions/workflows/periodic-validation.yml)
+
 PolpoT is a **desktop-first, local-first, serverless embedded application** for intelligent document transcription, OCR, visual region extraction, and AI-powered Markdown conversion.
 
 ---
@@ -38,7 +41,7 @@ Local SQLite (WAL) / OS Keyring / Local Artifact Storage / AI Provider SDKs / Py
 
 ---
 
-## 3. Installation & Setup
+## 3. Installation & Developer Setup
 
 ### Prerequisites
 * Python 3.10+
@@ -48,7 +51,12 @@ Local SQLite (WAL) / OS Keyring / Local Artifact Storage / AI Provider SDKs / Py
 ```bash
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install production dependencies
 pip install -r requirements.txt
+
+# Install development and test tooling
+pip install -r requirements-dev.txt
 ```
 
 ---
@@ -65,11 +73,14 @@ python -m interfaces.desktop.app
 
 ## 5. Testing & Verification
 
-Run the automated test suite:
+Run the automated test suite and canonical quality gates:
 
 ```bash
 # Run all automated tests
 pytest -q
+
+# Run canonical quality gates runner (whitespace, bytecode compilation, AST invariants)
+python scripts/run_quality_gates.py --mode=working-tree
 
 # Run architectural boundary isolation tests
 pytest tests/unit/test_architecture_boundaries.py -v
@@ -77,7 +88,40 @@ pytest tests/unit/test_architecture_boundaries.py -v
 
 ---
 
-## 6. Repository Structure
+## 6. Platform Support Policy
+
+PolpoT follows a four-tier platform support model defining continuous testing and compatibility expectations:
+
+### Tier 1 — Continuously Tested / Merge-Blocking
+* **Ubuntu 24.04 LTS x86_64** (Python 3.12)
+* **Windows Server 2025 x64** (GitHub Actions runner: `windows-2025`, Python 3.12)
+
+> [!NOTE]
+> Windows CI executes on GitHub-hosted `windows-2025` runners, verifying Windows OS family contracts, Win32 kernel semantics, NTFS file locking, and file URI path normalization. This validates headless backend and service execution, but does not by itself constitute interactive consumer Windows 10/11 desktop-shell or display hardware verification. Windows Server 2022 remains a non-continuously-tested compatibility target.
+
+### Tier 2 — Supported / Periodically Verified
+* **macOS 15 Apple Silicon / ARM64** (Python 3.12, GitHub Actions runner: `macos-15`, verified weekly and prior to releases via the `Periodic & Pre-Release Validation` workflow)
+* **Python 3.10 & 3.11** on the Ubuntu 24.04 reference runner
+* **Modern glibc Linux distributions** (Fedora 38+, Debian 12+, Arch Linux) supported via standard binary ABI and POSIX compliance (not continuously tested in this phase)
+
+> [!NOTE]
+> Ubuntu 24.04 serves as the project's Tier-1 POSIX reference distribution and does not imply continuous automated testing across every individual Linux distribution.
+
+### Tier 3 — Best Effort
+* macOS 12 & 13, legacy Intel x86_64 Mac hardware
+* Windows Subsystem for Linux (WSL2)
+* Headless Linux without D-Bus (supported using `EncryptedFileCredentialStore` encrypted vault fallback)
+
+### Tier 4 — Unsupported
+* Musl-based Linux distributions (e.g. Alpine Linux)
+* 32-bit operating systems
+* Windows < 10
+* macOS < 12
+* Remote web/cloud server environments (PolpoT is strictly local-first and desktop-embedded)
+
+---
+
+## 7. Repository Structure
 
 ```text
 PolpoT/
@@ -120,7 +164,7 @@ PolpoT/
 
 ---
 
-## 7. Frozen Legacy Telegram Transport
+## 8. Frozen Legacy Telegram Transport
 
 > [!NOTE]
 > Telegram is a **frozen legacy transport adapter** retained strictly for backward compatibility. The desktop runtime operates completely local-first and does not require MySQL, cPanel, or remote server infrastructure.

@@ -1,0 +1,26 @@
+# ==============================================================================
+# Gitleaks Configuration
+#
+# Extends default secret detection rules with a narrowly targeted allowlist
+# strictly for synthetic test canaries and mock tokens.
+#
+# Rules:
+# 1. Do NOT broadly disable secret-detection rules.
+# 2. Do NOT allowlist whole test directories or broad paths.
+# 3. Real credentials must always be caught.
+# ==============================================================================
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Targeted allowlist for synthetic canary tokens and mock keys used in security and persistence tests"
+regexes = [
+  "^AIzaSyD-1234567890abcdefghijklmnopqrst$",
+  "^AIzaSyTestKey123$",
+  "^SYNTHETIC_CANARY_API_KEY_PHASE_8H_SEC_VALIDATION_998877$",
+  "^TEST_SYNTHETIC_SECRET_PHASE8B_9A7B3C1D$",
+  "^TEST_SYNTHETIC_SECRET_PHASE8C_8A7F6E5D4C3B$",
+  "^sk-proj-qc123$",
+  "^sk-proj-test12345$",
+]

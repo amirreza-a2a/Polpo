@@ -20,9 +20,9 @@
   - Document the formal 4-tier platform support model:
     - **Tier 1 (Continuously Tested / Merge-Blocking)**:
       - Ubuntu 24.04 LTS x64 (Python 3.12).
-      - Windows Server 2022/2025 x64 via `windows-2025` (Python 3.12).
+      - Windows Server 2025 x64 via `windows-2025` / Python 3.12 (Windows Server 2022 remains a non-continuously-tested compatibility target).
     - **Tier 2 (Supported / Periodically Verified)**:
-      - macOS 14+ Apple Silicon via `macos-14` (Python 3.12) via weekly scheduled runs, manual pre-release dispatch, and release candidate tags.
+      - macOS 15 Apple Silicon / ARM64 / Python 3.12 (explicitly `runs-on: macos-15`) via weekly scheduled runs, manual pre-release dispatch, and release candidate tags.
       - Python 3.10 and 3.11 backward compatibility on Ubuntu reference runner.
       - Modern glibc Linux distributions (Fedora 38+, Debian 12+, Arch Linux) supported by ABI runtime standard (not continuously tested in this phase).
     - **Tier 3 (Best-Effort)**:
@@ -33,7 +33,7 @@
       - Musl-based Linux (Alpine), 32-bit OS, Windows < 10, macOS < 12, remote web/cloud server environments.
   - Explicitly distinguish what CI proves on Windows Server (Win32 kernel, NTFS locking, path normalization) vs. consumer Windows 10/11 desktop support claims (which additionally require interactive shell and display verification).
   - Explicitly distinguish that Ubuntu 24.04 is the CI reference distribution and does not imply continuous automated testing of all Linux distributions.
-  - Clarify the macOS declared support floor (12+) vs. the current CI runner image (`macos-14` Apple Silicon).
+  - Clarify the macOS declared support floor (12+) vs. the current Tier-2 CI runner image (macOS 15 Apple Silicon via `macos-15`).
   - Document developer workflow commands: installing `requirements-dev.txt`, running `pytest`, and running `scripts/run_quality_gates.py`.
   - Add CI status badges linking to workflow runs.
 - Tracking Note Creation:

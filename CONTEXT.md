@@ -184,3 +184,26 @@ The Telegram bot implementation is a **frozen legacy transport** maintained stri
 * **Architectural Boundary:**
   * The desktop application codebase (`interfaces/desktop/`, `application/services/`, `core/`) has **zero dependencies** on Telegram modules.
   * No Telegram-specific requirements, multi-user concurrency rules, or external MySQL constructs may constrain or influence the desktop architecture.
+
+---
+
+## 5. Platform Support & CI Verification Matrix
+
+PolpoT enforces a strict multi-tier platform architecture ([`AGENTS.md`](AGENTS.md) Rule 28) with differentiated continuous integration and periodic validation gates:
+
+### 5.1 Continuous Integration Matrix (Blocking PR Gates)
+* **Tier-1 Linux Reference:** Ubuntu 24.04 LTS x86_64 / Python 3.12 (`test-linux`).
+  * *Architecture Boundary:* Ubuntu 24.04 serves as the POSIX reference environment for headless CI, not proof of continuous automated testing across all Linux distributions.
+* **Tier-1 Windows Reference:** Windows Server 2025 x64 / Python 3.12 (`windows-2025` runner, `test-windows`).
+  * *Architecture Boundary:* Windows CI verifies Win32 OS semantics, file URI pathing (`file:///C:/...`), non-POSIX file locking, and NTFS concurrency. Windows Server CI validates runtime and service correctness, but is not equivalent to consumer Windows 10/11 interactive desktop-shell or display verification. Windows Server 2022 is a non-continuously-tested compatibility target.
+* **Security & Quality Gates:** Static whitespace/bytecode/AST quality gates (`quality-gates`) and Gitleaks secret scanning (`secret-scan`) run on every push and pull request.
+
+### 5.2 Periodic & Pre-Release Validation Matrix (Tier-2 Decoupled)
+* **macOS Apple Silicon:** macOS 15 ARM64 / Python 3.12 (`macos-15` runner, `test-macos`).
+  * *Architecture Boundary:* Native Apple Silicon execution validates Darwin Mach-O wheel loading, Cocoa headless QPA offscreen integration, and APFS case-preservation. Declared application support floor is macOS 12+ (macOS 12 and 13 are Tier-3 best-effort targets), while CI validation explicitly targets `macos-15`.
+* **Python Compatibility Matrix:** Python 3.10 and 3.11 on Ubuntu 24.04 reference runner (`test-python-matrix`).
+* **Supported Glibc Distributions:** Modern Linux distributions (Fedora 38+, Debian 12+, Arch Linux) are supported by ABI runtime standard, verified via the Linux POSIX reference runner.
+
+### 5.3 Best-Effort (Tier 3) & Unsupported (Tier 4) Boundaries
+* **Tier 3 (Best-Effort):** macOS 12 & 13, legacy Intel x86_64 Mac hardware, WSL2, headless Linux without D-Bus (using `EncryptedFileCredentialStore` fallback).
+* **Tier 4 (Unsupported):** Musl-based Linux (Alpine), 32-bit operating systems, Windows < 10, macOS < 12, remote cloud/server hosting.
