@@ -14,7 +14,17 @@ from interfaces.desktop.app import create_app
 from interfaces.desktop.controllers.markdown_editor_controller import MarkdownEditorController
 from interfaces.desktop.controllers.markdown_viewer_controller import MarkdownViewerController
 from interfaces.desktop.models.conflict_session import ConflictSession
-from interfaces.desktop.qt_compat import QGuiApplication, QQmlApplicationEngine, QObject
+from interfaces.desktop.qt_compat import (
+    QGuiApplication,
+    QQmlApplicationEngine,
+    QObject,
+    QCoreApplication,
+)
+
+try:
+    from PySide6.QtGui import QCloseEvent
+except ImportError:
+    from PyQt6.QtGui import QCloseEvent
 
 
 @pytest.fixture(scope="session")
@@ -337,6 +347,7 @@ def test_t_merge_64_open_review_workspace_job_switch_guard(qapp):
         root_objects = engine.rootObjects()
         assert len(root_objects) == 1
         window = root_objects[0]
+        window.setProperty("visible", False)
 
         modal = window.findChild(QObject, "jobSwitchConfirmModal")
         assert modal is not None, "jobSwitchConfirmModal must exist in Main.qml"
@@ -490,6 +501,7 @@ def test_t_merge_67_window_close_guard_with_exit_confirmation(qapp):
         root_objects = engine.rootObjects()
         assert len(root_objects) == 1
         window = root_objects[0]
+        window.setProperty("visible", False)
 
         modal = window.findChild(QObject, "windowExitConfirmModal")
         assert modal is not None, "windowExitConfirmModal must exist in Main.qml"
@@ -510,7 +522,7 @@ def test_t_merge_67_window_close_guard_with_exit_confirmation(qapp):
         qapp.processEvents()
 
         # Trigger window close
-        window.close()
+        QCoreApplication.sendEvent(window, QCloseEvent())
         qapp.processEvents()
 
         assert modal.property("visible") is True
@@ -539,7 +551,7 @@ def test_t_merge_67_window_close_guard_with_exit_confirmation(qapp):
         md_editor.conflictChanged.emit()
         qapp.processEvents()
 
-        window.close()
+        QCoreApplication.sendEvent(window, QCloseEvent())
         qapp.processEvents()
         assert modal.property("visible") is True
 
