@@ -43,12 +43,10 @@ class TestDesktopGuiControls(unittest.TestCase):
 
     def tearDown(self):
         self.container.shutdown()
-        self.app.processEvents()
         self.temp_dir.cleanup()
 
     def _switch_tab(self, tab_index: int):
         self.stack.setProperty("currentIndex", tab_index)
-        self.app.processEvents()
 
     def test_all_primary_controls_exist_and_are_visibly_accessible(self):
         """Verifies that all primary buttons exist, are enabled, and have visible, valid bounds."""
@@ -104,14 +102,11 @@ class TestDesktopGuiControls(unittest.TestCase):
             self.assertIsNotNone(modal, f"Modal '{modal_name}' not found in QML hierarchy!")
 
             modal.open()
-            self.app.processEvents()
-
             self.assertTrue(modal.property("visible"), f"Modal '{modal_name}' did not become visible on open()!")
             self.assertGreaterEqual(modal.property("width"), 400)
             self.assertGreaterEqual(modal.property("height"), 250)
 
             modal.close()
-            self.app.processEvents()
             self.assertFalse(modal.property("visible"), f"Modal '{modal_name}' did not hide on close()!")
 
     def test_full_interactive_workflow_via_controllers_and_ui(self):
@@ -121,7 +116,6 @@ class TestDesktopGuiControls(unittest.TestCase):
         api_ctrl = self.container.api_key_controller
         reg_ok = api_ctrl.register_key("openai", "Work OpenAI Key", "sk-proj-test12345", "gpt-4o")
         self.assertTrue(reg_ok)
-        self.app.processEvents()
         self.assertEqual(self.container.api_slot_model.rowCount(), 1)
 
         # 2. Prompts: Create and verify prompt in model
@@ -129,7 +123,6 @@ class TestDesktopGuiControls(unittest.TestCase):
         prompt_ctrl = self.container.prompt_controller
         pid = prompt_ctrl.create_prompt("Math OCR", "Extract LaTeX formulas", "pipeline1", True)
         self.assertGreater(pid, 0)
-        self.app.processEvents()
         self.assertGreaterEqual(self.container.prompt_list_model.rowCount(), 1)
 
         # 3. Job Queue: Submit PDF and verify job in model
@@ -147,7 +140,6 @@ class TestDesktopGuiControls(unittest.TestCase):
 
         jid = job_ctrl.submit_job(pdf_f.resolve().as_uri(), pid, "")
         self.assertGreater(jid, 0)
-        self.app.processEvents()
         self.assertGreaterEqual(self.container.job_queue_model.rowCount(), 1)
 
         # 4. Settings: Update preferences and verify
@@ -175,7 +167,6 @@ class TestDesktopGuiControls(unittest.TestCase):
         )
         pid = prompt_ctrl.create_prompt("Very Long Persian Prompt", long_persian_text, "pipeline2", False)
         self.assertGreater(pid, 0)
-        self.app.processEvents()
 
         # Verify prompt list contains the new prompt
         p_list = self.window.findChild(object, "promptList")
@@ -186,12 +177,10 @@ class TestDesktopGuiControls(unittest.TestCase):
         edit_modal = self.window.findChild(object, "editPromptModal")
         self.assertIsNotNone(edit_modal)
         edit_modal.open()
-        self.app.processEvents()
         self.assertTrue(edit_modal.property("visible"))
         self.assertGreater(edit_modal.property("width"), 400)
         self.assertGreater(edit_modal.property("height"), 400)
         edit_modal.close()
-        self.app.processEvents()
 
     def test_job_queue_action_feedback_rendering(self):
         """Verifies immediate action feedback ('cancelling', 'retrying', 'resuming') in JobQueueView."""
@@ -215,24 +204,20 @@ class TestDesktopGuiControls(unittest.TestCase):
             doc.save(str(pdf_f))
             doc.close()
             job_ctrl.submit_job(str(pdf_f), pid, "")
-            self.app.processEvents()
 
         self.assertGreater(q_model.rowCount(), 0)
         job_id = q_model.data(q_model.index(0, 0), q_model.IdRole)
 
         # 1. Set cancelling
         q_model.set_action_state(job_id, "cancelling")
-        self.app.processEvents()
         self.assertEqual(q_model.data(q_model.index(0, 0), q_model.ActionStateRole), "cancelling")
 
         # 2. Set retrying
         q_model.set_action_state(job_id, "retrying")
-        self.app.processEvents()
         self.assertEqual(q_model.data(q_model.index(0, 0), q_model.ActionStateRole), "retrying")
 
         # 3. Set resuming
         q_model.set_action_state(job_id, "resuming")
-        self.app.processEvents()
         self.assertEqual(q_model.data(q_model.index(0, 0), q_model.ActionStateRole), "resuming")
 
 
