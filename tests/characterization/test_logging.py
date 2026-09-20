@@ -19,6 +19,13 @@ class TestLoggingInfrastructure(unittest.TestCase):
         self.test_dir = tempfile.mkdtemp()
 
     def tearDown(self):
+        root = logging.getLogger()
+        for h in list(root.handlers):
+            try:
+                h.close()
+            except Exception:
+                pass
+            root.removeHandler(h)
         if os.path.exists(self.test_dir):
             shutil.rmtree(self.test_dir)
 
@@ -55,7 +62,13 @@ class TestLoggingInfrastructure(unittest.TestCase):
         Verifies setup_logging initializes log directory and writes rotating file.
         """
         # Clear existing handlers for clean test
-        logging.getLogger().handlers = []
+        root = logging.getLogger()
+        for h in list(root.handlers):
+            try:
+                h.close()
+            except Exception:
+                pass
+            root.removeHandler(h)
 
         logger = setup_logging(log_level=logging.DEBUG, log_dir=self.test_dir)
         log_file = os.path.join(self.test_dir, "polpot.log")
@@ -65,7 +78,7 @@ class TestLoggingInfrastructure(unittest.TestCase):
         logger.info("Test log message for verification")
 
         # Flush handlers
-        for h in logging.getLogger().handlers:
+        for h in root.handlers:
             h.flush()
 
         with open(log_file, "r", encoding="utf-8") as f:
@@ -73,6 +86,14 @@ class TestLoggingInfrastructure(unittest.TestCase):
 
         self.assertIn("Test log message for verification", content)
         self.assertIn("[INFO]", content)
+
+        # Close newly created handlers so Windows/NTFS releases file locks
+        for h in list(root.handlers):
+            try:
+                h.close()
+            except Exception:
+                pass
+            root.removeHandler(h)
 
 
 if __name__ == "__main__":

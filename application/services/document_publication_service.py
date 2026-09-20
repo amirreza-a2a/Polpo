@@ -281,7 +281,7 @@ class DocumentPublicationService:
                 src_path = Path(item["staging_path"])
                 dest_path = job_dir / item["dest_filename"]
                 shutil.copy2(src_path, dest_path)
-                with open(dest_path, "rb") as df:
+                with open(dest_path, "r+b") as df:
                     os.fsync(df.fileno())
 
             with self.uow_factory.create() as uow:

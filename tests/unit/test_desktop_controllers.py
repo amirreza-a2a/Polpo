@@ -223,7 +223,7 @@ class TestDesktopControllers(unittest.TestCase):
         self.qc_ctrl.conversion_completed.connect(lambda c, p: (received_content.append(c), received_provider.append(p)))
 
         # Pass file:// URL to verify cross-platform path resolution
-        file_url = f"file://{img_path}"
+        file_url = img_path.resolve().as_uri()
         self.qc_ctrl.convert_image(file_url, "Transcribe formula")
 
         # Wait for async background worker to complete
@@ -246,7 +246,7 @@ class TestDesktopControllers(unittest.TestCase):
         pdf_path.write_bytes(b"%PDF-1.4 sample content")
 
         future_iso = (datetime.now(timezone.utc) + timedelta(hours=5)).isoformat()
-        file_url = f"file://{pdf_path}"
+        file_url = pdf_path.resolve().as_uri()
 
         job_id = self.job_ctrl.submit_job(file_url, 0, future_iso, True)
         self.assertGreater(job_id, 0)

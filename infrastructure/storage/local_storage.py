@@ -8,7 +8,12 @@ import time
 from pathlib import Path
 from typing import BinaryIO, Optional
 from application.ports.storage import IArtifactStorage
-from core.entities.artifact import ArtifactHandle, ArtifactType, StorageBackendType
+from core.entities.artifact import (
+    ArtifactHandle,
+    ArtifactType,
+    StorageBackendType,
+    resolve_canonical_file_path,
+)
 from core.exceptions.domain_exceptions import ArtifactNotFoundError, DomainError
 from config import OUTPUT_DIR
 
@@ -61,7 +66,7 @@ class LocalStorageAdapter(IArtifactStorage):
                     pass
             raise
 
-        uri = f"file://{file_path}"
+        uri = file_path.resolve().as_uri()
         return ArtifactHandle(
             storage_backend=StorageBackendType.LOCAL_FS,
             uri=uri,
@@ -97,7 +102,7 @@ class LocalStorageAdapter(IArtifactStorage):
         Returns the canonical file URI for an existing or addressed artifact handle.
         """
         file_path = self._resolve_path(handle)
-        return f"file://{file_path}"
+        return file_path.resolve().as_uri()
 
     def delete(self, handle: ArtifactHandle) -> bool:
         try:
@@ -132,9 +137,9 @@ class LocalStorageAdapter(IArtifactStorage):
 
     def _resolve_path(self, handle: ArtifactHandle) -> Path:
         if "path" in handle.metadata:
-            resolved = Path(handle.metadata["path"]).resolve()
+            resolved = resolve_canonical_file_path(handle.metadata["path"]).resolve()
         elif handle.uri.startswith("file://"):
-            resolved = Path(handle.uri[7:]).resolve()
+            resolved = resolve_canonical_file_path(handle.uri).resolve()
         else:
             resolved = (self.base_dir / f"job_{handle.job_id}" / self._sanitize_filename(handle.filename)).resolve()
 

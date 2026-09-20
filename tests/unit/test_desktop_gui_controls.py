@@ -147,7 +147,7 @@ class TestDesktopGuiControls(unittest.TestCase):
         doc.save(str(pdf_f))
         doc.close()
 
-        jid = job_ctrl.submit_job(f"file://{pdf_f}", pid, "")
+        jid = job_ctrl.submit_job(pdf_f.resolve().as_uri(), pid, "")
         self.assertGreater(jid, 0)
         self.app.processEvents()
         self.assertGreaterEqual(self.container.job_queue_model.rowCount(), 1)

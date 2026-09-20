@@ -13,7 +13,12 @@ import pymupdf
 from PIL import Image
 
 from application.services.document_viewer_service import DocumentViewerService
-from core.entities.artifact import ArtifactType, ArtifactHandle, StorageBackendType
+from core.entities.artifact import (
+    ArtifactType,
+    ArtifactHandle,
+    StorageBackendType,
+    resolve_canonical_file_path,
+)
 from core.entities.job import Job, JobStatus
 from infrastructure.document.pymupdf_processor import PyMuPDFDocumentProcessor
 from infrastructure.persistence.sqlite.connection import SQLiteDatabaseManager
@@ -84,7 +89,7 @@ class TestPhase10EPageRasterIntegration(unittest.TestCase):
         self.assertTrue(dto.image_uri.startswith("file://"), f"Expected file URI, got: {dto.image_uri}")
 
         # Verify the file exists on disk at the resolved path
-        local_path = Path(dto.image_uri.replace("file://", ""))
+        local_path = resolve_canonical_file_path(dto.image_uri)
         self.assertTrue(local_path.exists(), f"Image file does not exist: {local_path}")
         self.assertGreater(local_path.stat().st_size, 0)
 
@@ -130,8 +135,8 @@ class TestPhase10EPageRasterIntegration(unittest.TestCase):
         self.assertEqual(dto_p1_initial.image_uri, dto_p1_revisit.image_uri)
 
         # Confirm both distinct page files exist on disk
-        path_p1 = Path(dto_p1_initial.image_uri.replace("file://", ""))
-        path_p2 = Path(dto_p2.image_uri.replace("file://", ""))
+        path_p1 = resolve_canonical_file_path(dto_p1_initial.image_uri)
+        path_p2 = resolve_canonical_file_path(dto_p2.image_uri)
         self.assertTrue(path_p1.exists())
         self.assertTrue(path_p2.exists())
 

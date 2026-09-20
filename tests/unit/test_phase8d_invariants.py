@@ -15,6 +15,7 @@ from core.entities.api_slot import ApiSlot
 from core.entities.credential_ref import CredentialRef
 from core.entities.prompt import Prompt, PromptType
 from core.entities.settings import AppSettings
+from core.entities.artifact import resolve_canonical_file_path
 from application.dto.job_dto import SubmitJobCommand
 from application.events import (
     JobProgressEvent,
@@ -108,8 +109,8 @@ class TestPhase8DInvariants(unittest.TestCase):
             self.assertTrue(job.file_path.startswith("file://"))
 
             # Verify file exists on disk
-            rel_path = job.file_path.replace("file://", "")
-            self.assertTrue(Path(rel_path).exists())
+            canonical_path = resolve_canonical_file_path(job.file_path)
+            self.assertTrue(canonical_path.exists())
 
     def test_invariant_2_no_duplicate_claims_under_concurrency(self):
         """When multiple worker threads attempt to claim pending jobs concurrently, no two workers get the same job ID."""

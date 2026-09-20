@@ -246,7 +246,7 @@ class TestDesktopPresentationInvariants(unittest.TestCase):
         doc.save(str(pdf_f))
         doc.close()
 
-        jid = job_ctrl.submit_job(f"file://{pdf_f}", pid, "")
+        jid = job_ctrl.submit_job(pdf_f.resolve().as_uri(), pid, "")
         self.assertGreater(jid, 0)
 
         # 4. Exercise Settings controller

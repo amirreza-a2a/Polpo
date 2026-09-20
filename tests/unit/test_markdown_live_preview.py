@@ -147,7 +147,7 @@ def test_canonical_04_render_preview_creates_zero_disk_files(tmp_path):
         id=42,
         file_name="test.pdf",
         file_path="file:///data/test.pdf",
-        output_path=f"file://{canonical_file}",
+        output_path=canonical_file.resolve().as_uri(),
     )
     mock_uow = MagicMock()
     mock_uow.jobs.get_by_id.return_value = job
@@ -712,7 +712,7 @@ def test_save_01_save_advances_canonical_version_and_updates_model(qapp, tmp_pat
     with uow_factory.create() as uow:
         db_job = uow.jobs.get_by_id(job_id)
         assert db_job.active_markdown_version == 2
-        assert db_job.output_path == f"file://{v2_file}"
+        assert db_job.output_path == v2_file.resolve().as_uri()
 
     # Wait for viewer load triggered by _on_editor_saved to complete
     assert _wait_for_condition(lambda: viewer_ctrl.activeVersion == 2 and not viewer_ctrl.has_active_draft and not viewer_ctrl.isLoading)

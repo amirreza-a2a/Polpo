@@ -13,7 +13,12 @@ from core.entities.job import Job, JobStatus, Pipeline2Job
 from core.entities.prompt import Prompt, PromptType
 from core.entities.api_slot import ApiSlot
 from core.entities.credential_ref import CredentialRef
-from core.entities.artifact import ArtifactType, StorageBackendType, ArtifactHandle
+from core.entities.artifact import (
+    ArtifactType,
+    StorageBackendType,
+    ArtifactHandle,
+    resolve_canonical_file_path,
+)
 from application.dto.job_dto import SubmitJobCommand
 from application.services.job_submission import JobSubmissionService
 from application.services.job_execution import JobExecutionService
@@ -154,7 +159,7 @@ def test_pipeline1_publishes_initial_document(test_setup):
         assert latest.output_path == completed_job.output_path
 
         # Verify on-disk file checksum matches
-        canonical_path = Path(latest.output_path.replace("file://", ""))
+        canonical_path = resolve_canonical_file_path(latest.output_path)
         assert canonical_path.is_file()
         file_sha = hashlib.sha256(canonical_path.read_bytes()).hexdigest()
         assert latest.sha256 == file_sha

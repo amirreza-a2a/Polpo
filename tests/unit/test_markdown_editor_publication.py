@@ -10,7 +10,7 @@ import pytest
 
 from application.services.document_publication_service import DocumentPublicationService
 from application.services.markdown_editor_service import MarkdownEditorService
-from core.entities.artifact import ArtifactType
+from core.entities.artifact import ArtifactType, resolve_canonical_file_path
 from core.entities.document_version import DocumentVersionRecord, PublishIntentRecord
 from core.entities.job import Job, JobStatus
 from core.entities.prompt import Prompt, PromptType
@@ -107,7 +107,7 @@ def test_editor_commit_publishes_new_version(pub_editor_env):
         assert updated_job.output_artifact_version_watermark == 0
 
     # 4. Verify disk file content
-    disk_path = Path(updated_job.output_path.replace("file://", ""))
+    disk_path = resolve_canonical_file_path(updated_job.output_path)
     assert disk_path.exists()
     assert disk_path.read_text(encoding="utf-8") == edited_text
 
