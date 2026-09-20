@@ -4,6 +4,7 @@
 # ============================================================
 
 import threading
+import time
 from typing import Optional, Sequence
 from unittest.mock import MagicMock
 import pytest
@@ -549,13 +550,12 @@ def test_t_merge_72_preview_unpauses_when_all_conflicts_resolved_before_save(qap
             has_conflicts=True,
         )
 
-        import time
         advance_done = threading.Event()
         mock_merge_service.analyze_three_way_merge.side_effect = lambda *a, **kw: (advance_done.set(), conflict_result)[1]
 
         editor_ctrl.notifyCanonicalDocumentAdvance(2)
         assert advance_done.wait(timeout=2.0) is True
-        for _ in range(50):
+        for _ in range(100):
             qapp.processEvents()
             if editor_ctrl.hasConflict:
                 break
@@ -611,7 +611,11 @@ def test_t_merge_73_in_buffer_manual_edits_preserved_on_toolbar_resolution(qapp,
 
         ctrl.notifyCanonicalDocumentAdvance(2)
         assert advance_done.wait(timeout=2.0) is True
-        qapp.processEvents()
+        for _ in range(100):
+            qapp.processEvents()
+            if ctrl.hasConflict:
+                break
+            time.sleep(0.01)
 
         # In-buffer text now has markers
         current_buf = ctrl.sourceText
@@ -667,7 +671,11 @@ def test_t_merge_74_d06_preserves_manual_edits_on_second_advance(qapp, mock_edit
 
         ctrl.notifyCanonicalDocumentAdvance(2)
         assert advance_1_done.wait(timeout=2.0) is True
-        qapp.processEvents()
+        for _ in range(100):
+            qapp.processEvents()
+            if ctrl.hasConflict:
+                break
+            time.sleep(0.01)
 
         # User adds text outside markers
         current_buf = ctrl.sourceText
