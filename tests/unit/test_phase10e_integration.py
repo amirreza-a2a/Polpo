@@ -377,11 +377,11 @@ def test_r4_review_workspace_shell_integration(qapp, monkeypatch):
 
         qml_path = Path(__file__).parent.parent.parent / "interfaces" / "desktop" / "qml" / "Main.qml"
         engine.load(str(qml_path))
-        qapp.processEvents()
 
         root_objects = engine.rootObjects()
         assert len(root_objects) == 1
         window = root_objects[0]
+        window.setProperty("visible", False)
 
         stack = window.findChild(object, "mainStackLayout")
         sidebar = window.findChild(object, "mainSidebar")

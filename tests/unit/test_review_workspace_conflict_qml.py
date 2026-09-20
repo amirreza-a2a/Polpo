@@ -333,7 +333,6 @@ def test_t_merge_64_open_review_workspace_job_switch_guard(qapp):
 
         qml_path = Path(__file__).parent.parent.parent / "interfaces" / "desktop" / "qml" / "Main.qml"
         engine.load(str(qml_path))
-        qapp.processEvents()
 
         root_objects = engine.rootObjects()
         assert len(root_objects) == 1
@@ -487,7 +486,6 @@ def test_t_merge_67_window_close_guard_with_exit_confirmation(qapp):
 
         qml_path = Path(__file__).parent.parent.parent / "interfaces" / "desktop" / "qml" / "Main.qml"
         engine.load(str(qml_path))
-        qapp.processEvents()
 
         root_objects = engine.rootObjects()
         assert len(root_objects) == 1
