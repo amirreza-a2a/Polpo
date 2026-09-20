@@ -38,7 +38,7 @@
 - [ ] `test-windows` and `test-linux` execute in parallel upon successful completion of `quality-gates`.
 - [ ] Full test suite (922+ tests) passes on the native Windows runner.
 - [ ] NTFS mandatory file locking is respected: zero `PermissionError` or `WinError 32` ("file in use by another process") during temp directory teardown.
-- [ ] A failure in `test-windows` causes the GitHub Actions check to fail, blocking PR merge into `master`.
+- [ ] A failure in `test-windows` causes the GitHub Actions check to fail, blocking PR merge into `main`.
 
 ## Verification / Tests Required
 

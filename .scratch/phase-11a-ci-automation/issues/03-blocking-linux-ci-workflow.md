@@ -1,6 +1,6 @@
 # 03: Blocking Linux CI Workflow (ubuntu-24.04)
 
-**What to build:** Implement the primary continuous integration workflow (`.github/workflows/ci.yml`) on the Tier 1 reference Linux distribution (`ubuntu-24.04` x86_64) with Python 3.12. The workflow executes on all pull requests targeting `master` and pushes to `master`, enforcing immutable third-party action pinning (full 40-character SHAs with verified release tags), exact commit-range quality gating via `scripts/run_quality_gates.py`, and full headless test suite execution under Linux. Both jobs are strictly merge-blocking for integration into `master`.
+**What to build:** Implement the primary continuous integration workflow (`.github/workflows/ci.yml`) on the Tier 1 reference Linux distribution (`ubuntu-24.04` x86_64) with Python 3.12. The workflow executes on all pull requests targeting `main` and pushes to `main`, enforcing immutable third-party action pinning (full 40-character SHAs with verified release tags), exact commit-range quality gating via `scripts/run_quality_gates.py`, and full headless test suite execution under Linux. Both jobs are strictly merge-blocking for integration into `main`.
 
 **Blocked by:** 02 (Reusable Quality Gates & Hygiene Validation Runner)
 
@@ -9,8 +9,8 @@
 ## Scope
 
 - Create `.github/workflows/ci.yml` triggered on:
-  - `pull_request`: branches: `[master]`
-  - `push`: branches: `[master]`
+  - `pull_request`: branches: `[main]`
+  - `push`: branches: `[main]`
 - Enforce strict third-party action pinning to immutable 40-character commit SHAs with verified release tags:
   - `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1`
   - `actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0`

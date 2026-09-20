@@ -9,7 +9,7 @@
 ## Scope
 
 - Create `.github/workflows/periodic-validation.yml` with explicit, differentiated triggers:
-  1. `schedule`: Weekly regression sweep (`cron: '0 3 * * 1'`, Mondays at 03:00 UTC) on `master`.
+  1. `schedule`: Weekly regression sweep (`cron: '0 3 * * 1'`, Mondays at 03:00 UTC) on `main`.
   2. `workflow_dispatch`: Manual trigger with inputs (`ref`: branch, commit SHA, or release candidate to test; `run_macos`: boolean; `run_python_matrix`: boolean). Enables full pre-release validation on a release branch *prior* to tagging or releasing.
   3. `push: tags: ['v*']`: Post-tag verification ensuring that any pushed release tag is fully validated across all Tier 2 environments.
 - Action pinning to immutable 40-character commit SHAs with verified release tags:
@@ -53,4 +53,4 @@
 ## Failure & Rollback Considerations
 
 - If Python 3.10 fails due to typing annotations (e.g., unquoted union syntax without `from __future__ import annotations`), fix the syntax while maintaining compatibility across `3.10 <= Python < 3.13`.
-- Periodic validation workflow runs independently of `ci.yml` and will never block master PR merges.
+- Periodic validation workflow runs independently of `ci.yml` and will never block main PR merges.
