@@ -216,7 +216,7 @@ class MarkdownDocument:
     frozen into read-only MappingProxyType and immutable tuples upon instantiation.
     """
     blocks: Tuple[MarkdownBlock, ...]
-    metadata: Mapping[str, Any] = EMPTY_METADATA
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.blocks, tuple):

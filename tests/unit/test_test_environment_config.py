@@ -5,7 +5,10 @@
 
 import os
 from pathlib import Path
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib  # type: ignore[no-redef]
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
