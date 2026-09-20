@@ -396,12 +396,13 @@ class TestPhase8DRemediation(unittest.TestCase):
 
         # Wait until job is in PROCESSING
         start_t = time.monotonic()
-        while time.monotonic() - start_t < 2.0:
+        while time.monotonic() - start_t < 10.0:
             with self.uow_factory.create() as uow:
                 job = uow.jobs.get_by_id(dto.id)
             if job.status == JobStatus.PROCESSING:
                 break
             time.sleep(0.05)
+        self.assertEqual(job.status, JobStatus.PROCESSING, "Job must transition to PROCESSING before shutdown")
 
         # Enforce shutdown with timeout of 0.1s
         shutdown_start = time.monotonic()

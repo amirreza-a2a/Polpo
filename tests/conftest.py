@@ -9,6 +9,7 @@ import os
 # platform plugin is explicitly configured. setdefault ensures explicit environment
 # overrides (e.g. QT_QPA_PLATFORM=minimal) are preserved.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("QSG_RHI_BACKEND", "software")
 
 # Default to a deterministic in-memory keyring backend across all platforms so
 # unit and integration tests run hermetically without host keyring dependencies

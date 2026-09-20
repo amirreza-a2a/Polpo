@@ -48,6 +48,7 @@ jobs:
       inputs.run_macos == true
     env:
       QT_QPA_PLATFORM: offscreen
+      QSG_RHI_BACKEND: software
 
     steps:
       - name: Checkout repository
@@ -83,6 +84,7 @@ jobs:
         python-version: ['3.10', '3.11']
     env:
       QT_QPA_PLATFORM: offscreen
+      QSG_RHI_BACKEND: software
 
     steps:
       - name: Checkout repository

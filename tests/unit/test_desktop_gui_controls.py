@@ -38,7 +38,6 @@ class TestDesktopGuiControls(unittest.TestCase):
         self.root_objects = self.engine.rootObjects()
         self.assertEqual(len(self.root_objects), 1)
         self.window = self.root_objects[0]
-        self.app.processEvents()
         self.stack = self.window.findChild(object, "mainStackLayout")
         self.assertIsNotNone(self.stack)
 
