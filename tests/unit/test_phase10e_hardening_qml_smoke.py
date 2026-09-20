@@ -309,8 +309,7 @@ class TestPhase10EHardeningQmlSmoke(unittest.TestCase):
         - Controller viewport is synchronized and not stuck at 800x600 defaults
         - Tab switching away and back preserves valid geometry without collapsing
         """
-        from PyQt6.QtQml import QQmlComponent
-        from PyQt6.QtCore import QByteArray
+        from interfaces.desktop.qt_compat import QQmlComponent, QByteArray
 
         engine = QQmlApplicationEngine()
         engine.rootContext().setContextProperty("documentViewerController", self.doc_ctrl)

@@ -320,10 +320,11 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
         # 1. Verify displayedRect and emptyArea geometry (1000x1000 raster in 1000x800 viewport -> 800x800 with offset_x=100)
         disp_rect = overlay.property("displayedRect")
         self.assertIsNotNone(disp_rect)
-        self.assertEqual(disp_rect.get("x"), 100.0)
-        self.assertEqual(disp_rect.get("y"), 0.0)
-        self.assertEqual(disp_rect.get("width"), 800.0)
-        self.assertEqual(disp_rect.get("height"), 800.0)
+        disp_dict = disp_rect.toVariant() if hasattr(disp_rect, "toVariant") else disp_rect
+        self.assertEqual(disp_dict.get("x"), 100.0)
+        self.assertEqual(disp_dict.get("y"), 0.0)
+        self.assertEqual(disp_dict.get("width"), 800.0)
+        self.assertEqual(disp_dict.get("height"), 800.0)
 
         empty_area = find_quick_item(self.view_root, "emptyArea")
         self.assertIsNotNone(empty_area)

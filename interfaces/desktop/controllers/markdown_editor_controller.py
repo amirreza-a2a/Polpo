@@ -92,6 +92,7 @@ class MarkdownEditorController(QObject):
         self._auto_merge_notification: str = ""
 
         self._text_document: Optional[QTextDocument] = None
+        self._quick_text_doc: Optional[QObject] = None
         self._highlighter: Optional[MarkdownSyntaxHighlighter] = None
         self._headless_doc: Optional[QTextDocument] = None
 
@@ -686,9 +687,11 @@ class MarkdownEditorController(QObject):
             except RuntimeError:
                 pass
             self._highlighter = None
-            self._text_document = None
+        self._text_document = None
+        self._quick_text_doc = None
 
         if quick_text_doc is not None and hasattr(quick_text_doc, "textDocument"):
+            self._quick_text_doc = quick_text_doc
             doc = quick_text_doc.textDocument()
             self._text_document = doc
             self._highlighter = MarkdownSyntaxHighlighter(doc)
@@ -1006,6 +1009,7 @@ class MarkdownEditorController(QObject):
                 pass
             self._highlighter = None
         self._text_document = None
+        self._quick_text_doc = None
         self._headless_doc = None
         self._executor.shutdown(wait=False, cancel_futures=True)
 

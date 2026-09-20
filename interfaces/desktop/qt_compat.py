@@ -17,6 +17,7 @@ try:
         QAbstractListModel,
         QEvent,
         QTimer,
+        QByteArray,
     )
     from PySide6.QtGui import (
         QGuiApplication,
@@ -28,7 +29,7 @@ try:
         QColor,
         QFont,
     )
-    from PySide6.QtQml import QQmlApplicationEngine
+    from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
     from PySide6.QtQuick import QQuickItem
     QT_BINDING = "PySide6"
 except ImportError:
@@ -45,6 +46,7 @@ except ImportError:
         QAbstractListModel,
         QEvent,
         QTimer,
+        QByteArray,
     )
     from PyQt6.QtGui import (
         QGuiApplication,
@@ -56,7 +58,7 @@ except ImportError:
         QColor,
         QFont,
     )
-    from PyQt6.QtQml import QQmlApplicationEngine
+    from PyQt6.QtQml import QQmlApplicationEngine, QQmlComponent
     from PyQt6.QtQuick import QQuickItem
     QT_BINDING = "PyQt6"
 
@@ -70,12 +72,14 @@ __all__ = [
     "QCoreApplication",
     "QThread",
     "QUrl",
+    "QByteArray",
     "QAbstractListModel",
     "QEvent",
     "QTimer",
     "QGuiApplication",
     "QDesktopServices",
     "QQmlApplicationEngine",
+    "QQmlComponent",
     "QQuickItem",
     "QTextDocument",
     "QTextCursor",
