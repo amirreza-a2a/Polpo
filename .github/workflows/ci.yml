@@ -102,3 +102,33 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           pytest -q
+
+  # Validates the Windows OS family, Win32 API contracts, and NTFS filesystem semantics
+  # on a Windows Server runner. This is not consumer Windows 10/11 desktop shell or
+  # hardware verification.
+  test-windows:
+    name: test-windows
+    runs-on: windows-2025
+    needs: quality-gates
+    env:
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run test suite
+        run: |
+          pytest -q
