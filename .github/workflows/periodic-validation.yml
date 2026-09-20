@@ -1,0 +1,112 @@
+# ==============================================================================
+# Periodic & Pre-Release Validation Workflow (Tier-2 Environments)
+#
+# Note: This workflow executes Tier-2 platform compatibility validation:
+#   1. Native macOS Apple Silicon (ARM64) on macos-15 with Python 3.12.
+#   2. Python 3.10 and 3.11 compatibility matrix on ubuntu-24.04.
+#
+# This workflow is decoupled from the everyday PR feedback loop to preserve
+# developer velocity, executing on weekly schedule, on v* tag pushes, and via
+# manual workflow_dispatch before official releases.
+# ==============================================================================
+
+name: Periodic & Pre-Release Validation
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref, branch, or tag to validate'
+        required: false
+        default: 'main'
+        type: string
+      run_macos:
+        description: 'Run native macOS 15 ARM64 validation'
+        required: false
+        default: true
+        type: boolean
+      run_python_matrix:
+        description: 'Run Python 3.10 and 3.11 matrix validation on Linux'
+        required: false
+        default: true
+        type: boolean
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  test-macos:
+    name: test-macos
+    runs-on: macos-15
+    if: |
+      github.event_name != 'workflow_dispatch' ||
+      inputs.run_macos == true
+    env:
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run test suite
+        run: |
+          pytest -q
+
+  test-python-matrix:
+    name: test-python-matrix (${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
+    if: |
+      github.event_name != 'workflow_dispatch' ||
+      inputs.run_python_matrix == true
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11']
+    env:
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1 libegl1 libxkbcommon-x11-0 libdbus-1-3
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run test suite
+        run: |
+          pytest -q
