@@ -510,12 +510,10 @@ class ApplyReviewService:
                     filename=old_filename,
                 )
                 if self.storage.exists(old_handle):
-                    resolved_uri = None
-                    if hasattr(self.storage, "_resolve_path"):
-                        try:
-                            resolved_uri = f"file://{self.storage._resolve_path(old_handle)}"
-                        except Exception:
-                            pass
+                    try:
+                        resolved_uri = self.storage.resolve_uri(old_handle)
+                    except Exception:
+                        resolved_uri = None
                     if resolved_uri not in active_uris and self.storage.delete(old_handle):
                         pruned_count += 1
 
@@ -537,12 +535,10 @@ class ApplyReviewService:
                         filename=name,
                     )
                     if self.storage.exists(old_handle):
-                        resolved_uri = None
-                        if hasattr(self.storage, "_resolve_path"):
-                            try:
-                                resolved_uri = f"file://{self.storage._resolve_path(old_handle)}"
-                            except Exception:
-                                pass
+                        try:
+                            resolved_uri = self.storage.resolve_uri(old_handle)
+                        except Exception:
+                            resolved_uri = None
                         if resolved_uri not in active_uris and self.storage.delete(old_handle):
                             pruned_count += 1
 
@@ -569,7 +565,7 @@ class ApplyReviewService:
             if job_dir.exists() and job_dir.is_dir():
                 for item in job_dir.iterdir():
                     if item.is_file():
-                        item_uri = f"file://{item.resolve()}"
+                        item_uri = item.resolve().as_uri()
                         if item_uri not in active_uris:
                             orphans.append(item.name)
         return orphans

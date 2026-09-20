@@ -160,7 +160,7 @@ def test_crash_recovery_case3_forward_roll(pub_service: DocumentPublicationServi
     final_content = "# Successfully Renamed Document\n"
     final_sha = hashlib.sha256(final_content.encode("utf-8")).hexdigest()
     final_file = job_dir / filename
-    final_file.write_text(final_content, encoding="utf-8")
+    final_file.write_bytes(final_content.encode("utf-8"))
 
     with uow_factory.create() as uow:
         _create_job(uow, job_id=job_id)

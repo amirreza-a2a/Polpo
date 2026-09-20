@@ -64,7 +64,7 @@ def _create_test_job(
 def test_backfill_existing_job_with_file(uow_factory: SQLiteUnitOfWorkFactory, tmp_path: Path):
     doc_file = tmp_path / "output_1_v1.md"
     content = "# Document Title\n\nSome canonical text."
-    doc_file.write_text(content, encoding="utf-8")
+    doc_file.write_bytes(content.encode("utf-8"))
     expected_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
     with uow_factory.create() as uow:

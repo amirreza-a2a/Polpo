@@ -384,8 +384,10 @@ def test_t_merge_64_open_review_workspace_job_switch_guard(qapp):
         # Editor cleared and switched to job 20
         assert md_editor.activeJobId == 20
 
+        md_editor.shutdown()
         container.shutdown()
         qapp.processEvents()
+        del modal, cancel_btn, discard_btn, window, root_objects, engine
 
 
 def test_t_merge_65_textarea_undo_redo_inside_conflict_markers(qapp, mock_editor_service):
@@ -549,5 +551,7 @@ def test_t_merge_67_window_close_guard_with_exit_confirmation(qapp):
         assert modal.property("visible") is False
         assert window.property("forceExit") is True
 
+        md_editor.shutdown()
         container.shutdown()
         qapp.processEvents()
+        del modal, cancel_btn, discard_btn, window, root_objects, engine

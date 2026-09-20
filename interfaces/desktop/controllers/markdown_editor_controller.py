@@ -1011,7 +1011,7 @@ class MarkdownEditorController(QObject):
         self._text_document = None
         self._quick_text_doc = None
         self._headless_doc = None
-        self._executor.shutdown(wait=False, cancel_futures=True)
+        self._executor.shutdown(wait=True, cancel_futures=True)
 
     # -----------------------------------------------------------------------
     # Internal Handlers (GUI Thread)
