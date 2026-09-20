@@ -3,6 +3,7 @@
 #  Integration Tests for Phase 10E.6 Workspace Integration & Sync
 # ============================================================
 
+import gc
 import os
 import tempfile
 from unittest.mock import MagicMock
@@ -375,55 +376,69 @@ def test_r4_review_workspace_shell_integration(qapp, monkeypatch):
             scheduler_tick_interval=0.1,
         )
 
-        qml_path = Path(__file__).parent.parent.parent / "interfaces" / "desktop" / "qml" / "Main.qml"
-        engine.load(str(qml_path))
+        window = None
+        root_objects = None
+        try:
+            qml_path = Path(__file__).parent.parent.parent / "interfaces" / "desktop" / "qml" / "Main.qml"
+            engine.load(str(qml_path))
 
-        root_objects = engine.rootObjects()
-        assert len(root_objects) == 1
-        window = root_objects[0]
-        window.setProperty("visible", False)
+            root_objects = engine.rootObjects()
+            assert len(root_objects) == 1
+            window = root_objects[0]
+            window.setProperty("visible", False)
 
-        stack = window.findChild(object, "mainStackLayout")
-        sidebar = window.findChild(object, "mainSidebar")
-        assert stack is not None
-        assert sidebar is not None
+            stack = window.findChild(object, "mainStackLayout")
+            sidebar = window.findChild(object, "mainSidebar")
+            assert stack is not None
+            assert sidebar is not None
 
-        # Tab 6 must be ReviewWorkspaceView
-        assert stack.property("count") == 7
+            # Tab 6 must be ReviewWorkspaceView
+            assert stack.property("count") == 7
 
-        review_view = window.findChild(object, "reviewWorkspaceView")
-        assert review_view is not None, "ReviewWorkspaceView must be embedded in Main.qml shell"
+            review_view = window.findChild(object, "reviewWorkspaceView")
+            assert review_view is not None, "ReviewWorkspaceView must be embedded in Main.qml shell"
 
-        split_view = review_view.findChild(object, "reviewSplitView")
-        assert split_view is not None, "ReviewWorkspaceView must contain a reviewSplitView"
-        assert split_view.property("orientation") in (Qt.Orientation.Horizontal, 1) or getattr(split_view.property("orientation"), "value", None) == 1
+            split_view = review_view.findChild(object, "reviewSplitView")
+            assert split_view is not None, "ReviewWorkspaceView must contain a reviewSplitView"
+            assert split_view.property("orientation") in (Qt.Orientation.Horizontal, 1) or getattr(split_view.property("orientation"), "value", None) == 1
 
-        doc_view = review_view.findChild(object, "documentViewerView")
-        assert doc_view is not None, "DocumentViewerView must be a descendant of reviewWorkspaceView"
+            doc_view = review_view.findChild(object, "documentViewerView")
+            assert doc_view is not None, "DocumentViewerView must be a descendant of reviewWorkspaceView"
 
-        md_view = review_view.findChild(object, "markdownView")
-        assert md_view is not None, "MarkdownView must be a descendant of reviewWorkspaceView"
+            md_view = review_view.findChild(object, "markdownView")
+            assert md_view is not None, "MarkdownView must be a descendant of reviewWorkspaceView"
 
-        # Mock query service job detail with output path
-        mock_job = MagicMock()
-        mock_job.output_path = "/tmp/out.md"
-        container.job_controller.query_service.get_job_detail = MagicMock(return_value=mock_job)
+            # Mock query service job detail with output path
+            mock_job = MagicMock()
+            mock_job.output_path = "/tmp/out.md"
+            container.job_controller.query_service.get_job_detail = MagicMock(return_value=mock_job)
 
-        # 2. Trigger open_artifact_default
-        received_jobs = []
-        container.job_controller.open_review_requested.connect(lambda jid: received_jobs.append(jid))
+            # 2. Trigger open_artifact_default
+            received_jobs = []
+            container.job_controller.open_review_requested.connect(lambda jid: received_jobs.append(jid))
 
-        ok = container.job_controller.open_artifact_default(42)
-        assert ok is True
-        assert received_jobs == [42]
-        # Verify OS default viewer was NOT launched
-        assert mock_open_url.call_count == 0
+            ok = container.job_controller.open_artifact_default(42)
+            assert ok is True
+            assert received_jobs == [42]
+            # Verify OS default viewer was NOT launched
+            assert mock_open_url.call_count == 0
 
-        # Process events so Main.qml onOpen_review_requested executes
-        qapp.processEvents()
+            # Process events so Main.qml onOpen_review_requested executes
+            qapp.processEvents()
 
-        # Shell entered review workspace!
-        assert sidebar.property("currentTab") == 6
-        assert stack.property("currentIndex") == 6
-
-        container.shutdown()
+            # Shell entered review workspace!
+            assert sidebar.property("currentTab") == 6
+            assert stack.property("currentIndex") == 6
+        finally:
+            if hasattr(container, "markdown_editor_controller") and container.markdown_editor_controller:
+                container.markdown_editor_controller.shutdown()
+            if hasattr(container, "markdown_viewer_controller") and container.markdown_viewer_controller:
+                container.markdown_viewer_controller._executor.shutdown(wait=True)
+            if hasattr(container, "document_viewer_controller") and container.document_viewer_controller:
+                container.document_viewer_controller._executor.shutdown(wait=True)
+            container.shutdown()
+            qapp.processEvents()
+            del window, root_objects
+            engine.deleteLater()
+            qapp.processEvents()
+            gc.collect()
