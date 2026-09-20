@@ -5,7 +5,10 @@
 import sys
 import os
 import errno
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # POSIX only; unavailable on Windows
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -19,12 +22,13 @@ _lock_file_fd = None
 
 def acquire_lock() -> bool:
     """
-    قفل غیرمسدودکننده (non-blocking) با fcntl.flock روی فایل WORKER_LOCK_FILE دریافت می‌کند.
-    اگر قفل موفق باشد True برمی‌گرداند.
-    اگر Worker دیگری در حال حاضر قفل را داشته باشد False برمی‌گرداند.
-    خطاهای واقعی فایل‌سیستم یا دسترسی (مانند PermissionError) بالا انداخته می‌شوند.
-    سیستم‌عامل با پایان یا کرش پروسس، قفل را خودکار آزاد می‌کند.
+    Acquires a non-blocking lock on WORKER_LOCK_FILE using fcntl.flock on POSIX.
+    On non-POSIX systems where fcntl is unavailable, raises NotImplementedError.
+    Returns True if the lock was acquired, or False if another worker owns it.
     """
+    if fcntl is None:
+        raise NotImplementedError("Single-instance worker file locking requires POSIX 'fcntl'.")
+
     global _lock_file_fd
     file_fd = None
     try:
@@ -55,11 +59,12 @@ def acquire_lock() -> bool:
 
 
 def release_lock():
-    """قفل فایل را آزاد می‌کند و فایل را می‌بندد."""
+    """Releases the lock file and closes the file descriptor."""
     global _lock_file_fd
     if _lock_file_fd is not None:
         try:
-            fcntl.flock(_lock_file_fd.fileno(), fcntl.LOCK_UN)
+            if fcntl is not None:
+                fcntl.flock(_lock_file_fd.fileno(), fcntl.LOCK_UN)
             _lock_file_fd.close()
         except Exception:
             pass

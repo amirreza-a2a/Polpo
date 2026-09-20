@@ -61,6 +61,29 @@ class TestJobStateRetryCharacterization(unittest.TestCase):
             # Pages processed must remain preserved
             self.assertEqual(job["processed_pages"], 4)
 
+    def test_worker_module_cross_platform_contract(self):
+        """
+        Regression test: services.worker must remain importable across all platforms,
+        with MAX_AUTO_RETRY exported.
+        When fcntl is None (simulating Windows/non-POSIX), acquire_lock raises NotImplementedError.
+        On POSIX where fcntl is available, fcntl is not None.
+        """
+        import services.worker as worker
+
+        self.assertEqual(worker.MAX_AUTO_RETRY, 5)
+
+        # Simulate non-POSIX / Windows environment where fcntl is absent
+        with patch.object(worker, "fcntl", None):
+            with self.assertRaises(NotImplementedError):
+                worker.acquire_lock()
+
+        # On POSIX hosts where fcntl is available, verify fcntl is present
+        try:
+            import fcntl as _host_fcntl  # noqa: F401
+            self.assertIsNotNone(worker.fcntl)
+        except (ImportError, ModuleNotFoundError):
+            pass
+
 
 if __name__ == "__main__":
     unittest.main()
