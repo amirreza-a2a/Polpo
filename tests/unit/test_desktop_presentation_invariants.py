@@ -8,6 +8,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import keyring
+from keyring.backend import KeyringBackend
+
 from interfaces.desktop.qt_compat import QGuiApplication
 from interfaces.desktop.app import create_app
 from interfaces.desktop.controllers import (
@@ -25,12 +28,46 @@ from interfaces.desktop.models import (
 )
 
 
+class _MockMemoryKeyring(KeyringBackend):
+    """Deterministic in-memory keyring backend for presentation invariant tests."""
+
+    priority = 10
+
+    def __init__(self):
+        self._vault = {}
+
+    def get_password(self, service, username):
+        return self._vault.get(f"{service}::{username}")
+
+    def set_password(self, service, username, password):
+        self._vault[f"{service}::{username}"] = str(password)
+
+    def delete_password(self, service, username):
+        key = f"{service}::{username}"
+        if key in self._vault:
+            del self._vault[key]
+        else:
+            raise keyring.errors.PasswordDeleteError("Password not found")
+
+
 class TestDesktopPresentationInvariants(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QGuiApplication.instance()
         if cls.app is None:
             cls.app = QGuiApplication(["-platform", "offscreen"])
+
+    def setUp(self):
+        super().setUp()
+        self._prev_keyring = keyring.get_keyring()
+        self._mock_keyring = _MockMemoryKeyring()
+        keyring.set_keyring(self._mock_keyring)
+
+    def tearDown(self):
+        try:
+            keyring.set_keyring(self._prev_keyring)
+        finally:
+            super().tearDown()
 
     def test_invariant_1_core_and_application_contain_no_qt_imports(self):
         """AST analysis verifying zero Qt, PySide6, or PyQt6 imports in core/ or application/."""
