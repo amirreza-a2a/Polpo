@@ -18,6 +18,7 @@ try:
         QEvent,
         QTimer,
         QByteArray,
+        QSize,
     )
     from PySide6.QtGui import (
         QGuiApplication,
@@ -28,9 +29,12 @@ try:
         QTextCharFormat,
         QColor,
         QFont,
+        QImage,
+        QPainter,
     )
     from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
-    from PySide6.QtQuick import QQuickItem
+    from PySide6.QtQuick import QQuickItem, QQuickImageProvider
+    from PySide6.QtSvg import QSvgRenderer
     QT_BINDING = "PySide6"
 except ImportError:
     from PyQt6.QtCore import (
@@ -47,6 +51,7 @@ except ImportError:
         QEvent,
         QTimer,
         QByteArray,
+        QSize,
     )
     from PyQt6.QtGui import (
         QGuiApplication,
@@ -57,9 +62,12 @@ except ImportError:
         QTextCharFormat,
         QColor,
         QFont,
+        QImage,
+        QPainter,
     )
     from PyQt6.QtQml import QQmlApplicationEngine, QQmlComponent
-    from PyQt6.QtQuick import QQuickItem
+    from PyQt6.QtQuick import QQuickItem, QQuickImageProvider
+    from PyQt6.QtSvg import QSvgRenderer
     QT_BINDING = "PyQt6"
 
 __all__ = [
@@ -73,6 +81,7 @@ __all__ = [
     "QThread",
     "QUrl",
     "QByteArray",
+    "QSize",
     "QAbstractListModel",
     "QEvent",
     "QTimer",
@@ -81,6 +90,10 @@ __all__ = [
     "QQmlApplicationEngine",
     "QQmlComponent",
     "QQuickItem",
+    "QQuickImageProvider",
+    "QSvgRenderer",
+    "QImage",
+    "QPainter",
     "QTextDocument",
     "QTextCursor",
     "QSyntaxHighlighter",

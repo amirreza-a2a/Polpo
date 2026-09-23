@@ -27,6 +27,7 @@ from interfaces.desktop.models import (
     PromptListModel,
 )
 from interfaces.desktop.coordinators.review_workspace_sync_coordinator import ReviewWorkspaceSyncCoordinator
+from interfaces.desktop.providers.math_image_provider import MathImageProvider
 from application.services.markdown_merge_service import MarkdownMergeService
 
 
@@ -292,6 +293,10 @@ def create_app(
 
     # 6. QML Engine & Root Context Exposure
     engine = QQmlApplicationEngine()
+    math_image_provider = MathImageProvider(container.math_svg_cache)
+    engine.addImageProvider("math", math_image_provider)
+    container.math_image_provider = math_image_provider
+
     ctx = engine.rootContext()
     ctx.setContextProperty("jobController", job_controller)
     ctx.setContextProperty("apiKeyController", api_key_controller)

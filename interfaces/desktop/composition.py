@@ -38,6 +38,7 @@ from application.services.markdown_editor_service import MarkdownEditorService
 from application.services.document_publication_service import DocumentPublicationService
 from application.services.crop_artifact_staging_service import CropArtifactStagingService
 from infrastructure.markdown.markdown_it_parser import MarkdownItParser
+from infrastructure.math import MathSvgCache, MathJaxProcessSupervisor, MathJaxClient
 from interfaces.desktop.workers.runtime import DesktopJobRuntime
 from interfaces.desktop.workers.scheduler import DesktopJobScheduler
 
@@ -160,11 +161,18 @@ class DesktopAppContainer:
             doc_processor=self.doc_processor,
         )
 
+        self.math_svg_cache = MathSvgCache(capacity=1000)
+        self.mathjax_supervisor = MathJaxProcessSupervisor()
+        self.math_renderer = MathJaxClient(
+            supervisor=self.mathjax_supervisor, cache=self.math_svg_cache
+        )
+
         self.markdown_parser = MarkdownItParser()
         self.markdown_viewer_service = MarkdownViewerService(
             parser=self.markdown_parser,
             uow_factory=self.uow_factory,
             storage=self.storage,
+            math_renderer=self.math_renderer,
         )
 
         self.markdown_editor_service = MarkdownEditorService(
@@ -237,5 +245,7 @@ class DesktopAppContainer:
             self.markdown_viewer_controller.shutdown()
         if hasattr(self, "document_viewer_controller") and self.document_viewer_controller:
             self.document_viewer_controller.shutdown()
+        if hasattr(self, "mathjax_supervisor") and self.mathjax_supervisor:
+            self.mathjax_supervisor.shutdown()
         self.scheduler.shutdown()
         self.runtime.shutdown()

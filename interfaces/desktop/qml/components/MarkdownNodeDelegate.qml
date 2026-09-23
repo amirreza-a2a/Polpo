@@ -68,6 +68,7 @@ Item {
                 if (t === "blockquote") return blockquoteComponent
                 if (t === "thematic_break") return breakComponent
                 if (t === "table_fallback") return tableFallbackComponent
+                if (t === "math_block") return mathBlockComponent
                 return paragraphComponent
             }
         }
@@ -361,6 +362,27 @@ Item {
                 font.family: "Monospace"
                 font.pixelSize: Math.round(12 * scaleFactor)
                 wrapMode: Text.NoWrap
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Standalone Math Block Component (TICK-010)
+    // -----------------------------------------------------------------------
+    Component {
+        id: mathBlockComponent
+        Item {
+            id: mathBlockRoot
+            width: parent.width
+            implicitHeight: mathImage.implicitHeight + 20
+
+            Image {
+                id: mathImage
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.verticalCenter: parent.verticalCenter
+                source: "image://math/" + (model.mathHash || "")
+                fillMode: Image.PreserveAspectFit
+                sourceSize.width: Math.min(implicitWidth * delegateRoot.scaleFactor, parent.width - 40)
             }
         }
     }
