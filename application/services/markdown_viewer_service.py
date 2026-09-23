@@ -19,6 +19,7 @@ from application.dto.markdown_dto import (
     VisualRegionRefDTO,
 )
 from application.ports.markdown_parser import IMarkdownParser
+from application.ports.math_renderer import MathRenderRequest
 from application.ports.storage import IArtifactStorage
 from application.ports.unit_of_work import IUnitOfWorkFactory
 from core.entities.artifact import ArtifactHandle, ArtifactType, StorageBackendType
@@ -33,6 +34,7 @@ from core.markdown.ast import (
     InlineType,
     ListBlock,
     MarkdownBlock,
+    MathBlock,
     ParagraphBlock,
     TableFallbackBlock,
     ThematicBreakBlock,
@@ -308,6 +310,8 @@ class MarkdownViewerService:
                 segments=segments,
                 source_start_line=block.source_start_line,
                 source_end_line=block.source_end_line,
+                source_start_col=block.source_start_col,
+                source_end_col=block.source_end_col,
             )
 
         elif isinstance(block, ParagraphBlock):
@@ -332,6 +336,8 @@ class MarkdownViewerService:
                 segments=segments,
                 source_start_line=block.source_start_line,
                 source_end_line=block.source_end_line,
+                source_start_col=block.source_start_col,
+                source_end_col=block.source_end_col,
             )
 
         elif isinstance(block, ImageBlock):
@@ -370,6 +376,8 @@ class MarkdownViewerService:
                 segments=segments,
                 source_start_line=block.source_start_line,
                 source_end_line=block.source_end_line,
+                source_start_col=block.source_start_col,
+                source_end_col=block.source_end_col,
             )
 
         elif isinstance(block, CodeBlock):
@@ -387,6 +395,8 @@ class MarkdownViewerService:
                 raw_markdown=raw,
                 source_start_line=block.source_start_line,
                 source_end_line=block.source_end_line,
+                source_start_col=block.source_start_col,
+                source_end_col=block.source_end_col,
             )
 
         elif isinstance(block, ListBlock):
@@ -456,6 +466,8 @@ class MarkdownViewerService:
                 regions=tuple(all_regions),
                 source_start_line=block.source_start_line,
                 source_end_line=block.source_end_line,
+                source_start_col=block.source_start_col,
+                source_end_col=block.source_end_col,
             )
 
         elif isinstance(block, BlockquoteBlock):
@@ -517,6 +529,25 @@ class MarkdownViewerService:
                             segments=s_list,
                         )
                     )
+                elif isinstance(sub_b, MathBlock):
+                    math_hash = MathRenderRequest(tex=sub_b.content, display=True).compute_hash()
+                    escaped_tex = html.escape(sub_b.content, quote=True)
+                    inner_htmls.append(f'<p><img src="image://math/{math_hash}" align="middle"/></p>')
+                    math_seg = InlineSegmentDTO(
+                        segment_type="math",
+                        text_html=f"$${escaped_tex}$$",
+                        math_tex=sub_b.content,
+                        math_hash=math_hash,
+                    )
+                    quote_segments.append(math_seg)
+                    quote_children.append(
+                        QuoteChildBlockDTO(
+                            child_type="math_block",
+                            content=sub_b.content,
+                            level=0,
+                            segments=(math_seg,),
+                        )
+                    )
                 elif hasattr(sub_b, "inlines"):
                     sub_node_id = f"{node_id}_b{p_idx}"
                     c_html, s_list, r_list = self._render_inlines(
@@ -548,6 +579,8 @@ class MarkdownViewerService:
                 quote_children=tuple(quote_children),
                 source_start_line=block.source_start_line,
                 source_end_line=block.source_end_line,
+                source_start_col=block.source_start_col,
+                source_end_col=block.source_end_col,
             )
 
         elif isinstance(block, ThematicBreakBlock):
@@ -561,6 +594,8 @@ class MarkdownViewerService:
                 raw_markdown="---",
                 source_start_line=block.source_start_line,
                 source_end_line=block.source_end_line,
+                source_start_col=block.source_start_col,
+                source_end_col=block.source_end_col,
             )
 
         elif isinstance(block, TableFallbackBlock):
@@ -615,6 +650,28 @@ class MarkdownViewerService:
                 table_cell_segments=tuple(table_cell_segments),
                 source_start_line=block.source_start_line,
                 source_end_line=block.source_end_line,
+                source_start_col=block.source_start_col,
+                source_end_col=block.source_end_col,
+            )
+
+        elif isinstance(block, MathBlock):
+            tex = block.content
+            math_hash = MathRenderRequest(tex=tex, display=True).compute_hash()
+            key = ("math", math_hash[:12])
+            seen_counts[key] += 1
+            node_id = f"math_{math_hash[:12]}_{seen_counts[key]}"
+            raw = f"$${tex}$$"
+            return MarkdownNodeDTO(
+                node_id=node_id,
+                node_type="math_block",
+                content=tex,
+                raw_markdown=raw,
+                math_tex=tex,
+                math_hash=math_hash,
+                source_start_line=block.source_start_line,
+                source_end_line=block.source_end_line,
+                source_start_col=block.source_start_col,
+                source_end_col=block.source_end_col,
             )
 
         # Generic fallback
@@ -626,6 +683,8 @@ class MarkdownViewerService:
             node_type="paragraph",
             source_start_line=getattr(block, "source_start_line", None),
             source_end_line=getattr(block, "source_end_line", None),
+            source_start_col=getattr(block, "source_start_col", None),
+            source_end_col=getattr(block, "source_end_col", None),
         )
 
     def _render_inlines(
@@ -689,6 +748,32 @@ class MarkdownViewerService:
 
                 # Emit distinct image segment for native QML Flow rendering
                 segments_list.append(InlineSegmentDTO(segment_type="image", image_ref=vref))
+
+                # Re-open active formatting tags for the subsequent text segment
+                for open_tag, _ in active_formatting:
+                    current_text_chunks.append(open_tag)
+
+            elif span.span_type == InlineType.MATH:
+                math_tex = span.text
+                math_hash = MathRenderRequest(tex=math_tex, display=False).compute_hash()
+                escaped_tex = html.escape(math_tex, quote=True)
+                full_content_chunks.append(f'<img src="image://math/{math_hash}" align="middle"/>')
+
+                # Before flushing text segment, close active formatting tags in reverse order
+                for _, close_tag in reversed(active_formatting):
+                    current_text_chunks.append(close_tag)
+
+                flush_text_segment()
+
+                # Emit distinct math segment for native QML Flow rendering
+                segments_list.append(
+                    InlineSegmentDTO(
+                        segment_type="math",
+                        text_html=f"${escaped_tex}$",
+                        math_tex=math_tex,
+                        math_hash=math_hash,
+                    )
+                )
 
                 # Re-open active formatting tags for the subsequent text segment
                 for open_tag, _ in active_formatting:
