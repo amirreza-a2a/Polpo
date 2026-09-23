@@ -7,6 +7,10 @@ lists, code blocks, and reverse coordinate mapping.
 
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+
 import pytest
 
 from application.ports.markdown_parser import IMarkdownParser
@@ -24,7 +28,46 @@ from core.markdown.ast import (
     TableFallbackBlock,
     ThematicBreakBlock,
 )
+from infrastructure.markdown.exceptions import PandocNotFoundError
+from infrastructure.markdown.pandoc_binary import PandocBinaryResolver
 from infrastructure.markdown.pandoc_parser import PandocParser
+from infrastructure.markdown.pandoc_runner import PandocRunner
+
+_FIXTURE_PATH = Path(__file__).parents[1] / "fixtures" / "pandoc_ast_fixtures.json"
+
+
+@pytest.fixture(autouse=True)
+def ensure_pandoc_runner_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure tests run hermetically across platforms even when Pandoc binary is absent.
+
+    If a valid Pandoc executable is discovered on the host system, real execution occurs.
+    If Pandoc is absent (e.g. headless CI runners or clean development checkouts),
+    resolves binary to mock path and supplies authoritative Pandoc AST fixtures.
+    """
+    try:
+        PandocBinaryResolver().resolve()
+        pandoc_present = True
+    except PandocNotFoundError:
+        pandoc_present = False
+
+    force_fallback = bool(os.environ.get("POLPO_FORCE_PANDOC_FIXTURES"))
+    if not pandoc_present or force_fallback:
+        fixtures: dict[str, dict] = json.loads(_FIXTURE_PATH.read_text(encoding="utf-8"))
+
+        monkeypatch.setattr(
+            PandocBinaryResolver,
+            "resolve",
+            lambda self: Path("/mock/bin/pandoc"),
+        )
+
+        original_run = PandocRunner.run
+
+        def mock_run(self: PandocRunner, text: str, timeout_seconds: float = 5.0) -> dict:
+            if text in fixtures:
+                return fixtures[text]
+            return original_run(self, text, timeout_seconds=timeout_seconds)
+
+        monkeypatch.setattr(PandocRunner, "run", mock_run)
 
 
 def test_pandoc_parser_implements_interface():

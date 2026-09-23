@@ -300,7 +300,14 @@ class PandocParser(IMarkdownParser):
     """Authoritative Pandoc Markdown parser implementing IMarkdownParser."""
 
     def __init__(self, runner: Optional[PandocRunner] = None) -> None:
-        self._runner = runner or PandocRunner()
+        self._runner = runner
+
+    @property
+    def runner(self) -> PandocRunner:
+        """Lazily resolve and return the PandocRunner instance."""
+        if self._runner is None:
+            self._runner = PandocRunner()
+        return self._runner
 
     def parse(self, text: str) -> MarkdownDocument:
         """Parse raw Markdown string into canonical PolpoT MarkdownDocument AST."""
@@ -311,7 +318,7 @@ class PandocParser(IMarkdownParser):
         normalized_text, pos_mapper = syntax_aware_normalize_legacy(text)
 
         # 2. Execute Pandoc synchronously with +sourcepos
-        ast_dict = self._runner.run(normalized_text)
+        ast_dict = self.runner.run(normalized_text)
 
         raw_blocks = ast_dict.get("blocks", [])
         meta = ast_dict.get("meta", {})
