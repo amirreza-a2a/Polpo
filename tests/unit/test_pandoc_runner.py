@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -83,16 +84,19 @@ def test_pandoc_runner_successful_execution():
         result = runner.run("# Sample Header\n", timeout_seconds=4.0)
 
         assert result == SAMPLE_VALID_AST
-        mock_run.assert_called_once_with(
-            [str(mock_binary), "-f", "commonmark_x+sourcepos", "-t", "json"],
-            input="# Sample Header\n",
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=4.0,
-            check=False,
-        )
+        mock_run.assert_called_once()
+        cmd_args, cmd_kwargs = mock_run.call_args
+        assert Path(cmd_args[0][0]) == runner.binary_path
+        assert cmd_args[0][1:] == ["-f", "commonmark_x+sourcepos", "-t", "json"]
+        assert cmd_kwargs["input"] == "# Sample Header\n"
+        assert cmd_kwargs["capture_output"] is True
+        assert cmd_kwargs["text"] is True
+        assert cmd_kwargs["encoding"] == "utf-8"
+        assert cmd_kwargs["errors"] == "replace"
+        assert cmd_kwargs["timeout"] == 4.0
+        assert cmd_kwargs["check"] is False
+        if sys.platform == "win32":
+            assert cmd_kwargs.get("creationflags") == getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 
 
 def test_pandoc_runner_utf8_stdin_preservation():
