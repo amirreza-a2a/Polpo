@@ -352,7 +352,7 @@ class MarkdownViewerService:
                 seen_counts[key] += 1
                 node_id = f"img_unlinked_{src_hash}_{seen_counts[key]}"
 
-            occurrence_id = f"{node_id}_img_0"
+            occurrence_id = block.occurrence_id if block.occurrence_id else f"{node_id}_img_0"
             vref = self._create_visual_region_ref(
                 occurrence_id=occurrence_id,
                 source=block.source,
@@ -532,7 +532,7 @@ class MarkdownViewerService:
                 elif isinstance(sub_b, MathBlock):
                     math_hash = MathRenderRequest(tex=sub_b.content, display=True).compute_hash()
                     escaped_tex = html.escape(sub_b.content, quote=True)
-                    inner_htmls.append(f'<p><img src="image://math/{math_hash}" align="middle"/></p>')
+                    inner_htmls.append(f"<p>$${escaped_tex}$$</p>")
                     math_seg = InlineSegmentDTO(
                         segment_type="math",
                         text_html=f"$${escaped_tex}$$",
@@ -717,7 +717,7 @@ class MarkdownViewerService:
 
         def process_span(span: InlineSpan):
             if span.span_type == InlineType.IMAGE:
-                occ_id = f"{node_id}_img_{img_counter[0]}"
+                occ_id = span.occurrence_id if span.occurrence_id else f"{node_id}_img_{img_counter[0]}"
                 img_counter[0] += 1
                 vref = self._create_visual_region_ref(
                     occurrence_id=occ_id,
@@ -757,7 +757,7 @@ class MarkdownViewerService:
                 math_tex = span.text
                 math_hash = MathRenderRequest(tex=math_tex, display=False).compute_hash()
                 escaped_tex = html.escape(math_tex, quote=True)
-                full_content_chunks.append(f'<img src="image://math/{math_hash}" align="middle"/>')
+                full_content_chunks.append(f"${escaped_tex}$")
 
                 # Before flushing text segment, close active formatting tags in reverse order
                 for _, close_tag in reversed(active_formatting):

@@ -45,6 +45,7 @@ class InlineSpan:
     target: Optional[str] = None  # URL for links; image source URI for inline images
     children: Tuple["InlineSpan", ...] = ()
     region_id: Optional[str] = None  # Optional explicit region_id or resolved region identity
+    occurrence_id: Optional[str] = None  # Optional canonical occurrence identity
     is_associated: bool = False  # True when region_id is confirmed bound to an active VisualRegion
     display_order: Optional[int] = None  # Visual region display order when associated
 
@@ -106,6 +107,7 @@ class ImageBlock(MarkdownBlock):
     alt_text: str = ""
     title: str = ""
     region_id: Optional[str] = None
+    occurrence_id: Optional[str] = None
     is_associated: bool = False
     display_order: Optional[int] = None
     raw_tag: str = ""
