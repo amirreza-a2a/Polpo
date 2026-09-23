@@ -37,7 +37,7 @@ from application.services.markdown_viewer_service import MarkdownViewerService
 from application.services.markdown_editor_service import MarkdownEditorService
 from application.services.document_publication_service import DocumentPublicationService
 from application.services.crop_artifact_staging_service import CropArtifactStagingService
-from infrastructure.markdown.markdown_it_parser import MarkdownItParser
+from infrastructure.markdown.pandoc_parser import PandocParser
 from infrastructure.math import MathSvgCache, MathJaxProcessSupervisor, MathJaxClient
 from interfaces.desktop.workers.runtime import DesktopJobRuntime
 from interfaces.desktop.workers.scheduler import DesktopJobScheduler
@@ -167,7 +167,7 @@ class DesktopAppContainer:
             supervisor=self.mathjax_supervisor, cache=self.math_svg_cache
         )
 
-        self.markdown_parser = MarkdownItParser()
+        self.markdown_parser = PandocParser()
         self.markdown_viewer_service = MarkdownViewerService(
             parser=self.markdown_parser,
             uow_factory=self.uow_factory,
