@@ -65,6 +65,8 @@ class MarkdownBlock:
     _: KW_ONLY
     source_start_line: Optional[int] = None
     source_end_line: Optional[int] = None
+    source_start_col: Optional[int] = None
+    source_end_col: Optional[int] = None
 
 
 @dataclass(frozen=True)
