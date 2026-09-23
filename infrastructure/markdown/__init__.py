@@ -1,13 +1,14 @@
 # ============================================================
 #  infrastructure/markdown/__init__.py
-#  Infrastructure Markdown Parser & Wiki-Link Plugin
+#  Infrastructure Markdown Parsing & Coordinate Mapping Subsystem
 # ============================================================
 
-from infrastructure.markdown.markdown_it_parser import MarkdownItParser
-from infrastructure.markdown.wiki_link_plugin import wiki_image_rule, wiki_link_plugin
+from infrastructure.markdown.pandoc_binary import PandocBinaryResolver
+from infrastructure.markdown.pandoc_parser import PandocParser
+from infrastructure.markdown.pandoc_runner import PandocRunner
 
 __all__ = [
-    "MarkdownItParser",
-    "wiki_image_rule",
-    "wiki_link_plugin",
+    "PandocBinaryResolver",
+    "PandocParser",
+    "PandocRunner",
 ]

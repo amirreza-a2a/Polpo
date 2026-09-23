@@ -88,8 +88,9 @@ _LINE_TOKEN_RE = re.compile(
 
 def _format_replacement(target: str) -> str:
     """Format CommonMark image syntax from legacy target string."""
-    if "|" in target:
-        url_part, alt_part = target.split("|", 1)
+    target_clean = target.replace(r"\|", "|")
+    if "|" in target_clean:
+        url_part, alt_part = target_clean.split("|", 1)
         url = url_part.strip()
         alt = alt_part.strip()
     else:

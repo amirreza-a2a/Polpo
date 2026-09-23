@@ -23,7 +23,7 @@ from core.entities.artifact import ArtifactType
 from core.entities.bounding_box import BoundingBox
 from core.entities.job import Job, JobStatus
 from core.entities.visual_region import RegionOrigin, ReviewStatus, SyncStatus, VisualRegion
-from infrastructure.markdown.markdown_it_parser import MarkdownItParser
+from infrastructure.markdown.pandoc_parser import PandocParser
 from interfaces.desktop.app import create_app, wire_review_workspace_sync
 from interfaces.desktop.composition import DesktopAppContainer
 from interfaces.desktop.controllers.document_viewer_controller import DocumentViewerController
@@ -54,7 +54,7 @@ def test_composition_root_wires_markdown_components():
         )
 
         assert hasattr(container, "markdown_parser")
-        assert isinstance(container.markdown_parser, MarkdownItParser)
+        assert isinstance(container.markdown_parser, PandocParser)
 
         assert hasattr(container, "markdown_viewer_service")
         assert isinstance(container.markdown_viewer_service, MarkdownViewerService)

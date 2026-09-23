@@ -13,7 +13,7 @@ from application.services.markdown_viewer_service import MarkdownViewerService
 from core.entities.artifact import ArtifactType
 from core.entities.job import Job, JobStatus
 from core.entities.prompt import Prompt, PromptType
-from infrastructure.markdown.markdown_it_parser import MarkdownItParser
+from infrastructure.markdown.pandoc_parser import PandocParser
 from infrastructure.persistence.sqlite.connection import SQLiteDatabaseManager
 from infrastructure.persistence.sqlite.migration_runner import SQLiteMigrationRunner
 from infrastructure.persistence.sqlite.unit_of_work import SQLiteUnitOfWorkFactory
@@ -27,7 +27,7 @@ def merge_env(tmp_path):
     SQLiteMigrationRunner(mgr).run_migrations()
     uow_factory = SQLiteUnitOfWorkFactory(mgr)
     storage = LocalStorageAdapter(base_dir=str(tmp_path / "artifacts"))
-    parser = MarkdownItParser()
+    parser = PandocParser()
     viewer_service = MarkdownViewerService(
         parser=parser,
         uow_factory=uow_factory,
