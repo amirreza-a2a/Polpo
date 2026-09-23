@@ -29,3 +29,12 @@ my_notes/
 
 # دایرکتوری tmp
 tmp/
+
+# Standalone binary runtimes and dependencies (TICK-001)
+*.exe
+resources/bin/**
+!resources/bin/**/
+!resources/bin/**/.gitkeep
+resources/mathjax/node
+resources/mathjax/node.exe
+node_modules/
