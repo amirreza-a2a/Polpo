@@ -27,11 +27,14 @@ class VisualRegionRefDTO:
 class InlineSegmentDTO:
     """
     Discrete inline segment for mixed inline rendering in QML Flow layouts.
-    A segment is either formatted text (RichText HTML) or an embedded native image item.
+    A segment is either formatted text (RichText HTML), an embedded native image item,
+    or a mathematical formula.
     """
-    segment_type: str  # "text" or "image"
+    segment_type: str  # "text", "image", or "math"
     text_html: str = ""
     image_ref: Optional[VisualRegionRefDTO] = None
+    math_tex: Optional[str] = None
+    math_hash: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -78,6 +81,10 @@ class MarkdownNodeDTO:
     quote_children: Tuple[QuoteChildBlockDTO, ...] = ()
     source_start_line: Optional[int] = None
     source_end_line: Optional[int] = None
+    source_start_col: Optional[int] = None
+    source_end_col: Optional[int] = None
+    math_tex: Optional[str] = None
+    math_hash: Optional[str] = None
 
 
 

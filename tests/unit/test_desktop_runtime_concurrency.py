@@ -97,7 +97,12 @@ class TestDesktopRuntimeConcurrency(unittest.TestCase):
         self.event_bus.subscribe(object, lambda e: self.events_received.append(e))
 
     def tearDown(self):
-        self.temp_dir.cleanup()
+        import gc
+        gc.collect()
+        try:
+            self.temp_dir.cleanup()
+        except Exception:
+            pass
 
     def test_runtime_parallel_execution_respects_concurrency_bound(self):
         """Submit 4 jobs; verify runtime processes them up to max_concurrent_jobs=2 until all are DONE."""

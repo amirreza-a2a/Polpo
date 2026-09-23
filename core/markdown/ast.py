@@ -19,6 +19,7 @@ class BlockType(str, Enum):
     BLOCKQUOTE = "blockquote"
     THEMATIC_BREAK = "thematic_break"
     TABLE_FALLBACK = "table_fallback"
+    MATH_BLOCK = "math_block"
 
 
 class InlineType(str, Enum):
@@ -29,6 +30,7 @@ class InlineType(str, Enum):
     CODE_SPAN = "code_span"    # Inline monospaced backtick code
     LINK = "link"              # Hyperlink
     IMAGE = "image"            # Inline image (standard Markdown or wiki-link)
+    MATH = "math"              # Inline mathematical formula
 
 
 @dataclass(frozen=True)
@@ -190,6 +192,13 @@ class TableFallbackBlock(MarkdownBlock):
             for row in self.rows
         )
         object.__setattr__(self, "rows", frozen_rows)
+
+
+@dataclass(frozen=True)
+class MathBlock(MarkdownBlock):
+    """Standalone display mathematical equation ($$...$$)."""
+    content: str
+    block_type: BlockType = field(default=BlockType.MATH_BLOCK, init=False)
 
 
 def _freeze_metadata_value(val: Any) -> Any:
