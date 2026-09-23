@@ -351,6 +351,7 @@ def test_active_probe_missing_data_pos(tmp_path: Path):
                 resolver.validate_binary(test_binary)
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX-specific permission handling")
 def test_executable_permission_remains_not_executable(tmp_path: Path):
     """If chmod succeeds but file remains not executable, raise PandocIncompatibleError."""
     test_binary = _create_mock_binary(tmp_path / "pandoc")
