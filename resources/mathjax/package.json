@@ -1,0 +1,12 @@
+{
+  "name": "polpot-mathjax-worker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Headless MathJax daemon worker for PolpoT",
+  "engines": {
+    "node": "22.23.2"
+  },
+  "dependencies": {
+    "mathjax-full": "3.2.2"
+  }
+}
