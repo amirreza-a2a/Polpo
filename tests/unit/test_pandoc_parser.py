@@ -278,6 +278,7 @@ def test_parse_canonical_visual_token_standalone_image():
     assert block.source == "crop_1.jpg"
     assert block.alt_text == "Figure 1"
     assert block.region_id == reg_id
+    assert block.occurrence_id == occ_id
 
 
 def test_parse_canonical_visual_token_inline_image():
@@ -296,6 +297,7 @@ def test_parse_canonical_visual_token_inline_image():
     assert img_spans[0].target == "crop_1.jpg"
     assert img_spans[0].text == "Figure 1"
     assert img_spans[0].region_id == reg_id
+    assert img_spans[0].occurrence_id == occ_id
 
 
 def test_reverse_coordinate_mapping_with_legacy_normalizer():

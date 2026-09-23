@@ -37,25 +37,28 @@ from infrastructure.markdown.pandoc_runner import PandocRunner, extract_raw_sour
 _REGION_ID_PATTERN = re.compile(r"(?:^|[^\w\-])region_id=[\"']?([^\"'\s\];]+)[\"']?")
 
 
-def _extract_region_id(title: str, alt_text: str) -> Optional[str]:
-    """Extract canonical or explicit region_id from image title or alt text."""
+def _extract_visual_token_ids(title: str, alt_text: str) -> Tuple[Optional[str], Optional[str]]:
+    """Extract canonical or explicit region_id and occurrence_id from image title or alt text.
+
+    Returns (region_id, occurrence_id).
+    """
     if title:
         try:
-            diag, r_id, _ = classify_token_metadata(title)
+            diag, r_id, o_id = classify_token_metadata(title)
             if diag == TokenDiagnosticType.CANONICAL and r_id is not None:
-                return str(r_id)
+                return str(r_id), str(o_id) if o_id is not None else None
         except Exception:
             pass
         m = _REGION_ID_PATTERN.search(title)
         if m:
-            return m.group(1)
+            return m.group(1), None
 
     if alt_text:
         m = _REGION_ID_PATTERN.search(alt_text)
         if m:
-            return m.group(1)
+            return m.group(1), None
 
-    return None
+    return None, None
 
 
 def _clean_legacy_alt(alt_text: str, region_id: Optional[str]) -> str:
@@ -145,7 +148,7 @@ def _transform_inlines(raw_inlines: Sequence[Any]) -> List[InlineSpan]:
                 title = c[2][1] if isinstance(c[2], list) and len(c[2]) > 1 else ""
                 alt_spans = _transform_inlines(c[1] if isinstance(c[1], list) else [])
                 alt_text = "".join(s.plain_text for s in alt_spans)
-                region_id = _extract_region_id(title, alt_text)
+                region_id, occ_id = _extract_visual_token_ids(title, alt_text)
                 alt_text = _clean_legacy_alt(alt_text, region_id)
                 out.append(
                     InlineSpan(
@@ -153,6 +156,7 @@ def _transform_inlines(raw_inlines: Sequence[Any]) -> List[InlineSpan]:
                         text=alt_text,
                         target=target_url,
                         region_id=region_id,
+                        occurrence_id=occ_id,
                     )
                 )
 
@@ -424,7 +428,7 @@ class PandocParser(IMarkdownParser):
                     title = img_c[2][1] if isinstance(img_c[2], list) and len(img_c[2]) > 1 else ""
                     alt_spans = _transform_inlines(img_c[1] if isinstance(img_c[1], list) else [])
                     alt_text = "".join(s.plain_text for s in alt_spans)
-                    region_id = _extract_region_id(title, alt_text)
+                    region_id, occ_id = _extract_visual_token_ids(title, alt_text)
                     alt_text = _clean_legacy_alt(alt_text, region_id)
                     raw_tag = f'![{alt_text}]({target_url} "{title}")' if title else f"![{alt_text}]({target_url})"
                     return [
@@ -433,6 +437,7 @@ class PandocParser(IMarkdownParser):
                             alt_text=alt_text,
                             title=title,
                             region_id=region_id,
+                            occurrence_id=occ_id,
                             raw_tag=raw_tag,
                             source_start_line=orig_sl,
                             source_end_line=orig_el,

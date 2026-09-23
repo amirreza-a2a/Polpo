@@ -2,9 +2,10 @@
 #  tests/unit/test_desktop_runtime_concurrency.py
 # ============================================================
 
-import time
+import gc
+import os
 import tempfile
-import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from core.entities.credential_ref import CredentialRef
 from core.entities.prompt import Prompt, PromptType
 from core.entities.settings import AppSettings
 from application.dto.job_dto import SubmitJobCommand
-from application.events import JobStateChangedEvent, JobCompletedEvent, JobFailedEvent
+from application.events import JobCompletedEvent
 from infrastructure.persistence.sqlite.connection import SQLiteDatabaseManager
 from infrastructure.persistence.sqlite.migration_runner import SQLiteMigrationRunner
 from infrastructure.persistence.sqlite.unit_of_work import SQLiteUnitOfWorkFactory
@@ -97,12 +98,21 @@ class TestDesktopRuntimeConcurrency(unittest.TestCase):
         self.event_bus.subscribe(object, lambda e: self.events_received.append(e))
 
     def tearDown(self):
-        import gc
         gc.collect()
-        try:
+        if os.name == "nt":
+            for _ in range(5):
+                try:
+                    self.temp_dir.cleanup()
+                    return
+                except PermissionError:
+                    time.sleep(0.1)
+                    gc.collect()
+            try:
+                self.temp_dir.cleanup()
+            except PermissionError:
+                pass
+        else:
             self.temp_dir.cleanup()
-        except Exception:
-            pass
 
     def test_runtime_parallel_execution_respects_concurrency_bound(self):
         """Submit 4 jobs; verify runtime processes them up to max_concurrent_jobs=2 until all are DONE."""
