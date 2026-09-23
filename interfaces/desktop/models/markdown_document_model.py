@@ -53,6 +53,8 @@ class MarkdownDocumentModel(QAbstractListModel):
     SourceEndLineRole = Qt.ItemDataRole.UserRole + 23
     MathTexRole = Qt.ItemDataRole.UserRole + 24
     MathHashRole = Qt.ItemDataRole.UserRole + 25
+    SourceStartColRole = Qt.ItemDataRole.UserRole + 26
+    SourceEndColRole = Qt.ItemDataRole.UserRole + 27
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -91,6 +93,8 @@ class MarkdownDocumentModel(QAbstractListModel):
             self.SourceEndLineRole: b"sourceEndLine",
             self.MathTexRole: b"mathTex",
             self.MathHashRole: b"mathHash",
+            self.SourceStartColRole: b"sourceStartCol",
+            self.SourceEndColRole: b"sourceEndCol",
         }
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
@@ -153,6 +157,10 @@ class MarkdownDocumentModel(QAbstractListModel):
             return item.get("mathTex", "")
         elif role == self.MathHashRole:
             return item.get("mathHash", "")
+        elif role == self.SourceStartColRole:
+            return item.get("sourceStartCol")
+        elif role == self.SourceEndColRole:
+            return item.get("sourceEndCol")
         return None
 
     def _node_dto_to_item(self, node: Any) -> Dict[str, Any]:
@@ -256,6 +264,8 @@ class MarkdownDocumentModel(QAbstractListModel):
             "altText": alt_text,
             "sourceStartLine": node.source_start_line,
             "sourceEndLine": node.source_end_line,
+            "sourceStartCol": getattr(node, "source_start_col", None),
+            "sourceEndCol": getattr(node, "source_end_col", None),
             "mathTex": getattr(node, "math_tex", "") or "",
             "mathHash": getattr(node, "math_hash", "") or "",
         }
@@ -686,3 +696,51 @@ class MarkdownDocumentModel(QAbstractListModel):
             if start is not None and start > 0:
                 return start
         return 1
+
+    @Slot(int, result=int)
+    def columnAtNodeIndex(self, node_index: int) -> int:
+        """
+        Returns the 1-based start column of the block at node_index.
+        Falls back to column 1 if node_index is out of bounds or column info is missing.
+        """
+        if 0 <= node_index < len(self._items):
+            start_col = self._items[node_index].get("sourceStartCol")
+            if start_col is not None and start_col > 0:
+                return start_col
+        return 1
+
+    @Slot(int, int, result=int)
+    def nodeIndexAtPosition(self, line: int, col: int = 1) -> int:
+        """
+        Maps a 1-based line and column to the best-matching AST node index.
+        Uses exact interval matching [start_line:start_col, end_line:end_col] if available,
+        falling back to line matching.
+        """
+        if not self._items:
+            return -1
+        if line <= 0:
+            return 0
+
+        # Exact line and column interval check
+        for idx, item in enumerate(self._items):
+            s_line = item.get("sourceStartLine")
+            e_line = item.get("sourceEndLine")
+            s_col = item.get("sourceStartCol")
+            e_col = item.get("sourceEndCol")
+            if s_line is None or s_line <= 0:
+                continue
+
+            if s_line == line:
+                if e_line == line and s_col is not None and e_col is not None:
+                    if s_col <= col <= e_col:
+                        return idx
+                elif e_line is not None and e_line > line:
+                    if s_col is None or col >= s_col:
+                        return idx
+            elif e_line is not None and s_line < line < e_line:
+                return idx
+            elif e_line is not None and line == e_line:
+                if e_col is None or col <= e_col:
+                    return idx
+
+        return self.nodeIndexAtLine(line)

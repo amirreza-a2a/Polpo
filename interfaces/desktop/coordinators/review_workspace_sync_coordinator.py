@@ -8,6 +8,7 @@ from typing import Optional
 
 from interfaces.desktop.controllers.markdown_editor_controller import MarkdownEditorController
 from interfaces.desktop.controllers.markdown_viewer_controller import MarkdownViewerController
+from interfaces.desktop.coordinators.caret_offset_translator import unicode_col_to_qt_utf16_offset
 from interfaces.desktop.qt_compat import QObject, Property, Signal, Slot, QTimer
 
 
@@ -64,6 +65,7 @@ class ReviewWorkspaceSyncCoordinator(QObject):
         self._is_shutdown: bool = False
 
         self._last_synced_line: int = -1
+        self._last_synced_col: int = -1
         self._last_synced_node_index: int = -1
         self._pending_preview_node: int = -1
 
@@ -221,7 +223,8 @@ class ReviewWorkspaceSyncCoordinator(QObject):
             return
 
         line = self.editor_controller.cursorLine
-        if line == self._last_synced_line:
+        col = self.editor_controller.cursorColumn
+        if line == self._last_synced_line and col == self._last_synced_col:
             return
 
         # Immediate lock acquisition
@@ -240,13 +243,19 @@ class ReviewWorkspaceSyncCoordinator(QObject):
             return
 
         line = self.editor_controller.cursorLine
+        col = self.editor_controller.cursorColumn
         model = self.viewer_controller.model
-        node_idx = model.nodeIndexAtLine(line)
+        if hasattr(model, "nodeIndexAtPosition"):
+            node_idx = model.nodeIndexAtPosition(line, col)
+        else:
+            node_idx = model.nodeIndexAtLine(line)
+
         if node_idx >= 0 and node_idx != self.viewer_controller.selectedNodeIndex:
             self.viewer_controller.setSelectedNodeIndex(node_idx)
             self.viewer_controller.requestScrollToNode.emit(node_idx)
             self._last_synced_node_index = node_idx
             self._last_synced_line = line
+            self._last_synced_col = col
 
         self._start_lock_release_timer()
 
@@ -302,13 +311,25 @@ class ReviewWorkspaceSyncCoordinator(QObject):
     # Preview Block Click -> Source Caret Navigation (Caret Moved)
     # -----------------------------------------------------------------------
 
-    def _on_viewer_node_clicked(self, node_index: int, model_generation: int) -> None:
+    @Slot(int)
+    @Slot(int, int)
+    def report_node_clicked(self, node_index: int, model_generation: Optional[int] = None) -> None:
+        """
+        Handles preview node click, reading sourceStartLine and sourceStartCol
+        and navigating the editor caret to the exact UTF-16 offset.
+        """
+        self._on_viewer_node_clicked(node_index, model_generation)
+
+    reportNodeClicked = report_node_clicked
+
+    def _on_viewer_node_clicked(self, node_index: int, model_generation: Optional[int] = None) -> None:
         if not self._is_dual_pane or self._is_shutdown:
             return
-        # Validate snapshot generation
-        current_gen = self.viewer_controller.modelGeneration()
-        if model_generation != current_gen:
-            return
+        # Validate snapshot generation if provided
+        if model_generation is not None:
+            current_gen = self.viewer_controller.modelGeneration()
+            if model_generation != current_gen:
+                return
         if self._sync_origin == SyncOrigin.SOURCE_USER:
             return
 
@@ -317,13 +338,29 @@ class ReviewWorkspaceSyncCoordinator(QObject):
 
         model = self.viewer_controller.model
         target_line = model.lineAtNodeIndex(node_index)
+        target_col = getattr(model, "columnAtNodeIndex", lambda idx: 1)(node_index)
         if target_line <= 0:
             return
 
         self._set_sync_origin(SyncOrigin.PREVIEW_USER)
-        # Explicit block click navigates editor caret and scrolls into view
-        self.editor_controller.navigateToLine(target_line)
+
+        # Read line string from editor document and translate coordinates
+        doc = self.editor_controller._get_document()
+        block = doc.findBlockByLineNumber(target_line - 1)
+        line_text = block.text() if block.isValid() else ""
+        line_start_pos = block.position() if block.isValid() else 0
+
+        utf16_offset = (
+            unicode_col_to_qt_utf16_offset(line_text, target_col)
+            if target_col > 1
+            else 0
+        )
+        target_pos = line_start_pos + utf16_offset
+
+        # Explicit block click navigates editor caret to line + column and scrolls into view
+        self.editor_controller.requestNavigateToPosition.emit(target_pos)
         self._last_synced_line = target_line
+        self._last_synced_col = target_col
         self._last_synced_node_index = node_index
 
         self._start_lock_release_timer()
