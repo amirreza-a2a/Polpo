@@ -19,7 +19,7 @@ from application.dto.markdown_dto import (
     VisualRegionRefDTO,
 )
 from application.ports.markdown_parser import IMarkdownParser
-from application.ports.math_renderer import MathRenderRequest
+from application.ports.math_renderer import IMathRenderer, MathRenderError, MathRenderRequest
 from application.ports.storage import IArtifactStorage
 from application.ports.unit_of_work import IUnitOfWorkFactory
 from core.entities.artifact import ArtifactHandle, ArtifactType, StorageBackendType
@@ -89,10 +89,12 @@ class MarkdownViewerService:
         parser: IMarkdownParser,
         uow_factory: IUnitOfWorkFactory,
         storage: IArtifactStorage,
+        math_renderer: Optional[IMathRenderer] = None,
     ):
         self.parser = parser
         self.uow_factory = uow_factory
         self.storage = storage
+        self.math_renderer = math_renderer
 
     def load_document(self, job_id: int) -> MarkdownDocumentDTO:
         """
@@ -186,6 +188,15 @@ class MarkdownViewerService:
         doc = self.parser.parse(raw_text)
         resolved_doc = resolve_image_regions(doc, active_regions, job_id)
 
+        # Pre-render all math formulas through IMathRenderer into cache before DTO construction
+        if self.math_renderer is not None:
+            math_requests = self._collect_math_requests(resolved_doc.blocks)
+            if math_requests:
+                try:
+                    self.math_renderer.render_batch(math_requests)
+                except MathRenderError:
+                    pass
+
         regions_by_id = {
             r.region_id: r
             for r in active_regions
@@ -268,6 +279,48 @@ class MarkdownViewerService:
             display_order=display_order,
             page_number=page_number,
         )
+
+    def _collect_math_requests(self, blocks: Sequence[MarkdownBlock]) -> List[MathRenderRequest]:
+        """Traverse the AST to collect all unique MathRenderRequest instances."""
+        requests: List[MathRenderRequest] = []
+        seen_hashes: set[str] = set()
+
+        def add_req(tex: str, display: bool) -> None:
+            req = MathRenderRequest(tex=tex, display=display)
+            h = req.compute_hash()
+            if h not in seen_hashes:
+                seen_hashes.add(h)
+                requests.append(req)
+
+        def scan_inlines(inlines: Sequence[InlineSpan]) -> None:
+            for span in inlines:
+                if span.span_type == InlineType.MATH:
+                    add_req(span.text, display=False)
+                if span.children:
+                    scan_inlines(span.children)
+
+        def scan_blocks(blk_seq: Sequence[MarkdownBlock]) -> None:
+            for blk in blk_seq:
+                if isinstance(blk, MathBlock):
+                    add_req(blk.content, display=True)
+                elif isinstance(blk, (HeadingBlock, ParagraphBlock)):
+                    scan_inlines(blk.inlines)
+                elif isinstance(blk, ListBlock):
+                    for item in blk.items:
+                        scan_inlines(item.inlines)
+                elif isinstance(blk, BlockquoteBlock):
+                    scan_blocks(blk.blocks)
+                elif isinstance(blk, TableFallbackBlock):
+                    if blk.headers:
+                        for cell in blk.headers:
+                            scan_inlines(cell)
+                    if blk.rows:
+                        for row in blk.rows:
+                            for cell in row:
+                                scan_inlines(cell)
+
+        scan_blocks(blocks)
+        return requests
 
     def _project_block(
         self,
@@ -532,10 +585,15 @@ class MarkdownViewerService:
                 elif isinstance(sub_b, MathBlock):
                     math_hash = MathRenderRequest(tex=sub_b.content, display=True).compute_hash()
                     escaped_tex = html.escape(sub_b.content, quote=True)
-                    inner_htmls.append(f"<p>$${escaped_tex}$$</p>")
+                    if self.math_renderer is not None:
+                        inner_htmls.append(f'<p align="center"><img src="image://math/{math_hash}"/></p>')
+                        seg_html = f'<img src="image://math/{math_hash}"/>'
+                    else:
+                        inner_htmls.append(f"<p>$${escaped_tex}$$</p>")
+                        seg_html = f"$${escaped_tex}$$"
                     math_seg = InlineSegmentDTO(
                         segment_type="math",
-                        text_html=f"$${escaped_tex}$$",
+                        text_html=seg_html,
                         math_tex=sub_b.content,
                         math_hash=math_hash,
                     )
@@ -757,7 +815,11 @@ class MarkdownViewerService:
                 math_tex = span.text
                 math_hash = MathRenderRequest(tex=math_tex, display=False).compute_hash()
                 escaped_tex = html.escape(math_tex, quote=True)
-                full_content_chunks.append(f"${escaped_tex}$")
+                if self.math_renderer is not None:
+                    math_html = f'<img src="image://math/{math_hash}" align="middle"/>'
+                else:
+                    math_html = f"${escaped_tex}$"
+                full_content_chunks.append(math_html)
 
                 # Before flushing text segment, close active formatting tags in reverse order
                 for _, close_tag in reversed(active_formatting):
@@ -769,7 +831,7 @@ class MarkdownViewerService:
                 segments_list.append(
                     InlineSegmentDTO(
                         segment_type="math",
-                        text_html=f"${escaped_tex}$",
+                        text_html=math_html,
                         math_tex=math_tex,
                         math_hash=math_hash,
                     )
