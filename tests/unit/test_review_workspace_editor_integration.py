@@ -16,7 +16,7 @@ from interfaces.desktop.controllers.markdown_editor_controller import MarkdownEd
 from interfaces.desktop.controllers.markdown_viewer_controller import MarkdownViewerController
 from interfaces.desktop.qt_compat import QGuiApplication, QQmlApplicationEngine, QObject
 from infrastructure.document.pymupdf_processor import PyMuPDFDocumentProcessor
-from infrastructure.markdown.markdown_it_parser import MarkdownItParser
+from infrastructure.markdown.pandoc_parser import PandocParser
 from infrastructure.persistence.sqlite.connection import SQLiteDatabaseManager
 from infrastructure.persistence.sqlite.migration_runner import SQLiteMigrationRunner
 from infrastructure.persistence.sqlite.unit_of_work import SQLiteUnitOfWorkFactory
@@ -43,7 +43,7 @@ def workspace_env(tmp_path):
     uow_factory = SQLiteUnitOfWorkFactory(mgr)
     storage = LocalStorageAdapter(base_dir=str(tmp_path / "artifacts"))
     doc_proc = PyMuPDFDocumentProcessor()
-    md_parser = MarkdownItParser()
+    md_parser = PandocParser()
 
     with uow_factory.create() as uow:
         p = uow.prompts.save(Prompt(id=None, name="P", text="T", prompt_type=PromptType.PIPELINE_1, is_default=True))
@@ -586,7 +586,7 @@ def test_qml_sync_source_and_preview_actions(qapp, workspace_env):
     text = "# Section 1\n\nParagraph 1\n\n# Section 2\n\nParagraph 2\n"
     md_editor_ctrl.set_source_text(text)
 
-    parser = MarkdownItParser()
+    parser = PandocParser()
     service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
     dto = service.render_text(raw_text=text, active_regions=(), job_id=1, version=1)
     md_viewer_ctrl.model.set_document(dto)
@@ -642,7 +642,7 @@ def test_qml_continuous_bidirectional_scroll_sync(qapp, workspace_env):
     text = "\n".join(lines)
     md_editor_ctrl.set_source_text(text)
 
-    parser = MarkdownItParser()
+    parser = PandocParser()
     service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
     dto = service.render_text(raw_text=text, active_regions=(), job_id=1, version=1)
     md_viewer_ctrl.model.set_document(dto)
@@ -705,7 +705,7 @@ def test_qml_tall_block_beginning_positioning(qapp, workspace_env):
     text = "# Start\n\n```python\n" + "\n".join([f"line_{i} = {i}" for i in range(50)]) + "\n```\n\n# End\n"
     md_editor_ctrl.set_source_text(text)
 
-    parser = MarkdownItParser()
+    parser = PandocParser()
     service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
     dto = service.render_text(raw_text=text, active_regions=(), job_id=1, version=1)
     md_viewer_ctrl.model.set_document(dto)

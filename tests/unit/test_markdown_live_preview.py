@@ -34,7 +34,7 @@ from core.entities.visual_region import (
     VisualRegion,
 )
 from infrastructure.document.pymupdf_processor import PyMuPDFDocumentProcessor
-from infrastructure.markdown.markdown_it_parser import MarkdownItParser
+from infrastructure.markdown.pandoc_parser import PandocParser
 from infrastructure.persistence.sqlite.connection import SQLiteDatabaseManager
 from infrastructure.persistence.sqlite.migration_runner import SQLiteMigrationRunner
 from infrastructure.persistence.sqlite.unit_of_work import SQLiteUnitOfWorkFactory
@@ -91,7 +91,7 @@ def test_canonical_03_render_preview_executes_zero_writes():
     T-F3-CANONICAL-03: render_preview() executes zero SQLite write transactions.
     uow.commit() is never called, and job canonical version/path are not mutated.
     """
-    parser = MarkdownItParser()
+    parser = PandocParser()
     job = Job(
         id=42,
         file_name="test.pdf",
@@ -135,7 +135,7 @@ def test_canonical_04_render_preview_creates_zero_disk_files(tmp_path):
     """
     T-F3-CANONICAL-04: render_preview() creates zero files in artifact storage directory.
     """
-    parser = MarkdownItParser()
+    parser = PandocParser()
     artifact_dir = tmp_path / "artifacts"
     artifact_dir.mkdir(parents=True, exist_ok=True)
     canonical_file = artifact_dir / "output_42_v1.md"
@@ -229,7 +229,7 @@ def test_state_02_render_preview_resolves_visual_region_tokens():
     """
     T-F3-STATE-02: render_preview() resolves visual region tokens against base version regions.
     """
-    parser = MarkdownItParser()
+    parser = PandocParser()
     region_uuid = "a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d"
     test_region = VisualRegion(
         id=1,
@@ -575,7 +575,7 @@ def _setup_wired_workspace(tmp_path):
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     storage = LocalStorageAdapter(base_dir=str(artifacts_dir))
     doc_proc = PyMuPDFDocumentProcessor()
-    md_parser = MarkdownItParser()
+    md_parser = PandocParser()
 
     apply_service = ApplyReviewService(uow_factory=uow_factory, storage=storage, doc_processor=doc_proc)
     doc_viewer_service = DocumentViewerService(uow_factory=uow_factory, storage=storage, doc_processor=doc_proc)

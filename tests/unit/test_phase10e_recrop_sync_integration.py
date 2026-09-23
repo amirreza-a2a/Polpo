@@ -26,7 +26,7 @@ from core.entities.prompt import Prompt, PromptType
 from core.entities.visual_region import RegionOrigin, ReviewStatus, SyncStatus, VisualRegion
 from core.exceptions.domain_exceptions import DomainError
 from infrastructure.document.pymupdf_processor import PyMuPDFDocumentProcessor
-from infrastructure.markdown.markdown_it_parser import MarkdownItParser
+from infrastructure.markdown.pandoc_parser import PandocParser
 from infrastructure.persistence.sqlite.connection import SQLiteDatabaseManager
 from infrastructure.persistence.sqlite.migration_runner import SQLiteMigrationRunner
 from infrastructure.persistence.sqlite.unit_of_work import SQLiteUnitOfWorkFactory
@@ -163,7 +163,7 @@ class TestPhase10ERecropSyncIntegration(unittest.TestCase):
             storage=self.storage,
             doc_processor=self.doc_processor,
         )
-        self.parser = MarkdownItParser()
+        self.parser = PandocParser()
         self.md_service = MarkdownViewerService(
             parser=self.parser,
             uow_factory=self.uow_factory,

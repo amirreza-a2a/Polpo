@@ -28,7 +28,7 @@ from core.entities.bounding_box import BoundingBox
 from core.entities.job import Job, JobStatus
 from core.entities.visual_region import RegionOrigin, ReviewStatus, SyncStatus, VisualRegion
 from core.exceptions.domain_exceptions import DomainError, EntityNotFoundError
-from infrastructure.markdown.markdown_it_parser import MarkdownItParser
+from infrastructure.markdown.pandoc_parser import PandocParser
 
 
 class MockJobRepo:
@@ -163,7 +163,7 @@ def test_slugify_and_helpers():
 # ---------------------------------------------------------------------------
 
 def test_deterministic_node_id_generation():
-    parser = MarkdownItParser()
+    parser = PandocParser()
     service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
 
     raw_md = """# Introduction
@@ -198,7 +198,7 @@ def test_requirement_3_inserting_unrelated_block_preserves_existing_id():
     Inserting an unrelated block before an existing block must NOT invalidate
     the existing block's identity.
     """
-    parser = MarkdownItParser()
+    parser = PandocParser()
     service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
 
     doc_v1 = """# Section A
@@ -227,7 +227,7 @@ Existing paragraph to track.
 # ---------------------------------------------------------------------------
 
 def test_richtext_sanitization_and_injection_defense():
-    parser = MarkdownItParser()
+    parser = PandocParser()
     service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
 
     raw_md = """Here is **bold**, *italic*, `inline_code()`, and a <script>alert('xss')</script> tag.
@@ -260,7 +260,7 @@ Also a [Safe Link](https://polpot.dev) and a [Malicious Link](javascript:exploit
 # ---------------------------------------------------------------------------
 
 def test_mixed_inline_segments_and_inverted_index():
-    parser = MarkdownItParser()
+    parser = PandocParser()
     service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
 
     region1 = make_test_region(
@@ -330,7 +330,7 @@ def test_mixed_inline_segments_and_inverted_index():
 
 
 def test_stale_explicit_region_is_not_associated_and_not_in_index():
-    parser = MarkdownItParser()
+    parser = PandocParser()
     service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
 
     raw_md = "Here is stale image: ![[crop.jpg|region_id=99999999-9999-4999-9999-999999999999]]"
@@ -371,7 +371,7 @@ def test_load_document_success():
     region_repo = MockVisualRegionRepo([region])
     uow = MockUnitOfWork(job_repo, region_repo)
     factory = MockUowFactory(uow)
-    parser = MarkdownItParser()
+    parser = PandocParser()
 
     service = MarkdownViewerService(parser=parser, uow_factory=factory, storage=storage)
     doc_dto = service.load_document(42)
@@ -393,7 +393,7 @@ def test_load_document_legacy_unversioned_canonical_path():
     region_repo = MockVisualRegionRepo([])
     uow = MockUnitOfWork(job_repo, region_repo)
     factory = MockUowFactory(uow)
-    parser = MarkdownItParser()
+    parser = PandocParser()
 
     service = MarkdownViewerService(parser=parser, uow_factory=factory, storage=storage)
     doc_dto = service.load_document(42)
@@ -408,7 +408,7 @@ def test_load_document_failures():
     region_repo = MockVisualRegionRepo([])
     uow = MockUnitOfWork(job_repo, region_repo)
     factory = MockUowFactory(uow)
-    parser = MarkdownItParser()
+    parser = PandocParser()
     storage = MockStorage()
 
     service = MarkdownViewerService(parser=parser, uow_factory=factory, storage=storage)
@@ -467,7 +467,7 @@ def test_blockquote_occurrence_counter_collision_prevention():
     R1.1 Verification: Multiple child paragraphs in a blockquote must allocate
     from one shared occurrence counter so occurrence IDs never collide.
     """
-    parser = MarkdownItParser()
+    parser = PandocParser()
     service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
 
     r1 = make_test_region(job_id=100, region_id="a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d", display_order=1)
@@ -508,7 +508,7 @@ def test_nested_formatting_around_inline_images():
     R1.3 Verification: Inline images embedded in strong, emphasis, or link formatting
     must emit properly balanced HTML text segments around the image segment.
     """
-    parser = MarkdownItParser()
+    parser = PandocParser()
     service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
 
     r = make_test_region(job_id=100, region_id="a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d", display_order=1)
@@ -555,7 +555,7 @@ def test_structured_segments_preserved_across_all_block_types():
     R1.2 Verification: Structured InlineSegmentDTO items must be preserved
     for headings, list items, blockquotes, and tables.
     """
-    parser = MarkdownItParser()
+    parser = PandocParser()
     service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
 
     r = make_test_region(job_id=100, region_id="a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d", display_order=1)
@@ -596,7 +596,7 @@ def test_node_id_invariant_and_duplicate_lexical_ordering():
     under unrelated block insertion, while identical duplicate blocks receive
     lexically ordered occurrence indices.
     """
-    parser = MarkdownItParser()
+    parser = PandocParser()
     service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
 
     raw_md = """Identical paragraph.
@@ -625,7 +625,7 @@ def test_task_list_item_with_image_preserves_task_checkbox_in_segments():
     R1.2 Verification: Task checkboxes (☐ and ☑) must be preserved in
     list_item_segments when items contain inline images.
     """
-    parser = MarkdownItParser()
+    parser = PandocParser()
     service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
 
     r = make_test_region(job_id=100, region_id="a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d", display_order=1)
@@ -654,7 +654,7 @@ def test_blockquote_with_heading_and_multiple_blocks_preserves_content():
     R1.1 & R1.2 Verification: Blockquotes containing headings and paragraphs
     must not drop headings and must preserve deterministic occurrence numbering.
     """
-    parser = MarkdownItParser()
+    parser = PandocParser()
     service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
 
     r1 = make_test_region(job_id=100, region_id="a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d", display_order=1)
@@ -681,7 +681,7 @@ def test_table_cell_with_multiple_occurrences_of_same_region():
     R1.2 & R2.3 Verification: Table cells containing multiple occurrences of the
     same visual region index all occurrences distinctly without collision.
     """
-    parser = MarkdownItParser()
+    parser = PandocParser()
     service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
 
     rid = "a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d"
@@ -706,7 +706,7 @@ def test_blockquote_preserves_child_block_hierarchy_and_inline_images():
     (heading, paragraph, paragraph with inline image) in quote_children with
     distinct child_type, level, and inline segments, and unique occurrence IDs.
     """
-    parser = MarkdownItParser()
+    parser = PandocParser()
     service = MarkdownViewerService(parser=parser, uow_factory=None, storage=None)
 
     rid = "a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d"
