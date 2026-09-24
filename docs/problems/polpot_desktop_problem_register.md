@@ -1,8 +1,8 @@
 # PolpoT Desktop Problem Register & Investigation Plan
 
-**Status:** Draft — investigation register, not an implementation plan  
-**Date:** 2026-09-23  
-**Repository:** `amirreza-a2a/Polpo`  
+**Status:** Draft — investigation register, not an implementation plan\
+**Date:** 2026-09-23\
+**Repository:** `amirreza-a2a/Polpo`\
 **Base branch:** `main`
 
 ## 1. Purpose
@@ -72,8 +72,8 @@ A single investigation may result in:
 
 ## P01 — Application theme setting is persisted but not applied to the actual UI
 
-**Category:** Theme / QML architecture  
-**Priority:** High  
+**Category:** Theme / QML architecture\
+**Priority:** High\
 **Status:** CONFIRMED
 
 ### Observed symptom
@@ -112,8 +112,8 @@ Confirmed from the current codebase:
 
 ### Investigation
 
-**Primary:** `grilling`  
-**Then:** `codebase-design`  
+**Primary:** `grilling`\
+**Then:** `codebase-design`\
 **External:** `research` for current Qt 6 theming/palette behavior if the chosen design depends on it.
 
 ### Expected investigation output
@@ -144,9 +144,9 @@ Do not open these as final Issues until the investigation establishes the bounda
 
 ## P02 — Creating a manual visual region does not publish/insert it into Markdown
 
-**Category:** Visual Region lifecycle / canonical publication  
-**Priority:** BLOCKING for the manual-region workflow  
-**Status:** READY FOR TICKETING  
+**Category:** Visual Region lifecycle / canonical publication\
+**Priority:** BLOCKING for the manual-region workflow\
+**Status:** READY FOR TICKETING\
 **Investigation Record:** [`docs/problems/investigations/P02-manual-region-canonical-publication.md`](file:///home/amirreza-a2a/DevelopPOlpo/PolpoT/docs/problems/investigations/P02-manual-region-canonical-publication.md)
 
 ### Observed symptom
@@ -201,8 +201,8 @@ was deferred (documented in `DEBT-10E-03`).
 
 ## P03 — Visual Region registration/interaction has multiple states/types but the current UX is unclear or broken
 
-**Category:** Visual Region UX / domain semantics  
-**Priority:** High  
+**Category:** Visual Region UX / domain semantics\
+**Priority:** High\
 **Status:** STRONG SUSPECT
 
 ### Observed symptom
@@ -242,8 +242,8 @@ These must not be conflated with persisted domain state.
 
 ### Investigation
 
-**Primary:** `grilling`  
-**Then:** `wayfinder`  
+**Primary:** `grilling`\
+**Then:** `wayfinder`\
 **Then:** `codebase-design`
 
 ### Expected investigation output
@@ -272,8 +272,8 @@ Possibly:
 
 ## P04 — Region context menu is missing and needs an extensible action model
 
-**Category:** Desktop UX / extensibility  
-**Priority:** High  
+**Category:** Desktop UX / extensibility\
+**Priority:** High\
 **Status:** CONFIRMED
 
 ### Observed symptom
@@ -298,8 +298,8 @@ The correct boundary should not put application logic directly in QML.
 
 ### Investigation
 
-**Primary:** `wayfinder`  
-**Then:** `grilling`  
+**Primary:** `wayfinder`\
+**Then:** `grilling`\
 **Then:** `codebase-design`
 
 ### Expected investigation output
@@ -331,8 +331,8 @@ Potentially:
 
 ## P05 — `QQuickPixmap: connectFinished() called when not loading.` warning flood
 
-**Category:** Qt/QML image loading  
-**Priority:** High  
+**Category:** Qt/QML image loading\
+**Priority:** High\
 **Status:** STRONG SUSPECT
 
 ### Observed symptom
@@ -368,8 +368,8 @@ Several code paths are plausible:
 
 ### Investigation
 
-**Primary:** `diagnosing-bugs`  
-**Then:** `research` against current Qt 6 documentation/source behavior  
+**Primary:** `diagnosing-bugs`\
+**Then:** `research` against current Qt 6 documentation/source behavior\
 **Then:** runtime characterization and focused test.
 
 ### Expected investigation output
@@ -397,8 +397,8 @@ Only after diagnosis:
 
 ## P06 — `qt.svg: Skipping a nested svg element...` warning
 
-**Category:** Qt SVG / MathJax rendering  
-**Priority:** High  
+**Category:** Qt SVG / MathJax rendering\
+**Priority:** High\
 **Status:** STRONG SUSPECT
 
 ### Observed symptom
@@ -427,8 +427,8 @@ Instrument the rendering path sufficiently to determine:
 
 ### Investigation
 
-**Primary:** `diagnosing-bugs`  
-**Then:** `research` against current Qt SVG and MathJax documentation/source  
+**Primary:** `diagnosing-bugs`\
+**Then:** `research` against current Qt SVG and MathJax documentation/source\
 **Then:** runtime characterization.
 
 ### Expected investigation output
@@ -442,8 +442,8 @@ Do not "fix" this warning by globally suppressing Qt SVG diagnostics.
 
 ## P07 — MathJax supervisor can block indefinitely on a hung worker
 
-**Category:** MathJax reliability / process supervision  
-**Priority:** BLOCKING  
+**Category:** MathJax reliability / process supervision\
+**Priority:** BLOCKING\
 **Status:** CONFIRMED by code review
 
 ### Observed failure mode
@@ -475,8 +475,8 @@ Required design questions:
 
 ### Investigation
 
-**Primary:** `grilling`  
-**Then:** `tdd`  
+**Primary:** `grilling`\
+**Then:** `tdd`\
 **External:** `research` only where current Node/Python subprocess semantics need confirmation.
 
 ### Expected Issue shape
@@ -493,8 +493,8 @@ An implementation-ready reliability Issue should require:
 
 ## P08 — Math rendering failure can silently turn into a missing formula
 
-**Category:** Math rendering / user-visible correctness  
-**Priority:** BLOCKING  
+**Category:** Math rendering / user-visible correctness\
+**Priority:** BLOCKING\
 **Status:** CONFIRMED by source inspection
 
 ### Current behavior
@@ -520,7 +520,7 @@ This is a correctness problem, not merely a cosmetic fallback.
 
 ### Investigation
 
-**Primary:** `grilling`  
+**Primary:** `grilling`\
 **Then:** `codebase-design`
 
 ### Expected investigation output
@@ -543,8 +543,8 @@ covering cache miss, worker failure, invalid TeX, and UI fallback.
 
 ## P09 — Runtime Node version is not enforced as exactly the bundled version
 
-**Category:** Runtime reproducibility  
-**Priority:** Medium  
+**Category:** Runtime reproducibility\
+**Priority:** Medium\
 **Status:** STRONG SUSPECT / EXTERNAL FACT TO VERIFY
 
 ### Current repository facts
@@ -565,7 +565,7 @@ that differs from the tested runtime.
 
 ### Investigation
 
-**Primary:** `research` for supported/version-checking behavior and packaging constraints  
+**Primary:** `research` for supported/version-checking behavior and packaging constraints\
 **Then:** `codebase-design`
 
 ### Expected investigation output
@@ -584,8 +584,8 @@ Do not hard-code a version rule until the packaging/runtime contract is explicit
 
 ## P10 — MathJax restart limiter counts initial startup as a restart
 
-**Category:** Process supervision / reliability  
-**Priority:** Medium  
+**Category:** Process supervision / reliability\
+**Priority:** Medium\
 **Status:** STRONG SUSPECT
 
 ### Current observation
@@ -599,7 +599,7 @@ That can effectively reduce the number of genuine restarts allowed after initial
 
 ### Investigation
 
-**Primary:** `tdd`  
+**Primary:** `tdd`\
 **Then:** `code-review`
 
 ### Expected investigation output
@@ -622,8 +622,8 @@ and deterministic tests for:
 
 ## P11 — Bundled runtime CI coverage is incomplete relative to the runtime contract
 
-**Category:** CI / packaging  
-**Priority:** Medium  
+**Category:** CI / packaging\
+**Priority:** Medium\
 **Status:** CONFIRMED gap in current verification scope
 
 ### Current evidence
@@ -636,7 +636,7 @@ platforms.
 
 ### Investigation
 
-**Primary:** `wayfinder`  
+**Primary:** `wayfinder`\
 **Then:** `research` for current GitHub Actions runner/platform availability and supported
 packaging strategy.
 
@@ -657,8 +657,8 @@ executed in CI".
 
 ## P12 — Supervisor cleanup uses overly broad exception swallowing
 
-**Category:** Reliability / maintainability  
-**Priority:** Medium / non-blocking until investigation proves impact  
+**Category:** Reliability / maintainability\
+**Priority:** Medium / non-blocking until investigation proves impact\
 **Status:** CONFIRMED code-quality finding
 
 ### Current observation
@@ -690,8 +690,8 @@ naturally cover it.
 
 ## P13 — Markdown editor / visual-region integration boundary is incomplete
 
-**Category:** Markdown editing / Review Workspace  
-**Priority:** High  
+**Category:** Markdown editing / Review Workspace\
+**Priority:** High\
 **Status:** KNOWN DEBT
 
 ### Existing repository planning
@@ -721,8 +721,8 @@ post-Phase-12 architecture:
 
 ### Investigation
 
-**Primary:** `wayfinder`  
-**Then:** `grilling`  
+**Primary:** `wayfinder`\
+**Then:** `grilling`\
 **Then:** `codebase-design`
 
 ### Expected investigation output
@@ -744,8 +744,8 @@ Only after this reconciliation should editor-related Issues be finalized.
 
 ## P14 — No deterministic warning-free desktop/QML characterization suite for the affected workflow
 
-**Category:** Runtime verification / regression prevention  
-**Priority:** High  
+**Category:** Runtime verification / regression prevention\
+**Priority:** High\
 **Status:** KNOWN GAP
 
 ### Observed problem
