@@ -235,7 +235,7 @@ def create_app(
     )
     document_viewer_controller = DocumentViewerController(
         viewer_service=container.document_viewer_service,
-        apply_review_service=None,  # Canonical write path disabled until 10E.3b
+        region_publication_service=container.visual_region_publication_service,
     )
     markdown_viewer_controller = MarkdownViewerController(
         viewer_service=container.markdown_viewer_service,

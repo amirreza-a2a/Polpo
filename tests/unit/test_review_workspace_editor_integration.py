@@ -21,7 +21,6 @@ from infrastructure.persistence.sqlite.connection import SQLiteDatabaseManager
 from infrastructure.persistence.sqlite.migration_runner import SQLiteMigrationRunner
 from infrastructure.persistence.sqlite.unit_of_work import SQLiteUnitOfWorkFactory
 from infrastructure.storage.local_storage import LocalStorageAdapter
-from application.services.apply_review_service import ApplyReviewService
 from application.services.document_viewer_service import DocumentViewerService
 from application.services.markdown_editor_service import MarkdownEditorService
 from application.services.markdown_viewer_service import MarkdownViewerService
@@ -50,12 +49,11 @@ def workspace_env(tmp_path):
         prompt_id = p.id
         uow.commit()
 
-    apply_service = ApplyReviewService(uow_factory=uow_factory, storage=storage, doc_processor=doc_proc)
     doc_viewer_service = DocumentViewerService(uow_factory=uow_factory, storage=storage, doc_processor=doc_proc)
     md_viewer_service = MarkdownViewerService(parser=md_parser, uow_factory=uow_factory, storage=storage)
     md_editor_service = MarkdownEditorService(uow_factory=uow_factory, storage=storage)
 
-    doc_ctrl = DocumentViewerController(viewer_service=doc_viewer_service, apply_review_service=apply_service)
+    doc_ctrl = DocumentViewerController(viewer_service=doc_viewer_service)
     md_viewer_ctrl = MarkdownViewerController(viewer_service=md_viewer_service)
     md_editor_ctrl = MarkdownEditorController(editor_service=md_editor_service)
 

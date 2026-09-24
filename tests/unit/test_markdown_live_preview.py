@@ -19,12 +19,16 @@ from application.dto.markdown_dto import (
     RegionOccurrenceRef,
     VisualRegionRefDTO,
 )
-from application.services.apply_review_service import ApplyReviewService
+import hashlib
+from application.services.crop_artifact_staging_service import CropArtifactStagingService
+from application.services.document_publication_service import DocumentPublicationService
 from application.services.document_viewer_service import DocumentViewerService
 from application.services.markdown_editor_service import MarkdownEditorService
 from application.services.markdown_viewer_service import MarkdownViewerService
+from application.services.visual_region_publication_service import VisualRegionPublicationService
 from core.entities.artifact import ArtifactType
 from core.entities.bounding_box import BoundingBox
+from core.entities.document_version import DocumentVersionRecord
 from core.entities.job import Job, JobStatus
 
 from core.entities.visual_region import (
@@ -577,12 +581,31 @@ def _setup_wired_workspace(tmp_path):
     doc_proc = PyMuPDFDocumentProcessor()
     md_parser = PandocParser()
 
-    apply_service = ApplyReviewService(uow_factory=uow_factory, storage=storage, doc_processor=doc_proc)
+    staging_service = CropArtifactStagingService(base_dir=artifacts_dir / ".staging")
+    document_publication_service = DocumentPublicationService(
+        uow_factory=uow_factory,
+        artifacts_dir=artifacts_dir,
+        staging_service=staging_service,
+    )
+    region_publication_service = VisualRegionPublicationService(
+        uow_factory=uow_factory,
+        doc_processor=doc_proc,
+        staging_service=staging_service,
+        publication_service=document_publication_service,
+    )
+
     doc_viewer_service = DocumentViewerService(uow_factory=uow_factory, storage=storage, doc_processor=doc_proc)
     md_viewer_service = MarkdownViewerService(parser=md_parser, uow_factory=uow_factory, storage=storage)
-    md_editor_service = MarkdownEditorService(uow_factory=uow_factory, storage=storage)
+    md_editor_service = MarkdownEditorService(
+        uow_factory=uow_factory,
+        storage=storage,
+        document_publication_service=document_publication_service,
+    )
 
-    doc_ctrl = DocumentViewerController(viewer_service=doc_viewer_service, apply_review_service=apply_service)
+    doc_ctrl = DocumentViewerController(
+        viewer_service=doc_viewer_service,
+        region_publication_service=region_publication_service,
+    )
     md_viewer_ctrl = MarkdownViewerController(viewer_service=md_viewer_service)
     md_editor_ctrl = MarkdownEditorController(editor_service=md_editor_service)
 
@@ -1153,6 +1176,16 @@ def _setup_recrop_workspace(tmp_path, initial_version: int = 1):
                 output_artifact_version_watermark=initial_version,
             )
         )
+        uow.document_versions.insert_document_version(
+            DocumentVersionRecord(
+                job_id=job.id,
+                version=initial_version,
+                output_path=output_md_handle.uri,
+                sha256=hashlib.sha256(initial_md_text.encode("utf-8")).hexdigest(),
+                integrity_status="VALID",
+                published_by="SYSTEM",
+            )
+        )
         region = uow.visual_regions.save(
             VisualRegion(
                 id=None,
@@ -1285,7 +1318,7 @@ def test_version_03_clean_editor_tracks_canonical_version_advance(qapp, tmp_path
     assert editor_ctrl.activeVersion == 2
     assert editor_ctrl.hasConflict is False
     assert editor_ctrl.isDirty is False
-    assert f"crop_1_{region_id}_v2.jpg" in editor_ctrl.sourceText
+    assert f"crop_{region_id}_v2.jpg" in editor_ctrl.sourceText
 
     viewer_ctrl.shutdown()
     editor_ctrl.shutdown()
