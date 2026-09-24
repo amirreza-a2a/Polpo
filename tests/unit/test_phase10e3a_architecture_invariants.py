@@ -90,40 +90,51 @@ def test_ast_sole_active_runtime_publisher():
     """
     Invariant 9: DocumentPublicationService is the sole active runtime canonical Markdown publisher.
     AST inspection validates that:
-    1. In interfaces/desktop/app.py, DocumentViewerController is instantiated with apply_review_service=None.
+    1. In interfaces/desktop/app.py, DocumentViewerController is instantiated with
+       region_publication_service=container.visual_region_publication_service.
     2. In interfaces/desktop/composition.py, DesktopAppContainer instantiates DocumentPublicationService and
-       injects it into JobExecutionService and MarkdownEditorService.
-    3. Neither DesktopAppContainer nor app.py injects ApplyReviewService into any presentation controller.
+       injects it into JobExecutionService, MarkdownEditorService, and VisualRegionPublicationService.
+    3. DesktopAppContainer instantiates VisualRegionPublicationService.
+    4. Neither DesktopAppContainer nor app.py references ApplyReviewService.
     """
     app_path = REPO_ROOT / "interfaces" / "desktop" / "app.py"
     app_tree = ast.parse(app_path.read_text(encoding="utf-8"))
 
-    # Verify DocumentViewerController instantiation in app.py has apply_review_service=None
-    found_dvc_none = False
+    # Verify DocumentViewerController instantiation in app.py has region_publication_service
+    found_dvc_reg_pub = False
     for node in ast.walk(app_tree):
         if isinstance(node, ast.Call):
             func_id = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
             if func_id == "DocumentViewerController":
                 for kw in node.keywords:
-                    if kw.arg == "apply_review_service":
-                        if isinstance(kw.value, ast.Constant) and kw.value.value is None:
-                            found_dvc_none = True
+                    if kw.arg == "region_publication_service":
+                        found_dvc_reg_pub = True
 
-    assert found_dvc_none, "DocumentViewerController in app.py must be constructed with apply_review_service=None."
+    assert found_dvc_reg_pub, (
+        "DocumentViewerController in app.py must be constructed with "
+        "region_publication_service=container.visual_region_publication_service."
+    )
 
     comp_path = REPO_ROOT / "interfaces" / "desktop" / "composition.py"
     comp_tree = ast.parse(comp_path.read_text(encoding="utf-8"))
 
     found_pub_service_instantiation = False
+    found_visual_region_pub_service_instantiation = False
     found_apply_review_service_instantiation = False
     job_exec_wires_pub_service = False
     editor_wires_pub_service = False
+    visual_region_wires_pub_service = False
 
     for node in ast.walk(comp_tree):
         if isinstance(node, ast.Call):
             func_id = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
             if func_id == "DocumentPublicationService":
                 found_pub_service_instantiation = True
+            elif func_id == "VisualRegionPublicationService":
+                found_visual_region_pub_service_instantiation = True
+                for kw in node.keywords:
+                    if kw.arg in ("publication_service", "document_publication_service"):
+                        visual_region_wires_pub_service = True
             elif func_id == "ApplyReviewService":
                 found_apply_review_service_instantiation = True
             elif func_id == "JobExecutionService":
@@ -136,7 +147,9 @@ def test_ast_sole_active_runtime_publisher():
                         editor_wires_pub_service = True
 
     assert found_pub_service_instantiation, "DesktopAppContainer must instantiate DocumentPublicationService."
-    assert not found_apply_review_service_instantiation, "DesktopAppContainer must not instantiate quarantined ApplyReviewService."
+    assert found_visual_region_pub_service_instantiation, "DesktopAppContainer must instantiate VisualRegionPublicationService."
+    assert visual_region_wires_pub_service, "DesktopAppContainer must inject DocumentPublicationService into VisualRegionPublicationService."
+    assert not found_apply_review_service_instantiation, "DesktopAppContainer must not instantiate retired ApplyReviewService."
     assert job_exec_wires_pub_service, "DesktopAppContainer must inject DocumentPublicationService into JobExecutionService."
     assert editor_wires_pub_service, "DesktopAppContainer must inject DocumentPublicationService into MarkdownEditorService."
 
@@ -232,42 +245,44 @@ class _CanonicalStoreVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def test_ast_apply_review_quarantined_exception():
+def test_ast_apply_review_decommissioned_and_purged():
     """
-    Invariant: ApplyReviewService is the ONLY application service with legacy direct
-    canonical Markdown write logic, and is quarantined from runtime execution.
-    No other service in application/services may execute direct canonical markdown stores
-    via storage.store(..., artifact_type=ArtifactType.OUTPUT_MARKDOWN, filename='output_...').
+    Invariant: ApplyReviewService is completely decommissioned and purged from PolpoT.
+    1. application/services/apply_review_service.py does NOT exist.
+    2. Zero Python files across the codebase import or reference ApplyReviewService.
+    3. No application service performs direct canonical markdown writes (DocumentPublicationService is the sole authority).
     """
     services_dir = REPO_ROOT / "application" / "services"
+    apply_review_path = services_dir / "apply_review_service.py"
+    assert not apply_review_path.exists(), "application/services/apply_review_service.py must be deleted."
+
+    # Verify zero references to ApplyReviewService or apply_review_service in python code
+    for py_file in REPO_ROOT.rglob("*.py"):
+        if any(part.startswith(".") or part in ("venv", "build", "dist", "__pycache__") for part in py_file.parts):
+            continue
+        # Skip this test file itself from the substring check of the class name
+        if py_file.resolve() == Path(__file__).resolve():
+            continue
+        content = py_file.read_text(encoding="utf-8")
+        assert "ApplyReviewService" not in content, (
+            f"Found forbidden ApplyReviewService reference in {py_file}"
+        )
+        assert "apply_review_service" not in content, (
+            f"Found forbidden apply_review_service reference in {py_file}"
+        )
+
+    # Verify no service in application/services performs direct canonical markdown writes
     service_files = list(services_dir.glob("*.py"))
-
     violating_services = []
-    apply_review_stores_canonical = False
-
     for s_file in service_files:
         tree = ast.parse(s_file.read_text(encoding="utf-8"))
         visitor = _CanonicalStoreVisitor()
         visitor.visit(tree)
+        if visitor.stores_canonical:
+            violating_services.append(s_file.name)
 
-        if s_file.name == "apply_review_service.py":
-            apply_review_stores_canonical = visitor.stores_canonical
-        else:
-            if visitor.stores_canonical:
-                violating_services.append(s_file.name)
-
-    assert apply_review_stores_canonical, (
-        "ApplyReviewService must be detected as containing legacy direct canonical Markdown write logic."
-    )
     assert not violating_services, (
         f"The following application services unexpectedly perform direct canonical markdown writes: {violating_services}"
-    )
-
-    # Verify that ApplyReviewService source explicitly contains quarantine documentation
-    apply_review_path = services_dir / "apply_review_service.py"
-    apply_review_text = apply_review_path.read_text(encoding="utf-8")
-    assert "quarantine" in apply_review_text.lower() or "legacy" in apply_review_text.lower(), (
-        "ApplyReviewService must be explicitly tagged with quarantine or legacy documentation."
     )
 
 

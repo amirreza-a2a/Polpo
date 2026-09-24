@@ -48,7 +48,7 @@ The primary desktop presentation interface (`interfaces/desktop/qml/views/Review
 ### 2.4 `Canonical Markdown`
 The single authoritative, immutable on-disk document artifact (`output_{job_id}_v{version}.md`).
 * **Immutability:** Existing versioned markdown files are never overwritten in-place.
-* **Monotonic Advancement:** Advanced strictly through `MarkdownEditorService.commit_source_text()` or `ApplyReviewService` using an atomic two-phase commit protocol:
+* **Monotonic Advancement:** Advanced strictly through `DocumentPublicationService` (via `MarkdownEditorService` or `VisualRegionPublicationService`) using an atomic two-phase commit protocol:
   1. Watermark reservation in SQLite under `BEGIN IMMEDIATE`.
   2. Staged atomic file write to disk.
   3. Pointer update of `jobs.output_path` in SQLite.

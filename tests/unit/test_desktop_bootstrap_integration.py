@@ -77,10 +77,11 @@ def test_bootstrap_order(tmp_path: Path):
     assert call_order == expected_order
 
 
-def test_document_viewer_controller_disconnected(tmp_path: Path):
+def test_document_viewer_controller_wired(tmp_path: Path):
     """
-    Verifies that DocumentViewerController is constructed with apply_review_service=None
-    in create_app, disconnecting the legacy canonical Markdown write path.
+    Verifies that DocumentViewerController is constructed with
+    region_publication_service=container.visual_region_publication_service
+    in create_app.
     """
     _app, _engine, container = create_app(
         argv=["-platform", "offscreen"],
@@ -91,12 +92,8 @@ def test_document_viewer_controller_disconnected(tmp_path: Path):
 
     try:
         assert container.document_viewer_controller is not None
-        # Verify the controller holds None for apply_review_service
-        assert container.document_viewer_controller.apply_review_service is None
-
-        # Verify apply_region_sync returns None immediately without crashing or writing
-        result = container.document_viewer_controller.apply_region_sync(1, "nonexistent-region-id")
-        assert result is None
+        assert container.visual_region_publication_service is not None
+        assert container.document_viewer_controller.region_publication_service is container.visual_region_publication_service
     finally:
         container.shutdown()
 

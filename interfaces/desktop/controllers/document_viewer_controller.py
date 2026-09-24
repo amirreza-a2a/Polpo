@@ -9,8 +9,9 @@ from typing import Optional, List, Dict, Any
 
 from interfaces.desktop.qt_compat import QObject, Signal, Slot, Property, QUrl
 from application.services.document_viewer_service import DocumentViewerService
-from application.services.apply_review_service import ApplyReviewService
-from application.dto.visual_region_dto import ApplyReviewResultDTO, VisualRegionDTO
+from application.services.visual_region_publication_service import VisualRegionPublicationService
+from application.dto.visual_region_dto import VisualRegionDTO
+from application.dto.visual_region_publication_dto import RegionPublicationResultDTO
 from core.entities.bounding_box import BoundingBox
 from core.geometry.coordinates import (
     CoordinateTransformer,
@@ -61,8 +62,9 @@ class DocumentViewerController(QObject):
     regionCreated = Signal(str)
     regionDeleted = Signal(str)
 
-    # Public signals for review apply and artifact regeneration (Phase 10E Review Workflow)
+    # Public signals for review apply and artifact regeneration (Visual Region Publication Pipeline)
     regionArtifactCommitted = Signal(int, str, int, str)  # (job_id, region_id, new_version, new_artifact_uri)
+    regionApplied = Signal(int, str, int, str)            # Alias for regionArtifactCommitted
     applyFailed = Signal(int, str, str)                    # (job_id, region_id, error_message)
 
     # Internal Qt Signals for thread-safe worker-to-GUI dispatch
@@ -74,12 +76,12 @@ class DocumentViewerController(QObject):
     def __init__(
         self,
         viewer_service: DocumentViewerService,
-        apply_review_service: Optional[ApplyReviewService] = None,
+        region_publication_service: Optional[VisualRegionPublicationService] = None,
         parent: Optional[QObject] = None,
     ):
         super().__init__(parent)
         self.viewer_service = viewer_service
-        self.apply_review_service = apply_review_service
+        self.region_publication_service = region_publication_service
 
         self._current_job_id: int = 0
         self._current_page: int = 1
@@ -394,15 +396,15 @@ class DocumentViewerController(QObject):
             self.loadPage(self._current_job_id, self._current_page - 1)
 
     # =========================================================================
-    # Review Apply & Re-crop Orchestration (Phase 10E Review Workflow)
+    # Visual Region Review Publication (Visual Region Publication Pipeline)
     # =========================================================================
 
     def _trigger_async_apply(self, job_id: int, region_id: str) -> None:
         """
-        Dispatches background recrop and markdown regeneration via ApplyReviewService.
+        Dispatches background review publication via VisualRegionPublicationService.
         Guarantees non-blocking execution off the Qt GUI thread.
         """
-        if not self.apply_review_service or not region_id:
+        if not self.region_publication_service or not region_id:
             return
 
         resolved_job_id = job_id if job_id > 0 else self._current_job_id
@@ -416,15 +418,14 @@ class DocumentViewerController(QObject):
 
         def background_apply():
             try:
-                res = self.apply_review_service.apply_reviews(job_id=resolved_job_id, region_ids=[region_id])
+                res = self.region_publication_service.publish_region_review(job_id=resolved_job_id, region_id=region_id)
                 if not res.success:
                     self._internalApplyError.emit(
-                        resolved_job_id, region_id, res.error_message or "Apply reviews returned failure"
+                        resolved_job_id, region_id, res.status_message or "Visual region publication failed"
                     )
                     return
-                dto = self.viewer_service.get_region(region_id)
-                new_ver = dto.active_artifact_version if dto else 1
-                new_uri = dto.active_artifact_uri if (dto and dto.active_artifact_uri) else ""
+                new_ver = res.artifact_version if res.artifact_version is not None else 0
+                new_uri = res.artifact_uri or ""
                 self._internalApplyFinished.emit(resolved_job_id, region_id, new_ver, new_uri)
             except Exception as e:
                 self._internalApplyError.emit(resolved_job_id, region_id, str(e))
@@ -441,12 +442,12 @@ class DocumentViewerController(QObject):
 
     def apply_region_sync(
         self, job_id: int, region_id: str
-    ) -> Optional[ApplyReviewResultDTO]:
+    ) -> Optional[RegionPublicationResultDTO]:
         """
         Synchronously applies review and triggers update signals.
         Useful for unit/integration tests and deterministic headless verification.
         """
-        if not self.apply_review_service or not region_id:
+        if not self.region_publication_service or not region_id:
             return None
 
         resolved_job_id = job_id if job_id > 0 else self._current_job_id
@@ -459,15 +460,14 @@ class DocumentViewerController(QObject):
             return None
 
         try:
-            res = self.apply_review_service.apply_reviews(job_id=resolved_job_id, region_ids=[region_id])
+            res = self.region_publication_service.publish_region_review(job_id=resolved_job_id, region_id=region_id)
             if not res.success:
                 self._on_internal_apply_error(
-                    resolved_job_id, region_id, res.error_message or "Apply reviews returned failure"
+                    resolved_job_id, region_id, res.status_message or "Visual region publication failed"
                 )
                 return res
-            dto = self.viewer_service.get_region(region_id)
-            new_ver = dto.active_artifact_version if dto else 1
-            new_uri = dto.active_artifact_uri if (dto and dto.active_artifact_uri) else ""
+            new_ver = res.artifact_version if res.artifact_version is not None else 0
+            new_uri = res.artifact_uri or ""
             self._on_internal_apply_finished(resolved_job_id, region_id, new_ver, new_uri)
             return res
         except Exception as e:
@@ -479,7 +479,7 @@ class DocumentViewerController(QObject):
     ) -> None:
         """
         GUI-thread slot called when background apply completes successfully.
-        Emits regionArtifactCommitted public signal and reloads page regions if matching current page.
+        Emits regionArtifactCommitted and regionApplied public signals and reloads page regions if matching current page.
         """
         if job_id == self._current_job_id:
             self._reload_page_regions()
@@ -487,6 +487,7 @@ class DocumentViewerController(QObject):
             if self._selected_region_id:
                 self.selectionChanged.emit()
         self.regionArtifactCommitted.emit(job_id, region_id, new_version, new_artifact_uri)
+        self.regionApplied.emit(job_id, region_id, new_version, new_artifact_uri)
 
     def _on_internal_apply_error(
         self, job_id: int, region_id: str, error_msg: str
