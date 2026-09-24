@@ -888,3 +888,96 @@ def test_upsert_handles_angle_bracket_destination_uri():
 
     expected_token = f'![Bracket URI](updated.jpg "polpo:region={REG_UUID_STR};occ=e06385b2-dc09-4ce4-897b-cf109c95eb48")'
     assert mutated == f"Header\n\n{expected_token}\n\nFooter"
+
+
+def test_upsert_ignores_unmatched_backtick_inside_html_comment():
+    comment = "<!-- comment containing an unmatched ` backtick -->"
+    preceding_content = "normal Markdown content\n\n"
+    page_marker = "<!-- Page 1 -->\n"
+    canonical_token = f'![Figure](crops/crop1.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")\n'
+    following_content = "Later paragraph with `inline code` backtick.\n"
+
+    doc = f"{comment}\n\n{preceding_content}{page_marker}{canonical_token}\n{following_content}"
+
+    new_occ = "e06385b2-dc09-4ce4-897b-cf109c95eb48"
+    new_uri = "crops/crop1_updated.jpg"
+    mutated = upsert_visual_token(
+        text=doc,
+        region_id=REG_UUID_STR,
+        occurrence_id=new_occ,
+        artifact_uri=new_uri,
+        page_number=1,
+        alt_text="Updated Figure",
+    )
+
+    expected_token = f'![Updated Figure]({new_uri} "polpo:region={REG_UUID_STR};occ={new_occ}")\n'
+    assert mutated == f"{comment}\n\n{preceding_content}{page_marker}{expected_token}\n{following_content}"
+
+    doc_no_token = f"{comment}\n\n{preceding_content}{page_marker}\n{following_content}"
+    inserted = upsert_visual_token(
+        text=doc_no_token,
+        region_id=REG_UUID_STR,
+        occurrence_id=new_occ,
+        artifact_uri=new_uri,
+        page_number=1,
+        alt_text="New Figure",
+    )
+    expected_inserted = f'![New Figure]({new_uri} "polpo:region={REG_UUID_STR};occ={new_occ}")\n'
+    assert inserted == f"{comment}\n\n{preceding_content}{page_marker}{expected_inserted}\n{following_content}"
+
+    removed = remove_visual_token(doc, REG_UUID_STR)
+    assert removed == f"{comment}\n\n{preceding_content}{page_marker}\n{following_content}"
+
+
+def test_upsert_ignores_unmatched_backtick_inside_fenced_code():
+    fence = "```\nCode containing an unmatched ` backtick\n```"
+    preceding_content = "normal Markdown content outside fence\n\n"
+    page_marker = "<!-- Page 1 -->\n"
+    canonical_token = f'![Figure](crops/crop1.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")\n'
+    following_content = "Later paragraph with `inline code` backtick.\n"
+
+    doc = f"{fence}\n\n{preceding_content}{page_marker}{canonical_token}\n{following_content}"
+
+    new_occ = "e06385b2-dc09-4ce4-897b-cf109c95eb48"
+    new_uri = "crops/crop1_updated.jpg"
+    mutated = upsert_visual_token(
+        text=doc,
+        region_id=REG_UUID_STR,
+        occurrence_id=new_occ,
+        artifact_uri=new_uri,
+        page_number=1,
+        alt_text="Updated Figure",
+    )
+
+    expected_token = f'![Updated Figure]({new_uri} "polpo:region={REG_UUID_STR};occ={new_occ}")\n'
+    assert mutated == f"{fence}\n\n{preceding_content}{page_marker}{expected_token}\n{following_content}"
+
+    removed = remove_visual_token(doc, REG_UUID_STR)
+    assert removed == f"{fence}\n\n{preceding_content}{page_marker}\n{following_content}"
+
+
+def test_upsert_ignores_html_comment_opener_inside_fenced_code():
+    fence = "```\n<!-- unmatched comment start inside code fence\n```"
+    preceding_content = "normal Markdown content outside fence\n\n"
+    page_marker = "<!-- Page 1 -->\n"
+    canonical_token = f'![Figure](crops/crop1.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")\n'
+    following_content = "Later paragraph with stray comment closer --> here.\n"
+
+    doc = f"{fence}\n\n{preceding_content}{page_marker}{canonical_token}\n{following_content}"
+
+    new_occ = "e06385b2-dc09-4ce4-897b-cf109c95eb48"
+    new_uri = "crops/crop1_updated.jpg"
+    mutated = upsert_visual_token(
+        text=doc,
+        region_id=REG_UUID_STR,
+        occurrence_id=new_occ,
+        artifact_uri=new_uri,
+        page_number=1,
+        alt_text="Updated Figure",
+    )
+
+    expected_token = f'![Updated Figure]({new_uri} "polpo:region={REG_UUID_STR};occ={new_occ}")\n'
+    assert mutated == f"{fence}\n\n{preceding_content}{page_marker}{expected_token}\n{following_content}"
+
+    removed = remove_visual_token(doc, REG_UUID_STR)
+    assert removed == f"{fence}\n\n{preceding_content}{page_marker}\n{following_content}"

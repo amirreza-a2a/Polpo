@@ -16,9 +16,9 @@ from uuid import UUID
 from core.domain.visual_token import (
     TokenDiagnosticType,
     VisualOccurrenceToken,
-    _unescape_alt_text,
     classify_token_metadata,
     serialize_canonical_token,
+    unescape_alt_text,
     validate_token_uuid,
 )
 from core.exceptions.domain_exceptions import AmbiguousVisualTokenError
@@ -148,7 +148,8 @@ def _find_opaque_spans(text: str) -> List[Tuple[int, int]]:
 
     for m in _HTML_COMMENT_RE.finditer(text):
         c_start, c_end = m.start(), m.end()
-        if any(s <= c_start and c_end <= e for s, e in opaque_spans):
+        # Candidate comment opening delimiter inside an established opaque span cannot escape it
+        if any(s <= c_start < e for s, e in opaque_spans):
             continue
 
         comment_content = m.group(0).strip()
@@ -160,7 +161,8 @@ def _find_opaque_spans(text: str) -> List[Tuple[int, int]]:
 
     for m in _INLINE_CODE_RE.finditer(text):
         b_start, b_end = m.start(), m.end()
-        if any(s <= b_start and b_end <= e for s, e in opaque_spans):
+        # Candidate inline code cannot begin inside or intersect an already established opaque span
+        if any(max(b_start, s) < min(b_end, e) for s, e in opaque_spans):
             continue
         opaque_spans.append((b_start, b_end))
 
@@ -209,7 +211,7 @@ def _find_matching_tokens(
         diag, r_id, _ = classify_token_metadata(title)
         if diag == TokenDiagnosticType.CANONICAL and r_id == target_region_uuid:
             raw_alt = match.group("alt") or ""
-            semantic_alt = _unescape_alt_text(raw_alt)
+            semantic_alt = unescape_alt_text(raw_alt)
             matches.append(_TokenMatch(m_start, m_end, existing_alt=semantic_alt))
 
     for match in _LEGACY_TOKEN_RE.finditer(text):
@@ -233,7 +235,7 @@ def _find_matching_tokens(
         matches_target = (legacy_target is not None and (url_part == legacy_target or target == legacy_target))
 
         if has_uuid or matches_target:
-            semantic_alt = _unescape_alt_text(alt)
+            semantic_alt = unescape_alt_text(alt)
             matches.append(_TokenMatch(m_start, m_end, existing_alt=semantic_alt))
 
     matches.sort(key=lambda m: m.start)

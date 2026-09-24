@@ -11,6 +11,7 @@ from core.domain.visual_token import (
     VisualOccurrenceToken,
     TokenDiagnosticType,
     serialize_canonical_token,
+    unescape_alt_text,
     validate_token_uuid,
     validate_token_metadata,
     classify_token_metadata,
@@ -272,6 +273,12 @@ def test_token_dto_mapping():
 
     restored = dto.to_domain()
     assert restored == token
+
+
+def test_unescape_alt_text():
+    assert unescape_alt_text(r"Figure \[A\] and \[B\]") == "Figure [A] and [B]"
+    assert unescape_alt_text(r"Path\\to\\file") == r"Path\to\file"
+    assert unescape_alt_text(r"Simple Title") == "Simple Title"
 
 
 def test_package_all_exports():
