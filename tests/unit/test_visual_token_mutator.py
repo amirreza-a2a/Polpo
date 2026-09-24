@@ -4,6 +4,7 @@ import pytest
 
 from core.exceptions.domain_exceptions import AmbiguousVisualTokenError
 from core.markdown.visual_token_mutator import (
+    find_canonical_tokens,
     remove_visual_token,
     upsert_visual_token,
 )
@@ -981,3 +982,72 @@ def test_upsert_ignores_html_comment_opener_inside_fenced_code():
 
     removed = remove_visual_token(doc, REG_UUID_STR)
     assert removed == f"{fence}\n\n{preceding_content}{page_marker}\n{following_content}"
+
+
+def test_find_canonical_tokens_matching_single_and_multiple():
+    doc = (
+        f'<!-- Page 1 -->\n'
+        f'![Figure 1](crops/crop1.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")\n\n'
+        f'Paragraph.\n\n'
+        f'![Figure 2](<crops/crop2.jpg> "polpo:region={REG_UUID_STR};occ=e06385b2-dc09-4ce4-897b-cf109c95eb48")\n'
+    )
+    tokens = find_canonical_tokens(doc, REG_UUID_STR)
+    assert len(tokens) == 2
+    assert tokens[0].uri == "crops/crop1.jpg"
+    assert tokens[0].alt_text == "Figure 1"
+    assert str(tokens[0].region_id) == REG_UUID_STR
+    assert str(tokens[0].occurrence_id) == OCC_UUID_STR
+
+    assert tokens[1].uri == "crops/crop2.jpg"
+    assert tokens[1].alt_text == "Figure 2"
+    assert str(tokens[1].occurrence_id) == "e06385b2-dc09-4ce4-897b-cf109c95eb48"
+
+
+def test_find_canonical_tokens_normalization():
+    import uuid
+    doc = f'![Alt](crops/crop.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")'
+
+    # Test with 36-char hyphenated string
+    t1 = find_canonical_tokens(doc, REG_UUID_STR)
+    assert len(t1) == 1
+
+    # Test with 32-char hex string
+    t2 = find_canonical_tokens(doc, REG_HEX_STR)
+    assert len(t2) == 1
+
+    # Test with UUID object
+    t3 = find_canonical_tokens(doc, uuid.UUID(REG_UUID_STR))
+    assert len(t3) == 1
+
+
+def test_find_canonical_tokens_ignores_opaque_contexts():
+    doc = (
+        "```markdown\n"
+        f'![In Fence](crop1.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")\n'
+        "```\n\n"
+        f'`![In Code](crop2.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")`\n\n'
+        f'<!-- ![In Comment](crop3.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}") -->\n\n'
+        f'![Outside](crop4.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")\n'
+    )
+    tokens = find_canonical_tokens(doc, REG_UUID_STR)
+    assert len(tokens) == 1
+    assert tokens[0].uri == "crop4.jpg"
+
+
+def test_find_canonical_tokens_ignores_other_regions_and_non_managed():
+    other_uuid = "e06385b2-dc09-4ce4-897b-cf109c95eb48"
+    doc = (
+        f'![Other Region](crop1.jpg "polpo:region={other_uuid};occ={OCC_UUID_STR}")\n\n'
+        f'![Standard Image](standard.jpg)\n\n'
+        f'![Alt](crop2.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")\n'
+    )
+    tokens = find_canonical_tokens(doc, REG_UUID_STR)
+    assert len(tokens) == 1
+    assert tokens[0].uri == "crop2.jpg"
+
+
+def test_find_canonical_tokens_invalid_uuid():
+    with pytest.raises(ValueError):
+        find_canonical_tokens("text", "not-a-uuid")
+    with pytest.raises(TypeError):
+        find_canonical_tokens("text", 12345)  # type: ignore[arg-type]

@@ -1,19 +1,13 @@
-# ============================================================
-#  tests/unit/test_visual_region_publication_service.py
-#  Unit Tests for VisualRegionPublicationService (TICK-P02B, #28)
-# ============================================================
+"""Unit tests for VisualRegionPublicationService (TICK-P02B, #28)."""
 
 from datetime import datetime, timezone
-import hashlib
 from pathlib import Path
 from typing import List, Optional, Tuple
-from unittest.mock import MagicMock
 import uuid
 import pytest
 
 from application.dto.visual_region_publication_dto import RegionPublicationResultDTO
 from application.ports.document_processor import IDocumentProcessor
-from application.ports.notifier import IApplicationEventPublisher
 from application.services.crop_artifact_staging_service import CropArtifactStagingService
 from application.services.document_publication_service import DocumentPublicationService
 from application.services.visual_region_publication_service import VisualRegionPublicationService
@@ -22,7 +16,6 @@ from core.entities.bounding_box import BoundingBox, CropPolicy
 from core.entities.job import Job, JobStatus
 from core.entities.visual_region import RegionOrigin, ReviewStatus, SyncStatus, VisualRegion
 from core.exceptions.domain_exceptions import (
-    ArtifactNotFoundError,
     EntityNotFoundError,
     RegionPublicationError,
     StaleDocumentVersionError,
@@ -144,21 +137,24 @@ def _setup_job_and_doc(
     tmp_path: Path,
     initial_text: str = "<!-- Page 1 -->\nInitial text.\n",
 ) -> Tuple[int, Path]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     pdf_path = tmp_path / "doc.pdf"
     pdf_path.write_bytes(b"%PDF-1.4 dummy pdf bytes")
     file_uri = pdf_path.resolve().as_uri()
 
     with uow_factory.create() as uow:
-        cur = uow._conn.cursor()
-        cur.execute(
-            """
-            INSERT INTO jobs (file_name, file_path, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            ("doc.pdf", file_uri, JobStatus.DONE.value, "2026-09-24T00:00:00+00:00", "2026-09-24T00:00:00+00:00"),
+        job = Job(
+            id=None,
+            file_name="doc.pdf",
+            file_path=file_uri,
+            status=JobStatus.DONE,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
-        job_id = cur.lastrowid
+        saved_job = uow.jobs.save(job)
         uow.commit()
+        job_id = saved_job.id
+        assert job_id is not None
 
     pub_service.publish_initial(job_id=job_id, markdown_text=initial_text)
     return job_id, pdf_path
@@ -611,3 +607,142 @@ def test_publish_region_review_rejected_region_removes_token(
         r = uow.visual_regions.get_by_region_id(region.region_id)
         assert r.active_artifact_uri is None
         assert r.sync_status == SyncStatus.SYNCED
+
+
+def test_publish_region_review_cross_job_isolation_rejected(
+    service: VisualRegionPublicationService,
+    uow_factory: SQLiteUnitOfWorkFactory,
+    publication_service: DocumentPublicationService,
+    tmp_path: Path,
+):
+    job1_id, _ = _setup_job_and_doc(uow_factory, publication_service, tmp_path / "j1")
+    job2_id, _ = _setup_job_and_doc(uow_factory, publication_service, tmp_path / "j2")
+    region_job2 = _create_region(uow_factory, job_id=job2_id)
+
+    with pytest.raises(EntityNotFoundError) as exc_info:
+        service.publish_region_review(job_id=job1_id, region_id=region_job2.region_id)
+    assert "visualregion" in str(exc_info.value).lower()
+
+
+def test_reconcile_region_sync_cross_job_isolation_rejected(
+    service: VisualRegionPublicationService,
+    uow_factory: SQLiteUnitOfWorkFactory,
+    publication_service: DocumentPublicationService,
+    tmp_path: Path,
+):
+    job1_id, _ = _setup_job_and_doc(uow_factory, publication_service, tmp_path / "j1")
+    job2_id, _ = _setup_job_and_doc(uow_factory, publication_service, tmp_path / "j2")
+    region_job2 = _create_region(uow_factory, job_id=job2_id)
+
+    with pytest.raises(EntityNotFoundError) as exc_info:
+        service.reconcile_region_sync(job_id=job1_id, region_id=region_job2.region_id)
+    assert "visualregion" in str(exc_info.value).lower()
+
+
+def test_publish_region_review_concurrent_modification_during_publish_does_not_mark_synced(
+    service: VisualRegionPublicationService,
+    uow_factory: SQLiteUnitOfWorkFactory,
+    publication_service: DocumentPublicationService,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    job_id, _ = _setup_job_and_doc(uow_factory, publication_service, tmp_path)
+    region = _create_region(uow_factory, job_id)
+
+    original_publish_version = publication_service.publish_version
+
+    def mock_publish_with_concurrent_region_edit(*args, **kwargs):
+        # Simulate user concurrently resizing the bounding box in the GUI while document was being published
+        with uow_factory.create() as uow:
+            uow.begin_immediate()
+            r = uow.visual_regions.get_by_region_id(region.region_id)
+            assert r is not None
+            r.update_geometry(BoundingBox(50, 50, 200, 200))
+            uow.visual_regions.save(r)
+            uow.commit()
+        return original_publish_version(*args, **kwargs)
+
+    monkeypatch.setattr(publication_service, "publish_version", mock_publish_with_concurrent_region_edit)
+
+    result = service.publish_region_review(job_id, region.region_id)
+
+    assert result.success is False
+    assert "concurrently" in result.status_message.lower()
+
+    # In SQLite, region must preserve its newer dirty state and NOT be marked SYNCED
+    with uow_factory.create() as uow:
+        r = uow.visual_regions.get_by_region_id(region.region_id)
+        assert r is not None
+        assert r.sync_status == SyncStatus.DIRTY_RECROP_REQUIRED
+        assert r.reviewed_bbox == BoundingBox(50, 50, 200, 200)
+        assert r.active_artifact_version == 0
+        assert r.active_artifact_uri is None
+        # Watermark was advanced to 1 so the next crop version will be 2
+        assert r.artifact_version_watermark == 1
+
+
+def test_publish_region_review_concurrent_modification_during_occ_retry_aborts(
+    service: VisualRegionPublicationService,
+    uow_factory: SQLiteUnitOfWorkFactory,
+    publication_service: DocumentPublicationService,
+    artifacts_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    job_id, _ = _setup_job_and_doc(uow_factory, publication_service, tmp_path)
+    region = _create_region(uow_factory, job_id)
+
+    calls = 0
+
+    def mock_stale_with_concurrent_edit(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        # Concurrently modify region during first attempt
+        with uow_factory.create() as uow:
+            uow.begin_immediate()
+            r = uow.visual_regions.get_by_region_id(region.region_id)
+            assert r is not None
+            r.update_geometry(BoundingBox(30, 30, 120, 120))
+            uow.visual_regions.save(r)
+            uow.commit()
+        raise StaleDocumentVersionError(job_id=job_id, base_version=1, current_version=2)
+
+    monkeypatch.setattr(publication_service, "publish_version", mock_stale_with_concurrent_edit)
+
+    result = service.publish_region_review(job_id, region.region_id)
+
+    assert result.success is False
+    assert "stale worker snapshot" in result.status_message.lower()
+    assert calls == 1  # Aborted before second publish attempt
+
+    # Staging must be cleaned up
+    staging_base = artifacts_dir / ".staging"
+    if staging_base.exists():
+        assert list(staging_base.iterdir()) == []
+
+
+def test_publish_region_review_staging_cleaned_on_unexpected_exception(
+    service: VisualRegionPublicationService,
+    uow_factory: SQLiteUnitOfWorkFactory,
+    publication_service: DocumentPublicationService,
+    artifacts_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    job_id, _ = _setup_job_and_doc(uow_factory, publication_service, tmp_path)
+    region = _create_region(uow_factory, job_id)
+
+    def mock_unexpected_crash(*args, **kwargs):
+        raise RuntimeError("Unexpected disk or network corruption")
+
+    monkeypatch.setattr(publication_service, "publish_version", mock_unexpected_crash)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        service.publish_region_review(job_id, region.region_id)
+
+    assert "Unexpected disk or network corruption" in str(exc_info.value)
+
+    # Staging directory must be cleaned up despite the unhandled RuntimeError
+    staging_base = artifacts_dir / ".staging"
+    if staging_base.exists():
+        assert list(staging_base.iterdir()) == []
