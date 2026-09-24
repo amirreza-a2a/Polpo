@@ -85,3 +85,9 @@ class AmbiguousVisualTokenError(DomainError):
     """Raised when multiple visual occurrence tokens match the same region identity."""
     def __init__(self, message: str = "Multiple visual tokens match the specified region."):
         super().__init__(message)
+
+
+class RegionPublicationError(DomainError):
+    """Raised when visual region review publication fails or exhausts retries."""
+    def __init__(self, message: str = "Visual region publication failed."):
+        super().__init__(message)
