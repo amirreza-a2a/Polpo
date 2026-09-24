@@ -14,6 +14,17 @@ _UUIDV4_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 )
 
+__all__ = [
+    "TokenDiagnosticType",
+    "VisualOccurrenceToken",
+    "classify_token_metadata",
+    "parse_fields",
+    "serialize_canonical_token",
+    "unescape_alt_text",
+    "validate_token_metadata",
+    "validate_token_uuid",
+]
+
 
 class TokenDiagnosticType(str, Enum):
     """Classification of visual occurrence token syntax / diagnostic state."""
@@ -128,7 +139,7 @@ def _escape_alt_text(alt: str) -> str:
     return escaped
 
 
-def _unescape_alt_text(alt: str) -> str:
+def unescape_alt_text(alt: str) -> str:
     """
     Reverses escaping applied to alt text:
     \\] -> ], \\[ -> [, \\\\ -> \\
@@ -137,6 +148,9 @@ def _unescape_alt_text(alt: str) -> str:
     unescaped = alt.replace("\\]", "]").replace("\\[", "[")
     unescaped = unescaped.replace("\\\\", "\\")
     return unescaped
+
+
+_unescape_alt_text = unescape_alt_text
 
 
 def _escape_uri(uri: str) -> str:
@@ -189,7 +203,7 @@ def parse_fields(token_string: str) -> VisualOccurrenceToken:
         raise ValueError(f"Missing required title metadata in token: {token_string}")
 
     region_id, occ_id = validate_token_metadata(raw_title)
-    unescaped_alt = _unescape_alt_text(raw_alt)
+    unescaped_alt = unescape_alt_text(raw_alt)
 
     return VisualOccurrenceToken(
         region_id=region_id,

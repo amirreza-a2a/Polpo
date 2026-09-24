@@ -79,3 +79,9 @@ class DocumentAlreadyExistsError(DomainError):
         msg = message or f"Canonical document already exists for job {job_id}."
         super().__init__(msg)
         self.job_id = job_id
+
+
+class AmbiguousVisualTokenError(DomainError):
+    """Raised when multiple visual occurrence tokens match the same region identity."""
+    def __init__(self, message: str = "Multiple visual tokens match the specified region."):
+        super().__init__(message)
