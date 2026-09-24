@@ -1,7 +1,4 @@
-# ============================================================
-#  tests/unit/test_visual_token_mutator.py
-#  Tests for Pure Canonical Markdown Visual Token Mutator
-# ============================================================
+"""Unit tests for the pure canonical Markdown visual token mutator."""
 
 import pytest
 
@@ -11,16 +8,11 @@ from core.markdown.visual_token_mutator import (
     upsert_visual_token,
 )
 
-
 REG_UUID_STR = "550e8400-e29b-41d4-a716-446655440000"
 REG_HEX_STR = "550e8400e29b41d4a716446655440000"
 OCC_UUID_STR = "6ba7b810-9dad-41d1-80b4-00c04fd430c8"
 OCC_HEX_STR = "6ba7b8109dad41d180b400c04fd430c8"
 
-
-# ------------------------------------------------------------
-# 1. Existing Canonical Token Replacement & Byte Preservation
-# ------------------------------------------------------------
 
 def test_upsert_replaces_existing_canonical_token_in_place():
     prefix = "# Heading\n\nSome introductory paragraph.\n\n"
@@ -42,7 +34,6 @@ def test_upsert_replaces_existing_canonical_token_in_place():
 
     expected_token = f'![{new_alt}]({new_artifact} "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")'
     assert mutated == prefix + expected_token + suffix
-    # Strict byte preservation check outside mutation slice
     assert mutated[:len(prefix)] == doc[:len(prefix)]
     assert mutated[len(prefix) + len(expected_token):] == doc[len(prefix) + len(old_token):]
 
@@ -62,7 +53,6 @@ def test_upsert_accepts_32_hex_region_and_occurrence_ids():
         alt_text="Fig",
     )
 
-    # Output must be normalized to canonical 36-char hyphenated UUIDv4
     expected_token = f'![Fig](new.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")\n'
     assert mutated == prefix + expected_token + suffix
 
@@ -71,7 +61,6 @@ def test_upsert_canonical_token_idempotent():
     token = f'![Chart](chart_v1.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")\n'
     doc = f"<!-- Page 1 -->\n{token}Some content."
 
-    # Running upsert with identical metadata produces byte-identical output
     mutated = upsert_visual_token(
         text=doc,
         region_id=REG_UUID_STR,
@@ -82,10 +71,6 @@ def test_upsert_canonical_token_idempotent():
     )
     assert mutated == doc
 
-
-# ------------------------------------------------------------
-# 2. Insertion After Real Page Markers
-# ------------------------------------------------------------
 
 def test_upsert_inserts_immediately_after_page_marker():
     doc = (
@@ -164,10 +149,6 @@ def test_upsert_fallback_appends_when_page_marker_missing():
     assert mutated.startswith(doc)
 
 
-# ------------------------------------------------------------
-# 3. Opaque Context Masking (Fenced Code, Inline Code, Comments)
-# ------------------------------------------------------------
-
 def test_upsert_ignores_fake_page_markers_inside_fenced_code():
     doc = (
         "# Code Sample\n\n"
@@ -189,9 +170,7 @@ def test_upsert_ignores_fake_page_markers_inside_fenced_code():
     )
 
     token_str = f'![](real_crop.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")\n'
-    # Must NOT insert inside python code fence!
     assert "```python\n# Fake marker:\n<!-- Page 1 -->\nprint('hello')\n```" in mutated
-    # Must insert after the real <!-- Page 1 -->
     assert f"<!-- Page 1 -->\n{token_str}Real Page 1 text." in mutated
 
 
@@ -213,7 +192,7 @@ def test_upsert_ignores_fake_page_markers_inside_tilde_fences():
     )
 
     token_str = f'![](crop.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")\n'
-    assert f"~~~markdown\n<!-- Page 1 -->\n~~~" in mutated
+    assert "~~~markdown\n<!-- Page 1 -->\n~~~" in mutated
     assert f"<!-- Page 1 -->\n{token_str}Real content." in mutated
 
 
@@ -248,7 +227,6 @@ def test_upsert_ignores_tokens_inside_fenced_code():
         "Text.\n"
     )
 
-    # Since the token inside code is opaque, upsert treats the region as not yet existing in document!
     mutated = upsert_visual_token(
         text=doc,
         region_id=REG_UUID_STR,
@@ -257,9 +235,7 @@ def test_upsert_ignores_tokens_inside_fenced_code():
         page_number=1,
     )
 
-    # The code block must remain 100% byte-identical
     assert fake_token in mutated
-    # A real token must be inserted after <!-- Page 1 -->
     real_token = f'![](real.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")\n'
     assert f"<!-- Page 1 -->\n{real_token}Text.\n" in mutated
 
@@ -299,15 +275,10 @@ def test_upsert_ignores_tokens_and_markers_inside_non_polpo_html_comments():
         page_number=1,
     )
 
-    # HTML comment untouched
     assert fake_token in mutated
     real_token = f'![](active.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")\n'
     assert f"<!-- Page 1 -->\n{real_token}Real page body.\n" in mutated
 
-
-# ------------------------------------------------------------
-# 4. Strict Legacy Token Migration
-# ------------------------------------------------------------
 
 def test_upsert_migrates_legacy_token_with_explicit_uuid():
     legacy_token = f"![[crop_{REG_HEX_STR}_v1.jpg]]"
@@ -348,7 +319,6 @@ def test_upsert_does_not_migrate_unrelated_legacy_token_without_evidence():
     unrelated_legacy = "![[random_diagram.jpg]]"
     doc = f"<!-- Page 1 -->\n{unrelated_legacy}\nContent."
 
-    # No legacy_target passed and unrelated image does not contain region UUID
     mutated = upsert_visual_token(
         text=doc,
         region_id=REG_UUID_STR,
@@ -357,16 +327,10 @@ def test_upsert_does_not_migrate_unrelated_legacy_token_without_evidence():
         page_number=1,
     )
 
-    # Unrelated legacy token remains completely untouched!
     assert unrelated_legacy in mutated
-    # A new token is inserted after the page marker
     new_token = f'![](crop_canonical.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")\n'
     assert mutated == f"<!-- Page 1 -->\n{new_token}{unrelated_legacy}\nContent."
 
-
-# ------------------------------------------------------------
-# 5. Ambiguity Handling & Duplicate Tokens
-# ------------------------------------------------------------
 
 def test_upsert_raises_ambiguous_on_duplicate_canonical_tokens():
     tok1 = f'![Alt1](crop1.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")'
@@ -398,10 +362,6 @@ def test_upsert_raises_ambiguous_on_duplicate_eligible_legacy_and_canonical():
             page_number=1,
         )
 
-
-# ------------------------------------------------------------
-# 6. Token Removal (Idempotence & Precision)
-# ------------------------------------------------------------
 
 def test_remove_token_standalone_line():
     token = f'![Diagram](crop.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")'
@@ -438,10 +398,6 @@ def test_remove_token_raises_on_duplicates():
         remove_visual_token(doc, REG_UUID_STR)
 
 
-# ------------------------------------------------------------
-# 7. Preservation of Multilingual Text, Emojis, LaTeX, Lists
-# ------------------------------------------------------------
-
 def test_multilingual_persian_and_math_byte_preservation():
     persian_text = "این یک متن فارسی برای آزمون است. شامل ریاضی: $E = mc^2$ و فرمول نمایش:\n$$\\sum_{i=1}^n i = \\frac{n(n+1)}{2}$$\n"
     emojis_and_code = "Emoji check: 🚀 🎯 📝 ✨ | Special symbols: «» — –\n"
@@ -465,7 +421,6 @@ def test_multilingual_persian_and_math_byte_preservation():
         alt_text="New",
     )
 
-    # Everything before old_token is byte-identical
     prefix = persian_text + emojis_and_code + nested_list + "\n"
     assert mutated[:len(prefix)] == doc[:len(prefix)]
     assert mutated == prefix + new_token_str + "\n\nFooter note."
@@ -488,7 +443,6 @@ def test_crlf_line_ending_preservation():
 
     expected_token = f'![](crop.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")\r\n'
     assert "\r\n" in mutated
-    # Ensures no single \n corrupts the CRLF document
     assert "\n" not in mutated.replace("\r\n", "")
     assert mutated == (
         "# Title\r\n\r\n"
@@ -497,10 +451,6 @@ def test_crlf_line_ending_preservation():
         "Content line 1.\r\n"
     )
 
-
-# ------------------------------------------------------------
-# 8. Boundary Conditions & Validations
-# ------------------------------------------------------------
 
 def test_invalid_page_number_raises_value_error():
     with pytest.raises(ValueError):
@@ -539,7 +489,6 @@ def test_upsert_multiple_regions_same_page():
 
     doc = "<!-- Page 1 -->\nBody paragraph.\n"
 
-    # Insert first region
     doc1 = upsert_visual_token(
         text=doc,
         region_id=REG_UUID_STR,
@@ -550,7 +499,6 @@ def test_upsert_multiple_regions_same_page():
     )
     assert f'![Figure 1](crop1.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")' in doc1
 
-    # Insert second region on same page
     doc2 = upsert_visual_token(
         text=doc1,
         region_id=reg2_uuid,
@@ -560,7 +508,6 @@ def test_upsert_multiple_regions_same_page():
         alt_text="Figure 2",
     )
 
-    # Both tokens must be present, no duplicate marker, no corrupted text
     assert f'![Figure 1](crop1.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")' in doc2
     assert f'![Figure 2](crop2.jpg "polpo:region={reg2_uuid};occ={occ2_uuid}")' in doc2
     assert "Body paragraph." in doc2
@@ -590,7 +537,6 @@ def test_upsert_ignores_tokens_inside_indented_code_block():
 
 
 def test_upsert_ignores_non_standalone_inline_page_markers():
-    # If a line has text before the comment, it is not a structural marker
     doc = (
         "Inline comment here <!-- Page 1 --> not a standalone marker\n\n"
         "<!-- Page 1 -->\n"
@@ -620,7 +566,6 @@ def test_upsert_escapes_brackets_in_alt_text():
         alt_text="Figure [A] & [B]",
     )
 
-    # Brackets must be escaped as \[ and \]
     assert r"![Figure \[A\] & \[B\]](crop.jpg" in mutated
 
 
@@ -726,10 +671,8 @@ def test_upsert_and_remove_accepts_uppercase_uuid():
         page_number=1,
     )
 
-    # In canonical form, serialized UUIDs are lowercase
     assert f"polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}" in mutated
 
-    # Remove with uppercase UUID
     removed = remove_visual_token(mutated, upper_reg)
     assert removed == doc
 
@@ -738,7 +681,6 @@ def test_remove_token_with_legacy_target():
     legacy_token = "![[crop_job42_p1_1.jpg]]"
     doc = f"Introduction\n{legacy_token}\nConclusion"
 
-    # Remove by matching legacy_target filename
     removed = remove_visual_token(
         text=doc,
         region_id=REG_UUID_STR,
@@ -760,9 +702,189 @@ def test_upsert_handles_artifact_uri_containing_parentheses():
         alt_text=None,
     )
 
-    # serialize_canonical_token encodes parentheses in URI per CommonMark spec
     expected_token = (
         '![Chart](new_crop%282%29.png '
         f'"polpo:region={REG_UUID_STR};occ=e06385b2-dc09-4ce4-897b-cf109c95eb48")'
     )
     assert mutated == f"Text before\n\n{expected_token}\n\nText after"
+
+
+def test_upsert_leaves_preceding_ordinary_images_and_text_unchanged():
+    prefix = (
+        "# Document Header\n\n"
+        "![Regular Image](pic.png)\n\n"
+        "Some user text that must not be consumed or altered.\n\n"
+    )
+    token = f'![Crop](crop.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")'
+    suffix = "\n\nEnding notes."
+    doc = prefix + token + suffix
+
+    mutated = upsert_visual_token(
+        text=doc,
+        region_id=REG_UUID_STR,
+        occurrence_id=OCC_UUID_STR,
+        artifact_uri="new_crop.jpg",
+        page_number=1,
+        alt_text="Updated Crop",
+    )
+
+    expected_token = f'![Updated Crop](new_crop.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")'
+    assert mutated == prefix + expected_token + suffix
+    assert mutated.startswith(prefix)
+    assert mutated.endswith(suffix)
+
+
+def test_remove_leaves_preceding_ordinary_images_and_text_unchanged():
+    prefix = (
+        "![Regular Image](pic.png)\n\n"
+        "Some user text that must not be consumed or altered.\n\n"
+    )
+    token = f'![Crop](crop.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")\n'
+    doc = prefix + token
+
+    mutated = remove_visual_token(doc, REG_UUID_STR)
+    assert mutated == prefix
+
+
+def test_upsert_with_multiple_ordinary_images_before_and_after_polpo_token():
+    doc = (
+        "![First](first.png)\n\n"
+        "![Second](second.png \"With Title\")\n\n"
+        f"![Target](crop.jpg \"polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}\")\n\n"
+        "![Third](third.png)\n"
+    )
+
+    mutated = upsert_visual_token(
+        text=doc,
+        region_id=REG_UUID_STR,
+        occurrence_id="e06385b2-dc09-4ce4-897b-cf109c95eb48",
+        artifact_uri="new_crop.jpg",
+        page_number=1,
+        alt_text="Target Updated",
+    )
+
+    expected = (
+        "![First](first.png)\n\n"
+        "![Second](second.png \"With Title\")\n\n"
+        f"![Target Updated](new_crop.jpg \"polpo:region={REG_UUID_STR};occ=e06385b2-dc09-4ce4-897b-cf109c95eb48\")\n\n"
+        "![Third](third.png)\n"
+    )
+    assert mutated == expected
+
+
+def test_upsert_multiple_polpo_tokens_interleaved_with_ordinary_images():
+    reg2 = "11111111-2222-4333-8444-555555555555"
+    occ2 = "66666666-7777-4888-8999-000000000000"
+
+    doc = (
+        "![Photo](pic.jpg)\n\n"
+        f"![Crop1](crop1.jpg \"polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}\")\n\n"
+        "Middle paragraph text.\n\n"
+        f"![Crop2](crop2.jpg \"polpo:region={reg2};occ={occ2}\")\n\n"
+        "![Footer](footer.jpg)\n"
+    )
+
+    doc1 = upsert_visual_token(
+        text=doc,
+        region_id=REG_UUID_STR,
+        occurrence_id=OCC_UUID_STR,
+        artifact_uri="crop1_v2.jpg",
+        page_number=1,
+        alt_text="Crop1 Updated",
+    )
+
+    assert f'![Crop1 Updated](crop1_v2.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")' in doc1
+    assert f'![Crop2](crop2.jpg "polpo:region={reg2};occ={occ2}")' in doc1
+    assert "![Photo](pic.jpg)" in doc1
+    assert "Middle paragraph text." in doc1
+    assert "![Footer](footer.jpg)" in doc1
+
+    doc2 = upsert_visual_token(
+        text=doc1,
+        region_id=reg2,
+        occurrence_id=occ2,
+        artifact_uri="crop2_v2.jpg",
+        page_number=1,
+        alt_text="Crop2 Updated",
+    )
+
+    assert f'![Crop1 Updated](crop1_v2.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")' in doc2
+    assert f'![Crop2 Updated](crop2_v2.jpg "polpo:region={reg2};occ={occ2}")' in doc2
+    assert "![Photo](pic.jpg)" in doc2
+    assert "Middle paragraph text." in doc2
+    assert "![Footer](footer.jpg)" in doc2
+
+
+def test_repeated_upsert_alt_text_stability():
+    initial_alt = "Figure [A] & [B] \\ Path 'C:\\Data'"
+    doc = "<!-- Page 1 -->\n\nParagraph\n"
+
+    doc = upsert_visual_token(
+        text=doc,
+        region_id=REG_UUID_STR,
+        occurrence_id=OCC_UUID_STR,
+        artifact_uri="crop.jpg",
+        page_number=1,
+        alt_text=initial_alt,
+    )
+
+    first_pass = doc
+    # Repeated updates with alt_text=None must remain 100% byte-identical
+    for _ in range(5):
+        doc = upsert_visual_token(
+            text=doc,
+            region_id=REG_UUID_STR,
+            occurrence_id=OCC_UUID_STR,
+            artifact_uri="crop.jpg",
+            page_number=1,
+            alt_text=None,
+        )
+        assert doc == first_pass
+
+
+def test_upsert_masks_multiline_inline_code_span():
+    doc = (
+        "Here is text.\n"
+        "`code line 1\n"
+        "<!-- Page 1 -->\n"
+        f'![Fake](fake.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")\n'
+        "code line 2`\n\n"
+        "<!-- Page 1 -->\n"
+        "Real content line.\n"
+    )
+
+    mutated = upsert_visual_token(
+        text=doc,
+        region_id=REG_UUID_STR,
+        occurrence_id="e06385b2-dc09-4ce4-897b-cf109c95eb48",
+        artifact_uri="real_crop.jpg",
+        page_number=1,
+        alt_text="Real Crop",
+    )
+
+    code_block = (
+        "`code line 1\n"
+        "<!-- Page 1 -->\n"
+        f'![Fake](fake.jpg "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")\n'
+        "code line 2`"
+    )
+    assert code_block in mutated
+    real_token = f'![Real Crop](real_crop.jpg "polpo:region={REG_UUID_STR};occ=e06385b2-dc09-4ce4-897b-cf109c95eb48")\n'
+    assert f"<!-- Page 1 -->\n{real_token}Real content line.\n" in mutated
+
+
+def test_upsert_handles_angle_bracket_destination_uri():
+    token = f'![Bracket URI](<crop(complex).jpg> "polpo:region={REG_UUID_STR};occ={OCC_UUID_STR}")'
+    doc = f"Header\n\n{token}\n\nFooter"
+
+    mutated = upsert_visual_token(
+        text=doc,
+        region_id=REG_UUID_STR,
+        occurrence_id="e06385b2-dc09-4ce4-897b-cf109c95eb48",
+        artifact_uri="updated.jpg",
+        page_number=1,
+        alt_text=None,
+    )
+
+    expected_token = f'![Bracket URI](updated.jpg "polpo:region={REG_UUID_STR};occ=e06385b2-dc09-4ce4-897b-cf109c95eb48")'
+    assert mutated == f"Header\n\n{expected_token}\n\nFooter"

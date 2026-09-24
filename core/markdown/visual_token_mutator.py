@@ -1,8 +1,3 @@
-# ============================================================
-#  core/markdown/visual_token_mutator.py
-#  Pure Canonical Markdown Visual Token Mutator
-# ============================================================
-
 """Pure domain component for format-preserving visual token mutation in CommonMark.
 
 Performs format-preserving in-place update, insertion, and removal of canonical visual tokens:
@@ -21,6 +16,7 @@ from uuid import UUID
 from core.domain.visual_token import (
     TokenDiagnosticType,
     VisualOccurrenceToken,
+    _unescape_alt_text,
     classify_token_metadata,
     serialize_canonical_token,
     validate_token_uuid,
@@ -34,14 +30,17 @@ __all__ = [
 ]
 
 _FENCE_OPEN_RE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})")
+# Matches canonical Polpo image tokens: ![alt](destination "polpo:...").
+# Uses negative lookahead for ![ to prevent over-matching across preceding markdown images.
+# Destination is bounded to angle-bracketed <...> or non-whitespace, non-closing-parenthesis characters.
 _MD_IMAGE_RE = re.compile(
-    r"!\[(?P<alt>.*?(?<!\\)(?:\\\\)*)\]\((?P<uri>.+?)\s+\"(?P<title>polpo:[^\"]*)\"\)",
-    re.DOTALL,
+    r"!\[(?P<alt>(?:(?!(!\[)).)*?(?<!\\)(?:\\\\)*)\]\((?P<uri><[^>\n]+>|\S+?)\s+\"(?P<title>polpo:[^\"]*)\"\)"
 )
 _LEGACY_TOKEN_RE = re.compile(r"(?P<bs>\\+)?!\[\[(?P<target>[^\]\r\n]+)\]\]")
 _PAGE_MARKER_EXACT_RE = re.compile(r"^<!--\s*Page\s+(?P<num>\d+)\s*-->\r?$")
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
-_INLINE_CODE_RE = re.compile(r"(?P<fence>`+)(?P<code>.*?)(?<!`)(?P=fence)(?!`)")
+# Matches inline code spans, supporting multi-line backtick spans per CommonMark spec.
+_INLINE_CODE_RE = re.compile(r"(?P<fence>`+)(?P<code>.*?)(?<!`)(?P=fence)(?!`)", re.DOTALL)
 
 
 @dataclass(frozen=True)
@@ -82,7 +81,6 @@ def _find_opaque_spans(text: str) -> List[Tuple[int, int]]:
     """
     opaque_spans: List[Tuple[int, int]] = []
 
-    # 1. Identify line boundaries and line-oriented blocks (fences and indented code)
     lines_with_offsets: List[Tuple[str, int, int]] = []
     idx = 0
     raw_lines = text.split("\n")
@@ -90,9 +88,8 @@ def _find_opaque_spans(text: str) -> List[Tuple[int, int]]:
         start = idx
         end = idx + len(rline)
         lines_with_offsets.append((rline, start, end))
-        idx = end + 1  # Account for \n separator
+        idx = end + 1
 
-    # Scan for fenced code blocks
     in_fence_close_re: Optional[re.Pattern[str]] = None
     fence_start = 0
 
@@ -118,7 +115,6 @@ def _find_opaque_spans(text: str) -> List[Tuple[int, int]]:
     if in_fence_close_re is not None:
         opaque_spans.append((fence_start, len(text)))
 
-    # Scan for indented code blocks (outside fenced code)
     in_indented = False
     indented_start = 0
     prev_blank = True
@@ -127,7 +123,6 @@ def _find_opaque_spans(text: str) -> List[Tuple[int, int]]:
         line_clean = rline[:-1] if rline.endswith("\r") else rline
         is_blank = (len(line_clean.strip()) == 0)
 
-        # Skip lines already enclosed in fenced code
         if any(s <= lstart and lend <= e for s, e in opaque_spans):
             prev_blank = is_blank
             in_indented = False
@@ -139,12 +134,10 @@ def _find_opaque_spans(text: str) -> List[Tuple[int, int]]:
                 indented_start = lstart
         else:
             if is_blank:
-                # Blank lines inside indented blocks are permitted
                 pass
             elif line_clean.startswith("    ") or line_clean.startswith("\t"):
                 pass
             else:
-                # End of indented block
                 opaque_spans.append((indented_start, lstart - 1))
                 in_indented = False
 
@@ -153,28 +146,24 @@ def _find_opaque_spans(text: str) -> List[Tuple[int, int]]:
     if in_indented:
         opaque_spans.append((indented_start, len(text)))
 
-    # 2. Scan for Non-Polpo HTML comments (outside existing opaque spans)
     for m in _HTML_COMMENT_RE.finditer(text):
         c_start, c_end = m.start(), m.end()
-        # Skip if within existing opaque span
         if any(s <= c_start and c_end <= e for s, e in opaque_spans):
             continue
 
         comment_content = m.group(0).strip()
-        # If it is a structural page marker, it is NOT opaque
+        # Structural page markers must remain transparent so they can be located as insertion anchors
         if _PAGE_MARKER_EXACT_RE.match(comment_content):
             continue
 
         opaque_spans.append((c_start, c_end))
 
-    # 3. Scan for Inline Code Spans (outside existing opaque spans)
     for m in _INLINE_CODE_RE.finditer(text):
         b_start, b_end = m.start(), m.end()
         if any(s <= b_start and b_end <= e for s, e in opaque_spans):
             continue
         opaque_spans.append((b_start, b_end))
 
-    # Sort and merge intervals
     opaque_spans.sort(key=lambda span: span[0])
     merged: List[Tuple[int, int]] = []
     for span in opaque_spans:
@@ -211,7 +200,6 @@ def _find_matching_tokens(
     target_hex = target_region_uuid.hex.lower()
     target_hyphen = str(target_region_uuid).lower()
 
-    # 1. Search for canonical CommonMark tokens
     for match in _MD_IMAGE_RE.finditer(text):
         m_start, m_end = match.start(), match.end()
         if _is_opaque(m_start, m_end, opaque_spans):
@@ -220,17 +208,16 @@ def _find_matching_tokens(
         title = match.group("title")
         diag, r_id, _ = classify_token_metadata(title)
         if diag == TokenDiagnosticType.CANONICAL and r_id == target_region_uuid:
-            alt = match.group("alt") or ""
-            matches.append(_TokenMatch(m_start, m_end, existing_alt=alt))
+            raw_alt = match.group("alt") or ""
+            semantic_alt = _unescape_alt_text(raw_alt)
+            matches.append(_TokenMatch(m_start, m_end, existing_alt=semantic_alt))
 
-    # 2. Search for eligible legacy Obsidian-style ![[...]] tokens
     for match in _LEGACY_TOKEN_RE.finditer(text):
-        bs = match.group("bs") or ""
-        if len(bs) % 2 == 1:
-            # Escaped \![[
+        leading_bs = match.group("bs") or ""
+        if len(leading_bs) % 2 == 1:
             continue
 
-        m_start = match.start() + len(bs)
+        m_start = match.start() + len(leading_bs)
         m_end = match.end()
         if _is_opaque(m_start, m_end, opaque_spans):
             continue
@@ -242,12 +229,12 @@ def _find_matching_tokens(
         alt = parts[1].strip() if len(parts) > 1 else ""
         target_lower = target.lower()
 
-        # Evidence criteria: contains UUID OR exactly matches caller-supplied legacy_target
         has_uuid = (target_hex in target_lower or target_hyphen in target_lower)
         matches_target = (legacy_target is not None and (url_part == legacy_target or target == legacy_target))
 
         if has_uuid or matches_target:
-            matches.append(_TokenMatch(m_start, m_end, existing_alt=alt))
+            semantic_alt = _unescape_alt_text(alt)
+            matches.append(_TokenMatch(m_start, m_end, existing_alt=semantic_alt))
 
     matches.sort(key=lambda m: m.start)
     return matches
@@ -271,7 +258,8 @@ def upsert_visual_token(
         artifact_uri: Relative or destination URI for the crop artifact.
         page_number: 1-indexed target page number for new token insertion.
         alt_text: Optional alt text for image. If None during update of an existing
-            token, preserves the existing alt text.
+            token, preserves the existing alt text. If None during new token insertion,
+            defaults to an empty string.
         legacy_target: Optional resolved filename for legacy token migration.
 
     Returns:
@@ -295,21 +283,12 @@ def upsert_visual_token(
             f"Multiple ({len(matches)}) visual occurrence tokens found matching region {target_region_uuid}."
         )
 
-    # Case 1: In-place update of existing canonical or eligible legacy token
     if len(matches) == 1:
         match = matches[0]
         effective_alt = match.existing_alt if alt_text is None else alt_text
-        canonical_token_obj = VisualOccurrenceToken(
-            region_id=target_region_uuid,
-            occurrence_id=target_occ_uuid,
-            uri=artifact_uri,
-            alt_text=effective_alt,
-        )
-        canonical_token_str = serialize_canonical_token(canonical_token_obj)
-        return text[:match.start] + canonical_token_str + text[match.end:]
+    else:
+        effective_alt = "" if alt_text is None else alt_text
 
-    # Case 2: Insertion of new token
-    effective_alt = "" if alt_text is None else alt_text
     canonical_token_obj = VisualOccurrenceToken(
         region_id=target_region_uuid,
         occurrence_id=target_occ_uuid,
@@ -318,7 +297,10 @@ def upsert_visual_token(
     )
     canonical_token_str = serialize_canonical_token(canonical_token_obj)
 
-    # Locate structural <!-- Page {page_number} --> outside opaque contexts
+    if len(matches) == 1:
+        match = matches[0]
+        return text[:match.start] + canonical_token_str + text[match.end:]
+
     page_marker_pat = re.compile(
         r"^[ \t]*<!--\s*Page\s+" + str(page_number) + r"\s*-->[ \t]*\r?$",
         re.MULTILINE,
@@ -346,7 +328,6 @@ def upsert_visual_token(
 
         return text[:insert_pos] + canonical_token_str + newline + text[insert_pos:]
 
-    # Fallback: Page marker missing, append to document end
     newline = "\r\n" if "\r\n" in text else "\n"
     if not text:
         return canonical_token_str + newline
@@ -391,7 +372,6 @@ def remove_visual_token(
 
     match = matches[0]
 
-    # Find the line containing the token to determine if it is standalone
     line_start = text.rfind("\n", 0, match.start)
     line_start = 0 if line_start == -1 else line_start + 1
 
@@ -403,17 +383,13 @@ def remove_visual_token(
     if suffix_on_line.endswith("\r"):
         suffix_on_line = suffix_on_line[:-1]
 
-    # If the token is on a standalone line with only whitespace, remove the entire line
     if prefix_on_line.strip() == "" and suffix_on_line.strip() == "":
         if line_end < len(text):
-            # Consume trailing newline
             end_pos = line_end + 1
             return text[:line_start] + text[end_pos:]
         if line_start > 0:
-            # Standalone line at end of document; consume preceding newline
             prev_nl = line_start - 2 if text[line_start - 2:line_start] == "\r\n" else line_start - 1
             return text[:prev_nl]
         return ""
 
-    # Inline token: remove only the exact token span
     return text[:match.start] + text[match.end:]
