@@ -25,6 +25,7 @@ from core.exceptions.domain_exceptions import AmbiguousVisualTokenError
 
 __all__ = [
     "AmbiguousVisualTokenError",
+    "find_canonical_tokens",
     "upsert_visual_token",
     "remove_visual_token",
 ]
@@ -240,6 +241,53 @@ def _find_matching_tokens(
 
     matches.sort(key=lambda m: m.start)
     return matches
+
+
+def find_canonical_tokens(
+    text: str,
+    region_id: Union[str, UUID],
+) -> List[VisualOccurrenceToken]:
+    """Finds all canonical visual occurrence tokens matching region_id outside opaque spans.
+
+    Args:
+        text: Raw Markdown document text.
+        region_id: Region UUID string (36-char hyphenated or 32-char hex) or UUID object.
+
+    Returns:
+        List of immutable VisualOccurrenceToken objects matching the target region,
+        in the order of appearance in the document text.
+
+    Raises:
+        ValueError: If region_id is not a valid UUIDv4.
+        TypeError: If region_id is neither str nor UUID.
+    """
+    target_uuid = _normalize_uuid(region_id, "region_id")
+    opaque_spans = _find_opaque_spans(text)
+    tokens: List[VisualOccurrenceToken] = []
+
+    for match in _MD_IMAGE_RE.finditer(text):
+        m_start, m_end = match.start(), match.end()
+        if _is_opaque(m_start, m_end, opaque_spans):
+            continue
+
+        title = match.group("title")
+        diag, r_id, occ_id = classify_token_metadata(title)
+        if diag == TokenDiagnosticType.CANONICAL and r_id == target_uuid:
+            raw_uri = match.group("uri")
+            clean_uri = raw_uri[1:-1] if (raw_uri.startswith("<") and raw_uri.endswith(">")) else raw_uri
+            raw_alt = match.group("alt") or ""
+            semantic_alt = unescape_alt_text(raw_alt)
+            assert occ_id is not None
+            tokens.append(
+                VisualOccurrenceToken(
+                    region_id=r_id,
+                    occurrence_id=occ_id,
+                    uri=clean_uri,
+                    alt_text=semantic_alt,
+                )
+            )
+
+    return tokens
 
 
 def upsert_visual_token(
