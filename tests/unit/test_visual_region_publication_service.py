@@ -603,9 +603,12 @@ def test_publish_region_review_rejected_region_removes_token(
         assert f"polpo:region={reg_uuid}" not in text
         assert "Keep text." in text
 
-        # Region active_artifact_uri cleared and marked SYNCED
+        # Region active_artifact_uri cleared, active_artifact_version reset to 0,
+        # watermark preserved, and marked SYNCED
         r = uow.visual_regions.get_by_region_id(region.region_id)
         assert r.active_artifact_uri is None
+        assert r.active_artifact_version == 0
+        assert r.artifact_version_watermark == 1
         assert r.sync_status == SyncStatus.SYNCED
 
 
@@ -746,3 +749,124 @@ def test_publish_region_review_staging_cleaned_on_unexpected_exception(
     staging_base = artifacts_dir / ".staging"
     if staging_base.exists():
         assert list(staging_base.iterdir()) == []
+
+
+def test_reconcile_region_sync_concurrent_modification_aborts(
+    service: VisualRegionPublicationService,
+    uow_factory: SQLiteUnitOfWorkFactory,
+    publication_service: DocumentPublicationService,
+    artifacts_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    reg_id = uuid.uuid4().hex
+    job_id, _ = _setup_job_and_doc(uow_factory, publication_service, tmp_path, initial_text="")
+
+    job_dir = artifacts_dir / f"job_{job_id}"
+    job_dir.mkdir(parents=True, exist_ok=True)
+    crop_filename = f"crop_{reg_id}_v1.jpg"
+    crop_path = job_dir / crop_filename
+    crop_path.write_bytes(b"reconciled-crop-bytes")
+    crop_uri = crop_path.resolve().as_uri()
+
+    reg_uuid = uuid.UUID(hex=reg_id)
+    occ_uuid = uuid.uuid4()
+    valid_token = f'![Figure]({crop_uri} "polpo:region={reg_uuid};occ={occ_uuid}")'
+    doc_text = f"# Reconciled Doc\n\n{valid_token}\n"
+    publication_service.publish_version(job_id=job_id, base_version=1, markdown_text=doc_text)
+
+    _create_region(
+        uow_factory,
+        job_id=job_id,
+        region_id=reg_id,
+        sync_status=SyncStatus.DIRTY_RECROP_REQUIRED,
+        active_artifact_version=1,
+        active_artifact_uri=crop_uri,
+    )
+
+    from application.services import visual_region_publication_service as mod
+    real_find = mod.find_canonical_tokens
+
+    def mock_find(*args, **kwargs):
+        with uow_factory.create() as uow:
+            uow.begin_immediate()
+            r = uow.visual_regions.get_by_region_id(reg_id)
+            assert r is not None
+            r.update_geometry(BoundingBox(10, 10, 80, 80))
+            uow.visual_regions.save(r)
+            uow.commit()
+        return real_find(*args, **kwargs)
+
+    monkeypatch.setattr(mod, "find_canonical_tokens", mock_find)
+
+    result = service.reconcile_region_sync(job_id, reg_id)
+
+    assert result.success is False
+    assert "concurrently" in result.status_message.lower()
+
+    # In SQLite, region must preserve dirty status and new geometry
+    with uow_factory.create() as uow:
+        r = uow.visual_regions.get_by_region_id(reg_id)
+        assert r is not None
+        assert r.sync_status == SyncStatus.DIRTY_RECROP_REQUIRED
+        assert r.reviewed_bbox == BoundingBox(10, 10, 80, 80)
+
+
+def test_reconcile_region_sync_concurrent_rejection_aborts(
+    service: VisualRegionPublicationService,
+    uow_factory: SQLiteUnitOfWorkFactory,
+    publication_service: DocumentPublicationService,
+    artifacts_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    reg_id = uuid.uuid4().hex
+    job_id, _ = _setup_job_and_doc(uow_factory, publication_service, tmp_path, initial_text="")
+
+    job_dir = artifacts_dir / f"job_{job_id}"
+    job_dir.mkdir(parents=True, exist_ok=True)
+    crop_filename = f"crop_{reg_id}_v1.jpg"
+    crop_path = job_dir / crop_filename
+    crop_path.write_bytes(b"reconciled-crop-bytes")
+    crop_uri = crop_path.resolve().as_uri()
+
+    reg_uuid = uuid.UUID(hex=reg_id)
+    occ_uuid = uuid.uuid4()
+    valid_token = f'![Figure]({crop_uri} "polpo:region={reg_uuid};occ={occ_uuid}")'
+    doc_text = f"# Reconciled Doc\n\n{valid_token}\n"
+    publication_service.publish_version(job_id=job_id, base_version=1, markdown_text=doc_text)
+
+    _create_region(
+        uow_factory,
+        job_id=job_id,
+        region_id=reg_id,
+        sync_status=SyncStatus.DIRTY_RECROP_REQUIRED,
+        active_artifact_version=1,
+        active_artifact_uri=crop_uri,
+    )
+
+    from application.services import visual_region_publication_service as mod
+    real_find = mod.find_canonical_tokens
+
+    def mock_find(*args, **kwargs):
+        with uow_factory.create() as uow:
+            uow.begin_immediate()
+            r = uow.visual_regions.get_by_region_id(reg_id)
+            assert r is not None
+            r.reject()
+            uow.visual_regions.save(r)
+            uow.commit()
+        return real_find(*args, **kwargs)
+
+    monkeypatch.setattr(mod, "find_canonical_tokens", mock_find)
+
+    result = service.reconcile_region_sync(job_id, reg_id)
+
+    assert result.success is False
+    assert "concurrently" in result.status_message.lower()
+
+    with uow_factory.create() as uow:
+        r = uow.visual_regions.get_by_region_id(reg_id)
+        assert r is not None
+        assert r.sync_status == SyncStatus.DIRTY_RECROP_REQUIRED
+        assert r.is_deleted is True

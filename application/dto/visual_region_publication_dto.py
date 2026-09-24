@@ -1,7 +1,4 @@
-# ============================================================
-#  application/dto/visual_region_publication_dto.py
-#  DTO definitions for Visual Region publication and reconciliation
-# ============================================================
+"""DTO definitions for Visual Region publication and reconciliation (TICK-P02B, #28)."""
 
 from dataclasses import dataclass
 from typing import Optional

@@ -266,6 +266,7 @@ class VisualRegionPublicationService:
                     and target_region.is_deleted == snapshot_is_deleted
                 ):
                     if snapshot_is_deleted:
+                        target_region.active_artifact_version = 0
                         target_region.active_artifact_uri = None
                         target_region.sync_status = SyncStatus.SYNCED
                     else:
@@ -340,6 +341,11 @@ class VisualRegionPublicationService:
             if not region or region.job_id != job_id:
                 raise EntityNotFoundError("VisualRegion", region_id)
             latest_doc = uow.document_versions.get_latest(job_id)
+
+            snapshot_reviewed_bbox = region.reviewed_bbox
+            snapshot_updated_at = region.updated_at
+            snapshot_review_status = region.review_status
+            snapshot_is_deleted = region.is_deleted
 
         # Fact 4 check: active_artifact_version > 0 and non-empty active_artifact_uri
         if region.active_artifact_version <= 0 or not region.active_artifact_uri:
@@ -454,14 +460,35 @@ class VisualRegionPublicationService:
             )
 
         # All five facts hold: transition to SYNCED without creating a duplicate document version
+        reconcile_synced = False
+        target_reg = None
         with self.uow_factory.create() as uow:
             uow.begin_immediate()
             target_reg = uow.visual_regions.get_by_region_id(region_id)
-            if target_reg and target_reg.job_id == job_id:
+            if (
+                target_reg is not None
+                and target_reg.job_id == job_id
+                and target_reg.reviewed_bbox == snapshot_reviewed_bbox
+                and target_reg.updated_at == snapshot_updated_at
+                and target_reg.review_status == snapshot_review_status
+                and target_reg.is_deleted == snapshot_is_deleted
+            ):
                 target_reg.sync_status = SyncStatus.SYNCED
                 target_reg.updated_at = datetime.now(timezone.utc)
                 uow.visual_regions.save(target_reg)
                 uow.commit()
+                reconcile_synced = True
+
+        if not reconcile_synced:
+            return RegionPublicationResultDTO(
+                job_id=job_id,
+                region_id=region_id,
+                success=False,
+                document_version=latest_doc.version,
+                artifact_version=target_reg.active_artifact_version if target_reg else region.active_artifact_version,
+                artifact_uri=target_reg.active_artifact_uri if target_reg else region.active_artifact_uri,
+                status_message="Reconciliation aborted: region was modified concurrently.",
+            )
 
         return RegionPublicationResultDTO(
             job_id=job_id,
