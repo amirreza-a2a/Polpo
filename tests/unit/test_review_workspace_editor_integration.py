@@ -4,6 +4,7 @@
 # ============================================================
 
 from pathlib import Path
+import time
 from unittest.mock import MagicMock
 import pytest
 
@@ -32,6 +33,17 @@ def qapp():
     if app is None:
         app = QGuiApplication(["-platform", "offscreen"])
     return app
+
+
+def _wait_for_condition(predicate, timeout=5.0, interval=0.02):
+    start = time.time()
+    while time.time() - start < timeout:
+        QGuiApplication.processEvents()
+        if predicate():
+            return True
+        time.sleep(interval)
+    QGuiApplication.processEvents()
+    return predicate()
 
 
 @pytest.fixture
@@ -420,7 +432,6 @@ def test_qml_editor_pane_save_activation_and_shortcut(qapp, workspace_env):
     5. Editing again and clicking Save triggers commit and disables Save upon completion.
     6. No QML Shortcut warning or TypeError occurs during loading/editing.
     """
-    import time
     md_editor_ctrl = workspace_env["md_editor_ctrl"]
     uow_factory = workspace_env["uow_factory"]
     storage = workspace_env["storage"]
@@ -484,6 +495,9 @@ def test_qml_editor_pane_save_activation_and_shortcut(qapp, workspace_env):
 
     # Test Discard action from QML
     discard_btn.clicked.emit()
+    assert _wait_for_condition(
+        lambda: not md_editor_ctrl.isDirty and not save_btn.property("enabled") and not discard_btn.property("enabled")
+    )
     assert md_editor_ctrl.isDirty is False
     assert save_btn.property("enabled") is False
     assert discard_btn.property("enabled") is False
@@ -495,11 +509,9 @@ def test_qml_editor_pane_save_activation_and_shortcut(qapp, workspace_env):
 
     # Save action via button
     save_btn.clicked.emit()
-    for _ in range(50):
-        QGuiApplication.processEvents()
-        if not md_editor_ctrl.isSaving and not md_editor_ctrl.isDirty:
-            break
-        time.sleep(0.01)
+    assert _wait_for_condition(
+        lambda: not md_editor_ctrl.isSaving and not md_editor_ctrl.isDirty and not save_btn.property("enabled")
+    )
     assert md_editor_ctrl.isDirty is False
     assert save_btn.property("enabled") is False
 
@@ -520,11 +532,9 @@ def test_qml_editor_pane_save_activation_and_shortcut(qapp, workspace_env):
     sc.activated.emit()
     saving_spy.assert_called_once()
 
-    for _ in range(50):
-        QGuiApplication.processEvents()
-        if not md_editor_ctrl.isSaving and not md_editor_ctrl.isDirty:
-            break
-        time.sleep(0.01)
+    assert _wait_for_condition(
+        lambda: not md_editor_ctrl.isSaving and not md_editor_ctrl.isDirty and not save_btn.property("enabled")
+    )
 
     assert md_editor_ctrl.isDirty is False
     assert save_btn.property("enabled") is False
