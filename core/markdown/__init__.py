@@ -21,6 +21,11 @@ from core.markdown.ast import (
     TableFallbackBlock,
     ThematicBreakBlock,
 )
+from core.markdown.asset_rewriter import (
+    AssetReference,
+    rewrite_asset_references,
+    scan_asset_references,
+)
 from core.markdown.resolver import resolve_image_regions
 from core.markdown.version import (
     CanonicalMarkdownSnapshot,
@@ -33,6 +38,9 @@ __all__ = [
     "capture_canonical_markdown_snapshot",
     "parse_canonical_markdown_version",
     "EMPTY_METADATA",
+    "AssetReference",
+    "scan_asset_references",
+    "rewrite_asset_references",
     "BlockType",
     "BlockquoteBlock",
     "CodeBlock",
