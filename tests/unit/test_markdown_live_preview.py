@@ -1237,8 +1237,7 @@ def test_version_01_region_resize_advances_viewer_active_version(qapp, tmp_path)
 
     # Wait for reconciliation
     viewer_ctrl.wait_for_reconciliation()
-    for _ in range(5):
-        QGuiApplication.processEvents()
+    assert _wait_for_condition(lambda: viewer_ctrl.activeVersion == 2)
 
     assert viewer_ctrl.activeVersion == 2
 
@@ -1274,8 +1273,7 @@ def test_version_02_sequential_mutations_monotonically_advance_version(qapp, tmp
         for _ in range(5):
             QGuiApplication.processEvents()
         viewer_ctrl.wait_for_reconciliation()
-        for _ in range(5):
-            QGuiApplication.processEvents()
+        assert _wait_for_condition(lambda: viewer_ctrl.activeVersion == expected_ver)
         assert viewer_ctrl.activeVersion == expected_ver
 
     assert viewer_ctrl.activeVersion == 26
@@ -1312,7 +1310,9 @@ def test_version_03_clean_editor_tracks_canonical_version_advance(qapp, tmp_path
         QGuiApplication.processEvents()
 
     viewer_ctrl.wait_for_reconciliation()
-    assert _wait_for_condition(lambda: editor_ctrl.activeVersion == 2 and not editor_ctrl.isLoading)
+    assert _wait_for_condition(
+        lambda: viewer_ctrl.activeVersion == 2 and editor_ctrl.activeVersion == 2 and not editor_ctrl.isLoading
+    )
 
     assert viewer_ctrl.activeVersion == 2
     assert editor_ctrl.activeVersion == 2
@@ -1479,8 +1479,7 @@ def test_version_07_dirty_editor_plus_region_mutation_triggers_conflict_and_pres
         QGuiApplication.processEvents()
 
     viewer_ctrl.wait_for_reconciliation()
-    for _ in range(5):
-        QGuiApplication.processEvents()
+    assert _wait_for_condition(lambda: viewer_ctrl.activeVersion == 2)
 
     # Viewer activeVersion MUST advance to 2
     assert viewer_ctrl.activeVersion == 2
