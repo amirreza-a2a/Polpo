@@ -5,11 +5,11 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import hashlib
 import logging
 from pathlib import Path
 from typing import Optional, Union
 
+from application.hashing import compute_file_sha256
 from application.ports.unit_of_work import IUnitOfWork, IUnitOfWorkFactory
 from core.entities.artifact import resolve_canonical_file_path
 from core.entities.document_version import DocumentVersionRecord
@@ -36,18 +36,6 @@ def _format_iso_dt(dt: Optional[datetime]) -> Optional[str]:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc).isoformat()
 
-
-def compute_file_sha256(path: Path) -> str:
-    """
-    Computes the SHA-256 digest of a local file in 64 KiB chunks.
-    A 0-byte file deterministically produces the standard empty string digest
-    ('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855').
-    """
-    hasher = hashlib.sha256()
-    with open(path, "rb") as f:
-        while chunk := f.read(65536):
-            hasher.update(chunk)
-    return hasher.hexdigest()
 
 
 def backfill_legacy_document_versions(
