@@ -24,6 +24,7 @@ class ArtifactType(str, Enum):
     UNIFIED_MARKDOWN = "unified_markdown"
     ATTACHMENTS_ZIP = "attachments_zip"
     PIPELINE2_MARKDOWN = "pipeline2_markdown"
+    DOCUMENT_PACKAGE_ZIP = "document_package_zip"
 
 
 

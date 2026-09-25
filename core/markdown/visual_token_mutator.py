@@ -28,6 +28,8 @@ __all__ = [
     "find_canonical_tokens",
     "upsert_visual_token",
     "remove_visual_token",
+    "find_opaque_spans",
+    "is_opaque_span",
 ]
 
 _FENCE_OPEN_RE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})")
@@ -190,6 +192,10 @@ def _is_opaque(start: int, end: int, opaque_spans: List[Tuple[int, int]]) -> boo
         if o_start >= end:
             break
     return False
+
+
+find_opaque_spans = _find_opaque_spans
+is_opaque_span = _is_opaque
 
 
 def _find_matching_tokens(
