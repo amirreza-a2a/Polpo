@@ -365,10 +365,12 @@ class TestPhase8DRemediation(unittest.TestCase):
         Verify full shutdown with timeout -> job remains PROCESSING -> new container
         initialization -> startup recovery reconciles job to PAUSED.
         """
+        worker_entered = threading.Event()
         worker_unblock = threading.Event()
 
         class BlockingAIExecutor:
             def execute_vision_with_fallback(self, *args, **kwargs):
+                worker_entered.set()
                 worker_unblock.wait(timeout=3.0)
                 return None, None
 
@@ -403,6 +405,10 @@ class TestPhase8DRemediation(unittest.TestCase):
                 break
             time.sleep(0.05)
         self.assertEqual(job.status, JobStatus.PROCESSING, "Job must transition to PROCESSING before shutdown")
+
+        assert worker_entered.wait(timeout=5.0), (
+            "Worker must enter the blocking executor before shutdown"
+        )
 
         # Enforce shutdown with timeout of 0.1s
         shutdown_start = time.monotonic()
