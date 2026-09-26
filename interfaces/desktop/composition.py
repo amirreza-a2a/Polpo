@@ -38,6 +38,7 @@ from application.services.markdown_editor_service import MarkdownEditorService
 from application.services.document_publication_service import DocumentPublicationService
 from application.services.crop_artifact_staging_service import CropArtifactStagingService
 from application.services.visual_region_publication_service import VisualRegionPublicationService
+from application.services.export_package_service import ExportPackageService
 from infrastructure.markdown.pandoc_parser import PandocParser
 from infrastructure.math import MathSvgCache, MathJaxProcessSupervisor, MathJaxClient
 from interfaces.desktop.workers.runtime import DesktopJobRuntime
@@ -188,6 +189,11 @@ class DesktopAppContainer:
             document_publication_service=self.document_publication_service,
         )
 
+        self.export_package_service = ExportPackageService(
+            uow_factory=self.uow_factory,
+            artifacts_dir=artifacts_dir,
+        )
+
         # 6. Desktop Concurrent Runtime & Persistent Scheduler
         self.runtime = DesktopJobRuntime(
             uow_factory=self.uow_factory,
@@ -252,6 +258,8 @@ class DesktopAppContainer:
             self.markdown_viewer_controller.shutdown()
         if hasattr(self, "document_viewer_controller") and self.document_viewer_controller:
             self.document_viewer_controller.shutdown()
+        if hasattr(self, "export_controller") and self.export_controller:
+            self.export_controller.shutdown()
         if hasattr(self, "mathjax_supervisor") and self.mathjax_supervisor:
             self.mathjax_supervisor.shutdown()
         self.scheduler.shutdown()

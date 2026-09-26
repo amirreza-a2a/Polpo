@@ -162,6 +162,8 @@ class TestDesktopPresentationInvariants(unittest.TestCase):
         self.assertTrue(container._initialized)
         self.assertTrue(container.runtime.is_running)
         self.assertTrue(container.scheduler.is_running)
+        self.assertIsNotNone(container.export_controller)
+        self.assertIsNotNone(container.export_package_service)
 
         # Teardown
         container.shutdown()

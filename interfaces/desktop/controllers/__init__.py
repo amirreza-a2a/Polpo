@@ -10,6 +10,7 @@ from interfaces.desktop.controllers.quick_convert_controller import QuickConvert
 from interfaces.desktop.controllers.document_viewer_controller import DocumentViewerController
 from interfaces.desktop.controllers.markdown_viewer_controller import MarkdownViewerController
 from interfaces.desktop.controllers.markdown_editor_controller import MarkdownEditorController
+from interfaces.desktop.controllers.export_controller import ExportController
 
 __all__ = [
     "JobController",
@@ -20,4 +21,5 @@ __all__ = [
     "DocumentViewerController",
     "MarkdownViewerController",
     "MarkdownEditorController",
+    "ExportController",
 ]

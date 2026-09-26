@@ -79,6 +79,10 @@ ApplicationWindow {
         function onError_occurred(msg) { window.globalError = msg; }
     }
     Connections {
+        target: exportController
+        function onExportFailed(jid, msg) { window.globalError = msg; }
+    }
+    Connections {
         target: eventBridge
         function onMissed_schedule_received(jid, fn, sched, pol) {
             if (pol === "prompt") {

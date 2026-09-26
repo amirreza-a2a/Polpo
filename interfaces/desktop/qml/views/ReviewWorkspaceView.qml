@@ -6,6 +6,7 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
+import QtQuick.Dialogs
 import "../components"
 
 Item {
@@ -18,6 +19,30 @@ Item {
 
     property var syncCoordinator: typeof reviewWorkspaceSyncCoordinator !== "undefined" ? reviewWorkspaceSyncCoordinator : null
     property bool splitterInitialized: false
+    property int exportVersion: 0
+    property string activeExportType: ""
+
+    function getActiveJobId() {
+        if (typeof markdownViewerController !== "undefined" && markdownViewerController && markdownViewerController.activeJobId > 0) {
+            return markdownViewerController.activeJobId;
+        }
+        if (typeof markdownEditorController !== "undefined" && markdownEditorController && markdownEditorController.activeJobId > 0) {
+            return markdownEditorController.activeJobId;
+        }
+        if (typeof documentViewerController !== "undefined" && documentViewerController && documentViewerController.currentJobId > 0) {
+            return documentViewerController.currentJobId;
+        }
+        return 0;
+    }
+
+    function handleExportClicked(type) {
+        var jid = getActiveJobId();
+        if (jid <= 0) return;
+        activeExportType = type;
+        if (typeof exportController !== "undefined" && exportController) {
+            exportController.requestExport(jid, type);
+        }
+    }
 
     function initializeSplitter() {
         if (width > 0 && pdfView && rightPane) {
@@ -173,6 +198,30 @@ Item {
                         }
 
                         Item { Layout.fillWidth: true }
+
+                        Row {
+                            spacing: 6
+                            Layout.alignment: Qt.AlignVCenter
+
+                            Button {
+                                id: exportMarkdownBtn
+                                objectName: "exportMarkdownButton"
+                                text: "Export Markdown"
+                                implicitHeight: 26
+                                enabled: typeof exportController !== "undefined" && exportController && !exportController.isExporting && reviewWorkspaceRoot.getActiveJobId() > 0
+                                onClicked: reviewWorkspaceRoot.handleExportClicked("markdown")
+                            }
+
+                            Button {
+                                id: exportPackageBtn
+                                objectName: "exportPackageButton"
+                                text: "Export Package (ZIP)"
+                                implicitHeight: 26
+                                highlighted: true
+                                enabled: typeof exportController !== "undefined" && exportController && !exportController.isExporting && reviewWorkspaceRoot.getActiveJobId() > 0
+                                onClicked: reviewWorkspaceRoot.handleExportClicked("package")
+                            }
+                        }
                     }
                 }
 
@@ -302,6 +351,179 @@ Item {
                     }
                 }
             }
+        }
+    }
+
+    // Export file dialogs and confirmation modals
+    FileDialog {
+        id: exportMarkdownFileDialog
+        objectName: "exportMarkdownFileDialog"
+        title: "Export Standalone Markdown"
+        fileMode: FileDialog.SaveFile
+        nameFilters: ["Markdown Files (*.md)", "All Files (*)"]
+        defaultSuffix: "md"
+        onAccepted: {
+            var jid = reviewWorkspaceRoot.getActiveJobId();
+            if (jid > 0 && typeof exportController !== "undefined" && exportController) {
+                exportController.exportMarkdown(jid, selectedFile.toString(), reviewWorkspaceRoot.exportVersion, false);
+            }
+        }
+    }
+
+    FileDialog {
+        id: exportPackageFileDialog
+        objectName: "exportPackageFileDialog"
+        title: "Export Document Package (ZIP)"
+        fileMode: FileDialog.SaveFile
+        nameFilters: ["ZIP Archives (*.zip)", "All Files (*)"]
+        defaultSuffix: "zip"
+        onAccepted: {
+            var jid = reviewWorkspaceRoot.getActiveJobId();
+            if (jid > 0 && typeof exportController !== "undefined" && exportController) {
+                exportController.exportPackage(jid, selectedFile.toString(), reviewWorkspaceRoot.exportVersion, false);
+            }
+        }
+    }
+
+    ModalDialog {
+        id: saveBeforeExportModal
+        objectName: "saveBeforeExportModal"
+        title: "Unsaved Changes"
+        width: 460
+        height: 240
+
+        Column {
+            anchors.fill: parent
+            anchors.margins: 20
+            spacing: 14
+
+            Text {
+                text: "Unsaved Changes"
+                color: "#F9FAFB"
+                font.pixelSize: 16
+                font.bold: true
+            }
+
+            Text {
+                text: "This document has unsaved changes in the editor. Would you like to save your changes before exporting?"
+                color: "#D1D5DB"
+                font.pixelSize: 13
+                wrapMode: Text.Wrap
+                width: parent.width
+            }
+
+            Row {
+                spacing: 10
+                anchors.horizontalCenter: parent.horizontalCenter
+
+                Button {
+                    id: saveBeforeExportCancelBtn
+                    objectName: "saveBeforeExportCancelButton"
+                    text: "Cancel"
+                    onClicked: {
+                        saveBeforeExportModal.close();
+                        if (typeof exportController !== "undefined" && exportController) {
+                            exportController.cancelPendingExport();
+                        }
+                    }
+                }
+
+                Button {
+                    id: saveBeforeExportConfirmBtn
+                    objectName: "saveBeforeExportConfirmButton"
+                    text: "Save & Export"
+                    highlighted: true
+                    onClicked: {
+                        saveBeforeExportModal.close();
+                        if (typeof exportController !== "undefined" && exportController) {
+                            exportController.confirmSaveAndExport();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    ModalDialog {
+        id: overwriteConfirmModal
+        objectName: "overwriteConfirmModal"
+        title: "File Already Exists"
+        width: 460
+        height: 240
+        property string destinationPath: ""
+
+        Column {
+            anchors.fill: parent
+            anchors.margins: 20
+            spacing: 14
+
+            Text {
+                text: "File Already Exists"
+                color: "#F9FAFB"
+                font.pixelSize: 16
+                font.bold: true
+            }
+
+            Text {
+                text: "The destination file already exists:\n" + overwriteConfirmModal.destinationPath + "\n\nWould you like to replace it?"
+                color: "#D1D5DB"
+                font.pixelSize: 13
+                wrapMode: Text.Wrap
+                width: parent.width
+            }
+
+            Row {
+                spacing: 10
+                anchors.horizontalCenter: parent.horizontalCenter
+
+                Button {
+                    id: overwriteCancelBtn
+                    objectName: "overwriteCancelButton"
+                    text: "Cancel"
+                    onClicked: {
+                        overwriteConfirmModal.close();
+                        if (typeof exportController !== "undefined" && exportController) {
+                            exportController.cancelOverwrite();
+                        }
+                    }
+                }
+
+                Button {
+                    id: overwriteReplaceBtn
+                    objectName: "overwriteReplaceButton"
+                    text: "Replace"
+                    highlighted: true
+                    onClicked: {
+                        overwriteConfirmModal.close();
+                        if (typeof exportController !== "undefined" && exportController) {
+                            exportController.confirmOverwrite();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Connections {
+        target: typeof exportController !== "undefined" ? exportController : null
+        function onSaveBeforeExportRequired(jid, expType, ver) {
+            reviewWorkspaceRoot.exportVersion = ver;
+            saveBeforeExportModal.open();
+        }
+        function onReadyForDestination(jid, expType, ver) {
+            reviewWorkspaceRoot.exportVersion = ver;
+            var suggested = exportController.getSuggestedFileName(jid, expType, ver);
+            if (expType === "markdown") {
+                exportMarkdownFileDialog.currentFile = suggested;
+                exportMarkdownFileDialog.open();
+            } else {
+                exportPackageFileDialog.currentFile = suggested;
+                exportPackageFileDialog.open();
+            }
+        }
+        function onOverwriteRequired(jid, expType, destPath, ver) {
+            overwriteConfirmModal.destinationPath = destPath;
+            overwriteConfirmModal.open();
         }
     }
 }
