@@ -274,7 +274,7 @@ def test_export_package_propagates_resolver_asset_errors(tmp_path: Path):
 
     doc_file = job_dir / "output_1_v1.md"
     content = "# Doc\n\n![Missing](missing.jpg)\n"
-    doc_file.write_text(content, encoding="utf-8")
+    doc_file.write_bytes(content.encode("utf-8"))
     content_sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
     uow = MockUoW()
@@ -308,7 +308,7 @@ def test_export_markdown_shares_same_portable_projection(tmp_path: Path):
 
     doc_file = job_dir / "output_1_v1.md"
     content = f"# Doc\n\n![Diagram]({img_file.as_uri()})\n"
-    doc_file.write_text(content, encoding="utf-8")
+    doc_file.write_bytes(content.encode("utf-8"))
     content_sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
     uow = MockUoW()
