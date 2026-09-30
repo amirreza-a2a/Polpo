@@ -80,12 +80,14 @@ How must `MathJaxProcessSupervisor` be redesigned to guarantee:
 - **Daemon Threads:** Reader and drain threads are created with `daemon=True` and joined during shutdown with a bounded timeout (`0.2s`).
 
 ### D05 — In-Flight Request Retry Policy & Circuit Breaker Budget
-- **Decision:** **Fail-Fast with Zero In-Flight Retries.** When a request times out or crashes the worker, the in-flight request fails immediately. It is **never** automatically retried on a new worker.
+- **Decision: Fail-Fast with Zero In-Flight Retries:** When a request times out or crashes the worker, the in-flight request fails immediately. It is **never** automatically retried on a new worker.
+- **Evaluation Order inside `MathJaxClient.render()`:**
+  1. **SVG Cache Lookup:** Queries `MathSvgCache` by deterministic formula hash (`MathRenderRequest.compute_hash()`). On a cache hit, returns pre-rendered SVG markup and metrics immediately.
+  2. **Negative Memo Check:** Queries the session-scoped negative failure memo (bounded to 1,000 entries). If the formula hash is present, immediately raises the cached `MathRenderError` subclass in $O(1)$ without touching the worker. A negative-memo hit **never** consumes the single `HALF_OPEN` probe or alters circuit breaker state.
+  3. **Circuit Breaker & Supervisor Invocation:** Evaluates the circuit breaker. If `OPEN` (or `HALF_OPEN` with a probe already in flight), fails fast in $O(1)$ raising `MathCircuitBreakerOpenError`. Otherwise, proceeds to invoke `supervisor.render(...)`.
 - **Poison-Pill Mitigation & Negative Memo:**
   - Automatically retrying a pathological formula (e.g. infinite macro expansion `\def\a{\b\b}...`) would cause an immediate second hang (5s + 15s cold start + 5s = 25s delay) and burn 2 of the 3 allowed restart slots on a single formula.
-  - **Negative Failure Memo:** A session-scoped LRU cache bounded to 1,000 entries (keyed by `MathRenderRequest.compute_hash()`) is maintained in `infrastructure/math` (consumed by `MathJaxClient`).
   - When a formula causes a `MathRenderTimeoutError` or `MathWorkerCrashedError`, its hash is recorded in the negative memo. Subsequent renders of that exact formula fail immediately in $O(1)$ without touching the worker.
-  - *Presentation-layer note:* Live-typing degradation policies (e.g. throttling or degrading to raw-TeX fallback after consecutive preview timeouts) are presentation concerns owned by the future P08 fallback contract, not the supervisor.
 - **Restart Budget Accounting (P10 Resolution):**
   - **Invariant:** `initial start != restart`. Clean initial process startup records **0** restarts.
   - **Budget-consuming events:** Exactly three events consume a restart slot: (1) request timeout, (2) unexpected worker crash / stdout EOF, and (3) startup handshake failure.
@@ -100,8 +102,8 @@ How must `MathJaxProcessSupervisor` be redesigned to guarantee:
     - `CLOSED`: Normal operating state. Each failure appends `now` to `self._restart_timestamps` and prunes timestamps older than `now - RESTART_WINDOW_SECONDS`. If `len(self._restart_timestamps) >= MAX_RESTARTS_PER_MINUTE`, the breaker trips to `OPEN`, sets `current_cooldown = INITIAL_COOLDOWN_SECONDS`, and sets `cooldown_deadline = now + current_cooldown`.
     - `OPEN`: Fast-fail state. All incoming calls to `render()`, `ping()`, `version()`, etc. fail immediately in $O(1)$ raising `MathCircuitBreakerOpenError`. Independent of the sliding window, `OPEN` lasts until `monotonic() >= cooldown_deadline`. When `monotonic() >= cooldown_deadline`, the breaker transitions to `HALF_OPEN`.
     - `HALF_OPEN`: Probation state. Allows exactly **one probe request** to execute against the worker (spawning if needed). Any concurrent requests arriving while the probe is in flight immediately fail fast with `MathCircuitBreakerOpenError`.
-      - *Probe Success:* The probe request succeeds. The breaker transitions to `CLOSED`, clears `self._restart_timestamps.clear()`, and resets `current_cooldown = INITIAL_COOLDOWN_SECONDS`.
-      - *Probe Failure:* The probe request fails (times out, crashes, or fails startup handshake). The breaker transitions back to `OPEN`, appends the failure timestamp to `self._restart_timestamps`, doubles the cooldown `current_cooldown = min(current_cooldown * 2, MAX_COOLDOWN_SECONDS)`, and sets `cooldown_deadline = now + current_cooldown`.
+      - *Probe Success:* Any response answered by the worker—**including a `MathSyntaxError` or client-side buffer-limit rejection**—proves that the worker process is alive and responsive. The breaker transitions to `CLOSED`, clears failure history (`self._restart_timestamps.clear()`), and resets `current_cooldown = INITIAL_COOLDOWN_SECONDS`.
+      - *Probe Failure:* Only an unrecoverable failure (request timeout, worker crash / stdout EOF, or startup handshake failure) counts as a failed probe. The breaker transitions back to `OPEN`, appends the failure timestamp to `self._restart_timestamps`, doubles the cooldown `current_cooldown = min(current_cooldown * 2, MAX_COOLDOWN_SECONDS)`, and sets `cooldown_deadline = now + current_cooldown`.
 - **Worst-Case Latency Bound:** For a document with $N$ distinct pathological formulas, worst-case latency is bounded by $3 \times (5\text{s} + 1.5\text{s}) \approx 20\text{s}$ (at most $60\text{s}$ under severe cold disk conditions), after which the circuit breaker trips `OPEN` and all remaining formulas fail in $<1\text{ms}$.
 
 ### D06 — Shutdown Semantics & Application Exit Coordination

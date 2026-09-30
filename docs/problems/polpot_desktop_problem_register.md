@@ -147,7 +147,7 @@ Do not open these as final Issues until the investigation establishes the bounda
 **Category:** Visual Region lifecycle / canonical publication\
 **Priority:** BLOCKING for the manual-region workflow\
 **Status:** DONE (Merged in PRs #31, #32, #33, #34 — Commits `7f8317e`, `c18fc72`, `d4d19de`, `222624c`)\
-**Investigation Record:** [`docs/problems/investigations/P02-manual-region-canonical-publication.md`](docs/problems/investigations/P02-manual-region-canonical-publication.md)
+**Investigation Record:** [`docs/problems/investigations/P02-manual-region-canonical-publication.md`](investigations/P02-manual-region-canonical-publication.md)
 
 ### Observed symptom
 
@@ -183,8 +183,8 @@ was deferred (documented in `DEBT-10E-03`).
 
 ### Settled Architectural Decisions
 
-1. **Sole Publication Authority:** [`DocumentPublicationService`](application/services/document_publication_service.py) remains the sole authoritative gateway for canonical Markdown documents and atomic crop promotion.
-2. **Dedicated Token Mutator:** Pure domain component [`core/markdown/visual_token_mutator.py`](core/markdown/visual_token_mutator.py) performs format-preserving string mutation using canonical CommonMark tokens `![alt](uri "polpo:region=...;occ=...")`. AST re-serialization is forbidden.
+1. **Sole Publication Authority:** [`DocumentPublicationService`](../../application/services/document_publication_service.py) remains the sole authoritative gateway for canonical Markdown documents and atomic crop promotion.
+2. **Dedicated Token Mutator:** Pure domain component [`core/markdown/visual_token_mutator.py`](../../core/markdown/visual_token_mutator.py) performs format-preserving string mutation using canonical CommonMark tokens `![alt](uri "polpo:region=...;occ=...")`. AST re-serialization is forbidden.
 3. **Application Orchestrator:** Dedicated application service `VisualRegionPublicationService` coordinates image cropping via `IDocumentProcessor`, staging via `CropArtifactStagingService`, token mutation via `VisualTokenMutator`, and publication via `DocumentPublicationService`.
 4. **OCC & Version Policy:** Bounded retry (3 attempts) on `StaleDocumentVersionError`. If the canonical document advances concurrently, the service re-reads the latest text, reapplies token mutation, and retries.
 5. **Human Edits Preservation:** Format-preserving localized mutation leaves all surrounding comments, math formulas, and text untouched. External advances notify the dirty Markdown editor to run non-overlapping three-way merge (`diff3`).
@@ -444,7 +444,7 @@ Do not "fix" this warning by globally suppressing Qt SVG diagnostics.
 
 **Category:** MathJax reliability / process supervision\
 **Priority:** BLOCKING\
-**Status:** INVESTIGATED & SETTLED (see [docs/adr/2026-09-30-adr-002-mathjax-supervisor-reliability-contract.md](docs/adr/2026-09-30-adr-002-mathjax-supervisor-reliability-contract.md))
+**Status:** INVESTIGATED & SETTLED (see [docs/adr/2026-09-30-adr-002-mathjax-supervisor-reliability-contract.md](../adr/2026-09-30-adr-002-mathjax-supervisor-reliability-contract.md))
 
 ### Observed failure mode
 
@@ -593,7 +593,7 @@ Do not hard-code a version rule until the packaging/runtime contract is explicit
 
 **Category:** Process supervision / reliability\
 **Priority:** Medium\
-**Status:** INVESTIGATED & SETTLED (see [docs/adr/2026-09-30-adr-002-mathjax-supervisor-reliability-contract.md](docs/adr/2026-09-30-adr-002-mathjax-supervisor-reliability-contract.md))
+**Status:** INVESTIGATED & SETTLED (see [docs/adr/2026-09-30-adr-002-mathjax-supervisor-reliability-contract.md](../adr/2026-09-30-adr-002-mathjax-supervisor-reliability-contract.md))
 
 ### Current observation
 
@@ -666,7 +666,7 @@ executed in CI".
 
 **Category:** Reliability / maintainability\
 **Priority:** Medium / non-blocking until investigation proves impact\
-**Status:** INVESTIGATED & SETTLED (see [docs/adr/2026-09-30-adr-002-mathjax-supervisor-reliability-contract.md](docs/adr/2026-09-30-adr-002-mathjax-supervisor-reliability-contract.md))
+**Status:** INVESTIGATED & SETTLED (see [docs/adr/2026-09-30-adr-002-mathjax-supervisor-reliability-contract.md](../adr/2026-09-30-adr-002-mathjax-supervisor-reliability-contract.md))
 
 ### Current observation
 
