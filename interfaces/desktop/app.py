@@ -19,6 +19,7 @@ from interfaces.desktop.controllers import (
     DocumentViewerController,
     MarkdownViewerController,
     MarkdownEditorController,
+    ExportController,
 )
 from interfaces.desktop.models import (
     JobQueueModel,
@@ -249,6 +250,11 @@ def create_app(
         editor_service=container.markdown_editor_service,
         merge_service=markdown_merge_service,
     )
+    export_controller = ExportController(
+        export_service=container.export_package_service,
+        editor_controller=markdown_editor_controller,
+        query_service=container.job_query_service,
+    )
 
     # Wire Bidirectional Synchronization between Document Viewer, Markdown Viewer, and Markdown Editor
     sync_coordinator = wire_review_workspace_sync(
@@ -285,6 +291,7 @@ def create_app(
     container.document_viewer_controller = document_viewer_controller
     container.markdown_viewer_controller = markdown_viewer_controller
     container.markdown_editor_controller = markdown_editor_controller
+    container.export_controller = export_controller
     container.sync_coordinator = sync_coordinator
     container.job_queue_model = job_queue_model
     container.job_history_model = job_history_model
@@ -306,6 +313,7 @@ def create_app(
     ctx.setContextProperty("documentViewerController", document_viewer_controller)
     ctx.setContextProperty("markdownViewerController", markdown_viewer_controller)
     ctx.setContextProperty("markdownEditorController", markdown_editor_controller)
+    ctx.setContextProperty("exportController", export_controller)
     if sync_coordinator is not None:
         ctx.setContextProperty("reviewWorkspaceSyncCoordinator", sync_coordinator)
     ctx.setContextProperty("jobQueueModel", job_queue_model)
