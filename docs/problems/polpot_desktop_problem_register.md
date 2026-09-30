@@ -146,7 +146,7 @@ Do not open these as final Issues until the investigation establishes the bounda
 
 **Category:** Visual Region lifecycle / canonical publication\
 **Priority:** BLOCKING for the manual-region workflow\
-**Status:** READY FOR TICKETING\
+**Status:** DONE (Merged in PRs #31, #32, #33, #34 — Commits `7f8317e`, `c18fc72`, `d4d19de`, `222624c`)\
 **Investigation Record:** [`docs/problems/investigations/P02-manual-region-canonical-publication.md`](file:///home/amirreza-a2a/DevelopPOlpo/PolpoT/docs/problems/investigations/P02-manual-region-canonical-publication.md)
 
 ### Observed symptom
@@ -444,7 +444,7 @@ Do not "fix" this warning by globally suppressing Qt SVG diagnostics.
 
 **Category:** MathJax reliability / process supervision\
 **Priority:** BLOCKING\
-**Status:** CONFIRMED by code review
+**Status:** INVESTIGATED & SETTLED (see [`docs/adr/2026-09-30-adr-002-mathjax-supervisor-reliability-contract.md`](file:///home/amirreza-a2a/DevelopPOlpo/PolpoT/docs/adr/2026-09-30-adr-002-mathjax-supervisor-reliability-contract.md))
 
 ### Observed failure mode
 
@@ -538,6 +538,7 @@ The chosen behavior must be consistent between block and inline math.
 
 One focused Issue for "Math rendering failure is never silently invisible", with tests
 covering cache miss, worker failure, invalid TeX, and UI fallback.
+*Dependencies settled in ADR-002:* Consumes the structured `MathRenderError` subclass hierarchy (`MathRenderTimeoutError`, `MathWorkerStartupError`, `MathSyntaxError`, `MathCircuitBreakerOpenError`), the poison-pill negative memo, and live-typing burst degradation to raw TeX.
 
 ---
 
@@ -586,7 +587,7 @@ Do not hard-code a version rule until the packaging/runtime contract is explicit
 
 **Category:** Process supervision / reliability\
 **Priority:** Medium\
-**Status:** STRONG SUSPECT
+**Status:** INVESTIGATED & SETTLED (see [`docs/adr/2026-09-30-adr-002-mathjax-supervisor-reliability-contract.md`](file:///home/amirreza-a2a/DevelopPOlpo/PolpoT/docs/adr/2026-09-30-adr-002-mathjax-supervisor-reliability-contract.md))
 
 ### Current observation
 
@@ -659,7 +660,7 @@ executed in CI".
 
 **Category:** Reliability / maintainability\
 **Priority:** Medium / non-blocking until investigation proves impact\
-**Status:** CONFIRMED code-quality finding
+**Status:** INVESTIGATED & SETTLED (see [`docs/adr/2026-09-30-adr-002-mathjax-supervisor-reliability-contract.md`](file:///home/amirreza-a2a/DevelopPOlpo/PolpoT/docs/adr/2026-09-30-adr-002-mathjax-supervisor-reliability-contract.md))
 
 ### Current observation
 

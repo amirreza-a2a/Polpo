@@ -86,6 +86,21 @@ The bidirectional navigation and viewport synchronization engine (`ReviewWorkspa
 * **Directional Origin Locks:** Employs explicit synchronization origins (`SyncOrigin.SOURCE_USER`, `SyncOrigin.PREVIEW_USER`, `SyncOrigin.IDLE`) to prevent ping-pong recursive feedback loops between editor and preview.
 * **Conflict Pausing:** Automatically pauses live preview rendering during active conflict sessions (`previewPaused = true`) to prevent syntax marker disruption.
 
+### 2.10 `MathJaxProcessSupervisor`
+The persistent local process supervisor managing the headless Node.js MathJax worker daemon (`resources/mathjax/mathjax_worker.js`) over line-delimited JSON-RPC 2.0 (`infrastructure/math/mathjax_supervisor.py`).
+* **Process Lifetime:** Manages worker daemon spawning, health handshakes, pipe communication, two-phase process termination (`SIGTERM` $\to$ `SIGKILL`), and non-blocking application shutdown.
+* **Bounded Execution:** Enforces separate timeouts for cold process startup and in-flight formula RPC requests across POSIX and Windows.
+
+### 2.11 `MathSvgCache` & `Poison-Pill Memo`
+Thread-safe, in-memory LRU caches governing math rendering artifacts and failure isolation (`infrastructure/math/lru_cache.py`).
+* **Positive Cache (`MathSvgCache`):** Stores pre-rendered SVG XML markup and layout metrics indexed by deterministic TeX formula hash, allowing zero-latency lookups for QML image providers without blocking the UI thread.
+* **Negative Memo (Poison-Pill Protection):** Caches formula hashes that caused unrecoverable timeouts or worker crashes, fast-failing subsequent renders in $O(1)$ to prevent restart budget exhaustion during live typing.
+
+### 2.12 `MathCircuitBreaker`
+The three-state process reliability governor (`CLOSED`, `OPEN`, `HALF_OPEN`) safeguarding application stability against crash-looping worker processes.
+* **Accounting Invariant:** Initial worker startup is not a restart; only process kills caused by request timeouts, unexpected crashes, or failed startup handshakes consume restart budget.
+* **State Governance:** Restricts worker respawns to at most 3 failures per 60-second rolling window. Enforces explicit cooldown periods and controlled probe requests to prevent persistent probe thrashing.
+
 ---
 
 ## 3. Architectural Seams Map
