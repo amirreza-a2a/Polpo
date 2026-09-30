@@ -3,7 +3,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional
 
 from application.sanitizer import sanitize_error_message
 from application.services.export_package_service import (
@@ -169,10 +169,34 @@ class ExportController(QObject):
         """User confirmed Save & Export for pending export."""
         if self._is_shutdown or not self._pending_export:
             return
-        if self.editor_controller is None:
-            return
 
         self._disconnect_save_signals()
+
+        if self.editor_controller is None:
+            job_id = self._pending_export.get("job_id", 0)
+            self._pending_export = None
+            sanitized = sanitize_error_message("Cannot save and export: editor controller is unavailable.")
+            self._error_message = sanitized
+            self.errorChanged.emit()
+            self.exportFailed.emit(job_id, sanitized)
+            return
+
+        # Fail fast if unresolved conflicts exist (editor cannot save anyway)
+        if getattr(self.editor_controller, "hasConflict", False):
+            job_id = self._pending_export["job_id"]
+            self._pending_export = None
+            sanitized = sanitize_error_message("Cannot save and export: document has unresolved conflicts.")
+            self._error_message = sanitized
+            self.errorChanged.emit()
+            self.exportFailed.emit(job_id, sanitized)
+            return
+
+        # If document is not dirty, calling save() is a no-op that emits no signals;
+        # proceed directly to destination selection or export.
+        if not getattr(self.editor_controller, "isDirty", False):
+            cur_ver = self._get_editor_version_for_job(self._pending_export["job_id"])
+            self._on_editor_saved(cur_ver if cur_ver > 0 else self._pending_export.get("version", 1))
+            return
 
         try:
             if hasattr(self.editor_controller, "saved"):
@@ -185,10 +209,12 @@ class ExportController(QObject):
             self.editor_controller.save()
         except Exception as e:
             self._disconnect_save_signals()
+            job_id = self._pending_export.get("job_id", 0) if self._pending_export else 0
             self._pending_export = None
             sanitized = sanitize_error_message(str(e))
             self._error_message = sanitized
             self.errorChanged.emit()
+            self.exportFailed.emit(job_id, sanitized)
 
     @Slot()
     def cancelPendingExport(self) -> None:

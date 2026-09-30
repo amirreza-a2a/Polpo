@@ -3,7 +3,6 @@
 #  Unit tests for Desktop ExportController
 # ============================================================
 
-import tempfile
 import time
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -13,13 +12,10 @@ import pytest
 from application.dto.job_dto import JobDetailDTO
 from application.services.export_package_service import (
     DestinationAlreadyExistsError,
-    DestinationDirectoryNotFoundError,
-    ExportPackageError,
     ExportSourceNotFoundError,
     MarkdownExportResult,
     PackageExportResult,
 )
-from core.exceptions.domain_exceptions import StaleDocumentVersionError
 from interfaces.desktop.controllers.export_controller import ExportController
 from interfaces.desktop.qt_compat import QGuiApplication
 
@@ -95,12 +91,16 @@ def mock_editor_controller():
     return ctrl
 
 
-def pump_events(app, timeout=1.0, step=0.01):
-    """Pumps the Qt event loop until a condition or timeout."""
+def pump_until(app, condition, timeout=3.0, step=0.01):
+    """Pumps the Qt event loop until condition evaluates to True or timeout expires."""
     start = time.monotonic()
     while time.monotonic() - start < timeout:
         app.processEvents()
+        if condition():
+            return True
         time.sleep(step)
+    app.processEvents()
+    return bool(condition())
 
 
 # ------------------------------------------------------------
@@ -141,7 +141,7 @@ def test_export_markdown_async_success(qapp, mock_export_service, mock_query_ser
         assert ctrl.isExporting is True
 
         # Wait for worker completion
-        pump_events(qapp, timeout=0.5)
+        assert pump_until(qapp, lambda: not ctrl.isExporting)
 
         assert ctrl.isExporting is False
         assert ctrl.errorMessage == ""
@@ -167,7 +167,7 @@ def test_export_markdown_failure_sanitized(qapp, mock_export_service, mock_query
         ctrl.exportFailed.connect(failed_spy)
 
         ctrl.exportMarkdown(job_id=1, destination_uri="/tmp/exported.md", version=1)
-        pump_events(qapp, timeout=0.5)
+        assert pump_until(qapp, lambda: not ctrl.isExporting)
 
         assert ctrl.isExporting is False
         assert "sk-secret" not in ctrl.errorMessage
@@ -194,7 +194,7 @@ def test_export_package_async_success(qapp, mock_export_service, mock_query_serv
         ctrl.exportPackage(job_id=1, destination_uri=dest_uri, version=1, overwrite=False)
 
         assert ctrl.isExporting is True
-        pump_events(qapp, timeout=0.5)
+        assert pump_until(qapp, lambda: not ctrl.isExporting)
 
         assert ctrl.isExporting is False
         mock_export_service.export_package.assert_called_once_with(
@@ -240,7 +240,7 @@ def test_export_overwrite_prompt_and_confirmation(qapp, mock_export_service, moc
         ctrl.exportCompleted.connect(completed_spy)
 
         ctrl.exportPackage(job_id=1, destination_uri=str(target_path), version=1, overwrite=False)
-        pump_events(qapp, timeout=0.5)
+        assert pump_until(qapp, lambda: ctrl.hasPendingOverwrite)
 
         # Overwrite signal must have fired
         assert ctrl.isExporting is False
@@ -251,7 +251,7 @@ def test_export_overwrite_prompt_and_confirmation(qapp, mock_export_service, moc
         # User confirms overwrite
         ctrl.confirmOverwrite()
         assert ctrl.isExporting is True
-        pump_events(qapp, timeout=0.5)
+        assert pump_until(qapp, lambda: not ctrl.isExporting)
 
         assert ctrl.isExporting is False
         assert ctrl.hasPendingOverwrite is False
@@ -281,7 +281,7 @@ def test_export_overwrite_cancellation(qapp, mock_export_service, mock_query_ser
         ctrl.overwriteRequired.connect(overwrite_spy)
 
         ctrl.exportPackage(job_id=1, destination_uri=str(target_path), version=1, overwrite=False)
-        pump_events(qapp, timeout=0.5)
+        assert pump_until(qapp, lambda: ctrl.hasPendingOverwrite)
 
         assert ctrl.hasPendingOverwrite is True
         ctrl.cancelOverwrite()
@@ -410,6 +410,37 @@ def test_request_export_dirty_editor_cancel_cleans_up(qapp, mock_export_service,
         ctrl.shutdown()
 
 
+def test_confirm_save_and_export_when_conflict_without_dirty_fails_fast(qapp, mock_export_service, mock_query_service, mock_editor_controller):
+    mock_editor_controller.isDirty = False
+    mock_editor_controller.hasConflict = True
+    # Real MarkdownEditorController.save() does nothing when isDirty is False
+    mock_editor_controller.save.side_effect = lambda: None
+
+    ctrl = ExportController(
+        export_service=mock_export_service,
+        editor_controller=mock_editor_controller,
+        query_service=mock_query_service,
+    )
+    try:
+        failed_spy = MagicMock()
+        save_prompt_spy = MagicMock()
+        ctrl.exportFailed.connect(failed_spy)
+        ctrl.saveBeforeExportRequired.connect(save_prompt_spy)
+
+        ctrl.requestExport(job_id=1, export_type="markdown")
+        assert ctrl.hasPendingExport is True
+        save_prompt_spy.assert_called_once_with(1, "markdown", 1)
+
+        ctrl.confirmSaveAndExport()
+
+        # Must not remain stuck in pending export
+        assert ctrl.hasPendingExport is False
+        failed_spy.assert_called_once()
+        assert "conflict" in ctrl.errorMessage.lower()
+    finally:
+        ctrl.shutdown()
+
+
 # ------------------------------------------------------------
 # 6. Suggested File Name & Slugs
 # ------------------------------------------------------------
@@ -460,7 +491,7 @@ def test_duplicate_export_request_rejected(qapp, mock_export_service, mock_query
         ctrl.exportMarkdown(job_id=1, destination_uri="/tmp/another.md", version=1)
         assert mock_export_service.export_markdown.call_count == 1
 
-        pump_events(qapp, timeout=0.5)
+        assert pump_until(qapp, lambda: not ctrl.isExporting)
         assert ctrl.isExporting is False
     finally:
         ctrl.shutdown()
@@ -511,7 +542,7 @@ def test_export_package_direct_call_while_dirty_resumes_to_destination(qapp, moc
         save_slot(2)
         assert ctrl.isExporting is True
 
-        pump_events(qapp, timeout=0.5)
+        assert pump_until(qapp, lambda: not ctrl.isExporting)
         assert ctrl.isExporting is False
         completed_spy.assert_called_once_with(1, str(mock_export_service.export_package.return_value.destination_path))
         mock_export_service.export_package.assert_called_once_with(

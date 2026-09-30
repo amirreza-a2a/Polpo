@@ -330,7 +330,6 @@ def create_app(
     def on_shutdown():
         if sync_coordinator is not None:
             sync_coordinator.shutdown()
-        export_controller.shutdown()
         container.shutdown()
         bridge.detach()
 

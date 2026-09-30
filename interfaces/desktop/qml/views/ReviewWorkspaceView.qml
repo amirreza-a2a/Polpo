@@ -3,9 +3,9 @@
 //  Desktop Dual-Pane Review Workspace View (PDF on Left, Markdown on Right)
 // ============================================================
 
-import QtQuick 2.15
-import QtQuick.Controls 2.15
-import QtQuick.Layouts 1.15
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
 import QtQuick.Dialogs
 import "../components"
 
@@ -20,7 +20,6 @@ Item {
     property var syncCoordinator: typeof reviewWorkspaceSyncCoordinator !== "undefined" ? reviewWorkspaceSyncCoordinator : null
     property bool splitterInitialized: false
     property int exportVersion: 0
-    property string activeExportType: ""
 
     function getActiveJobId() {
         if (typeof markdownViewerController !== "undefined" && markdownViewerController && markdownViewerController.activeJobId > 0) {
@@ -38,7 +37,6 @@ Item {
     function handleExportClicked(type) {
         var jid = getActiveJobId();
         if (jid <= 0) return;
-        activeExportType = type;
         if (typeof exportController !== "undefined" && exportController) {
             exportController.requestExport(jid, type);
         }
@@ -514,10 +512,12 @@ Item {
             reviewWorkspaceRoot.exportVersion = ver;
             var suggested = exportController.getSuggestedFileName(jid, expType, ver);
             if (expType === "markdown") {
-                exportMarkdownFileDialog.currentFile = suggested;
+                var baseMd = exportMarkdownFileDialog.currentFolder.toString();
+                exportMarkdownFileDialog.currentFile = (baseMd ? baseMd + (baseMd.endsWith("/") ? "" : "/") : "") + suggested;
                 exportMarkdownFileDialog.open();
             } else {
-                exportPackageFileDialog.currentFile = suggested;
+                var basePkg = exportPackageFileDialog.currentFolder.toString();
+                exportPackageFileDialog.currentFile = (basePkg ? basePkg + (basePkg.endsWith("/") ? "" : "/") : "") + suggested;
                 exportPackageFileDialog.open();
             }
         }
