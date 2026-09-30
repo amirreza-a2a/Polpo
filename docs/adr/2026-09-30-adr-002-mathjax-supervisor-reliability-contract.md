@@ -1,0 +1,173 @@
+# ADR-002: MathJax Process Supervisor Reliability & Concurrency Contract
+
+- **Status:** Accepted
+- **Date:** 2026-09-30
+- **Scope:** Headless MathJax Subprocess Supervision (`infrastructure/math/mathjax_supervisor.py`, `infrastructure/math/mathjax_client.py`, `interfaces/desktop/composition.py`)
+- **Authoritative Baseline:** Commit `18ae2b6` (Post-P02 Manual Region Publication & TICK-EXP-4 Document Export)
+- **Problem Register References:** P07 (Indefinite RPC Hang), P10 (Restart Accounting Invariant), P12 (Overly Broad Cleanup Exception Swallowing), P08 (Silent Math Failure Fallback Dependencies)
+
+---
+
+## 1. Context
+
+PolpoT is an embedded, desktop-first, local-first application. To render mathematical formulas (both display `$$...$$` and inline `$..$`), the application executes a dedicated headless Node.js daemon (`resources/mathjax/mathjax_worker.js`) running pinned `mathjax-full@3.2.2` under Node 22 LTS. Communication travels over line-delimited JSON-RPC 2.0 via standard I/O pipes (`stdin`, `stdout`, `stderr`).
+
+In production:
+1. **Desktop Concurrency:** MathJax rendering is never invoked synchronously on the Qt GUI thread. It is triggered by background threads managed by `MarkdownViewerController` (`MarkdownViewerWorker` thread pool) and `MarkdownEditorController` (`MarkdownEditorWorker`).
+2. **QML Presentation:** The QML scene graph accesses pre-rendered SVGs exclusively through `MathImageProvider`, which performs fast in-memory cache lookups against `MathSvgCache`. It never directly invokes the supervisor or blocks the UI thread.
+3. **The P07 Defect:** `MathJaxProcessSupervisor._call_rpc_locked()` previously performed an unbuffered, blocking `proc.stdout.readline()` while holding `self._lock` with zero timeout. If the Node worker hangs (e.g. an infinite loop or deadlock in JavaScript), the RPC call hangs forever, the supervisor lock remains permanently held, subsequent render calls stall, and application shutdown deadlocks on exit.
+4. **The P10 Defect:** The restart rate limiter (`MAX_RESTARTS_PER_MINUTE = 3`) mistakenly recorded initial worker startup in `self._restart_timestamps`, burning 1 restart slot on clean boot and prematurely tripping the circuit breaker after only 2 genuine restarts.
+5. **The P12 Defect:** Process termination, pipe closing, and stderr draining made heavy use of blanket `except Exception: pass`, concealing descriptor leaks, permission errors, and diagnostic stderr output.
+
+---
+
+## 2. Problem Statement
+
+How must `MathJaxProcessSupervisor` be redesigned to guarantee:
+1. Bounded RPC execution with deterministic timeout detection across POSIX and Windows?
+2. Clean separation between worker cold startup and formula rendering timeouts?
+3. Lock-free, non-blocking application shutdown that never deadlocks the desktop GUI thread?
+4. Prevention of "poison pill" restart budget exhaustion during rapid live-typing in the Markdown editor?
+5. Structured, granular error typing enabling deterministic fallback to readable TeX under P08?
+6. Safe process lifecycle management with zero orphaned Node processes or zombie child handles?
+
+---
+
+## 3. Settled Architectural Decisions
+
+### D01 — Per-Request Timeout Configuration & Validation
+- **Decision:** The per-request timeout is configured via constructor parameter `request_timeout_seconds: float = 5.0`, defaulting to the environment variable `POLPO_MATHJAX_REQUEST_TIMEOUT` if set, and falling back to `5.0` seconds.
+- **Validation Invariant:** If `POLPO_MATHJAX_REQUEST_TIMEOUT` is set to an empty string, non-numeric value, or a float $\le 0.0$, the supervisor must log a warning and fall back to `5.0` seconds. Invalid environment variables must **never** crash supervisor initialization.
+- **Architectural Boundary:** Timeout configuration is an infrastructure concern and must not be persisted in core `AppSettings` or SQLite tables (Clean Architecture inward dependency rule).
+- **Scope:** The request timeout applies strictly to an individual in-flight RPC roundtrip, completely decoupled from process startup or cold launch.
+
+### D02 — Worker Startup / Cold-Start Timeout & Health Handshake
+- **Decision:** Process startup is governed by a dedicated `startup_timeout_seconds: float = 15.0` (configurable via constructor and validated `POLPO_MATHJAX_STARTUP_TIMEOUT` with identical fallback/warning semantics).
+- **Health Handshake:** Immediately after spawning the Node worker process via `subprocess.Popen`, the supervisor performs a synchronous readiness handshake by sending the JSON-RPC `"ping"` request. The worker script (`resources/mathjax/mathjax_worker.js`) already implements `"ping"` and responds with `"pong"`.
+- **Isolation of Failure Domains:** Cold V8 initialization and parsing of `mathjax-full` modules (which may take 1–3s on slow Windows CI runners) are cleanly separated from formula rendering. A slow initial launch will never trigger a false-positive request timeout.
+- **Handshake Failure:** If the worker process exits prematurely, fails to answer `"ping"`, or exceeds `startup_timeout_seconds`, it is immediately killed, reaped, and a structured `MathWorkerStartupError` is raised.
+
+### D03 — Hung Process Termination & Kill Escalation Contract
+- **Decision:** When an RPC or startup handshake times out, the supervisor terminates the child worker process using a two-phase cross-platform escalation protocol:
+  1. `proc.terminate()` is invoked (`SIGTERM` on POSIX; Win32 `TerminateProcess` on Windows).
+  2. Bounded grace wait: up to `0.5s` via `proc.wait(timeout=0.5)`.
+  3. Escalation: if `proc.poll() is None`, invoke `proc.kill()` (`SIGKILL` on POSIX; Win32 `TerminateProcess` on Windows) followed by a bounded wait `proc.wait(timeout=0.5)` to reap the process exit status and prevent POSIX `<defunct>` zombies.
+  4. Stream closure: explicitly close `stdin`, `stdout`, and `stderr`, catching narrow `(OSError, ValueError)`.
+  5. State clearance: set `self._process = None`.
+- **Windows vs POSIX Semantics:** On Windows, `terminate()` and `kill()` both call `TerminateProcess`. The 0.5s grace step provides real `SIGTERM` cleanup on POSIX; on Windows it ensures handle release and binary unlock before any subsequent respawn.
+- **Concurrent Termination Idempotency:** Process termination and handle cleanup (`_cleanup_process_handles_locked`) are strictly idempotent and thread-safe. If the request timeout watchdog thread and the application shutdown thread attempt to terminate or kill the same process simultaneously, OS termination calls are atomic, and handle cleanup catches and ignores `ProcessLookupError`, `OSError`, and `ValueError`.
+- **Direct Binary Execution Guard:** `resolve_node_executable()` must resolve to the direct binary executable (`node` on POSIX, `node.exe` on Windows). On Windows, shell shims (`.cmd`, `.bat`, `.ps1`) are explicitly rejected to prevent `cmd.exe` wrapper processes from orphaning child Node workers upon `TerminateProcess`. Launch always uses `shell=False`.
+- **Non-Blocking Stderr Draining (P12):** Stderr is drained continuously into a bounded in-memory buffer (max 16 KB) by a daemon thread, or read strictly after `proc.poll() is not None` (reaped exit status). Stderr is never read with a blocking call while the process is running or hung. Blanket `except Exception: pass` is replaced with narrow `(OSError, ValueError)` handling.
+- **Diagnostics:** Every forced termination is logged at `logging.WARNING` level with reason (`REQUEST_TIMEOUT`, `STARTUP_TIMEOUT`, `SHUTDOWN`), process PID, and escalation status.
+
+### D04 — Cross-Platform RPC Timeout Mechanism & Lock Decoupling
+- **Decision:** Because anonymous Windows pipes do not support `select.select()` and Python's `readline()` blocks in the C runtime, timeout detection is implemented using a **dedicated companion reader daemon thread per process** paired with an unbounded `queue.Queue()`.
+- **Timeout Implementation:**
+  - For each spawned worker generation, a daemon thread reads lines from `proc.stdout` and pushes them into the process-specific `queue.Queue()`.
+  - The caller writes the request to `stdin` and waits via `queue.get(timeout=self._request_timeout)`.
+  - On timeout: `queue.get()` raises `queue.Empty`. The caller thread initiates two-phase termination (D03) and raises `MathRenderTimeoutError`.
+- **Write-Path Timeout & Blocked Write Protection:**
+  - Windows pipe buffers are ~4 KB, while TeX payloads can reach 16 KB. If a worker stops reading `stdin`, `stdin.write()` or `flush()` could block.
+  - A watchdog timer is armed **before** writing to `stdin`. If writing or flushing blocks past the timeout, the watchdog terminates/kills the process from outside the lock. This breaks the pipe, immediately unblocking the write thread with `BrokenPipeError` or `OSError`.
+- **Generation Token & Stale Response Safety:**
+  - Each spawned worker process receives a monotonically increasing generation token (`self._process_generation += 1`) and its own response queue. A late response from a previously killed worker can never be read by a subsequent request.
+  - Responses are verified against request `id`. Mismatched IDs are dropped with a warning.
+- **Sentinels & Fast Wake-ups:**
+  - The reader thread pushes an `_EofSentinel` when `stdout` closes (worker exit/crash).
+  - `shutdown()` pushes an `_AbortSentinel` into the queue, waking waiters instantly without waiting out the timeout.
+  - The queue is unbounded (`maxsize=0`) so the reader thread never blocks on `put()`.
+- **Waiters Behind RPC Lock:** Threads acquiring the RPC lock immediately re-check `self._is_shutdown` and the circuit breaker state, failing fast in $O(1)$ if the supervisor is down or tripped.
+- **Daemon Threads:** Reader and drain threads are created with `daemon=True` and joined during shutdown with a bounded timeout (`0.2s`).
+
+### D05 — In-Flight Request Retry Policy & Circuit Breaker Budget
+- **Decision: Fail-Fast with Zero In-Flight Retries:** When a request times out or crashes the worker, the in-flight request fails immediately. It is **never** automatically retried on a new worker.
+- **Evaluation Order inside `MathJaxClient.render()` and Supervisor:**
+  1. **SVG Cache Lookup:** Queries `MathSvgCache` by deterministic formula hash (`MathRenderRequest.compute_hash()`). On a cache hit, returns pre-rendered SVG markup and metrics immediately.
+  2. **Negative Memo Check:** Queries the session-scoped negative failure memo. If the formula hash is present, immediately raises the cached `MathRenderError` subclass in $O(1)$ without touching the worker. A negative-memo hit is neutral: it never consumes the single `HALF_OPEN` probe nor alters circuit breaker state.
+  3. **Pre-Flight Input Validation:** Validates TeX payload size against `MAX_TEX_LENGTH` ($16\text{ KB}$). If exceeded, raises `MathBufferLimitExceededError` immediately before contacting the worker. This client-side pre-flight check is neutral: it never touches the worker, does not consume the `HALF_OPEN` probe, and does not alter breaker state (evaluated before the breaker check).
+  4. **Circuit Breaker & Supervisor Invocation:** Evaluates the circuit breaker. If `OPEN` (or `HALF_OPEN` with a probe already in flight), fails fast in $O(1)$ raising `MathCircuitBreakerOpenError`. If `HALF_OPEN`, claims the single probe slot. Then acquires the supervisor lock and proceeds to RPC dispatch.
+  5. **Post-Response Output Validation:** Validates worker SVG output against `MAX_SVG_LENGTH` ($512\text{ KB}$). If exceeded, raises `MathBufferLimitExceededError`. Because this check occurs after the worker successfully returned a response, it proves the worker is alive and responsive (counting as a successful probe).
+- **Poison-Pill Mitigation & Negative Memo:**
+  - The negative memo resides in `infrastructure/math` next to `MathSvgCache`, bounded to 1,000 LRU entries, session-scoped (cleared on app restart / document reload), and is consumed by `MathJaxClient`.
+  - Automatically retrying a pathological formula (e.g. infinite macro expansion `\def\a{\b\b}...`) would cause an immediate second hang (5s + 15s cold start + 5s = 25s delay) and burn 2 of the 3 allowed restart slots on a single formula.
+  - When a formula causes a `MathRenderTimeoutError` or `MathWorkerCrashedError`, its hash is recorded in the negative memo. Subsequent renders of that exact formula fail immediately in $O(1)$ without touching the worker.
+- **Restart Budget Accounting (P10 Resolution):**
+  - **Invariant:** `initial start != restart`. Clean initial process startup records **0** restarts.
+  - **Budget-consuming events:** Exactly three events consume a restart slot: (1) request timeout, (2) unexpected worker crash / stdout EOF, and (3) startup handshake failure.
+  - **Non-budget-consuming events:** TeX syntax errors, buffer limit rejections (pre-flight TeX input length rejection never touches the worker; post-response SVG output length rejection proves the worker answered), negative-memo hits, and shutdown kills do **not** consume budget.
+- **Circuit Breaker State Machine & Explicit Constants:**
+  - **Named Constants:**
+    - `RESTART_WINDOW_SECONDS: float = 60.0`: Rolling window duration for recording failure timestamps.
+    - `MAX_RESTARTS_PER_MINUTE: int = 3`: Threshold of failures in `RESTART_WINDOW_SECONDS` that trips the breaker.
+    - `INITIAL_COOLDOWN_SECONDS: float = 30.0`: The baseline duration the breaker remains in `OPEN` after tripping.
+    - `MAX_COOLDOWN_SECONDS: float = 240.0`: Upper bound on the exponential backoff cooldown.
+  - **State Machine Transitions:**
+    - `CLOSED`: Normal operating state. Each failure appends `now` to `self._restart_timestamps` and prunes timestamps older than `now - RESTART_WINDOW_SECONDS`. If `len(self._restart_timestamps) >= MAX_RESTARTS_PER_MINUTE`, the breaker trips to `OPEN`, sets `current_cooldown = INITIAL_COOLDOWN_SECONDS`, and sets `cooldown_deadline = now + current_cooldown`.
+    - `OPEN`: Fast-fail state. All incoming calls to `render()`, `ping()`, `version()`, etc. fail immediately in $O(1)$ raising `MathCircuitBreakerOpenError`. Independent of the sliding window, `OPEN` lasts until `monotonic() >= cooldown_deadline`. When `monotonic() >= cooldown_deadline`, the breaker transitions to `HALF_OPEN`.
+    - `HALF_OPEN`: Probation state. Allows exactly **one probe request** to execute against the worker (spawning if needed). Any concurrent requests arriving while the probe is in flight immediately fail fast with `MathCircuitBreakerOpenError`.
+      - *Successful Probe:* Any response actually received from the worker—including a `MathSyntaxError` and an oversized-SVG output rejection (`MAX_SVG_LENGTH = 512 KB`)—proves that the worker process is alive and responsive. The breaker transitions to `CLOSED`, clears failure history (`self._restart_timestamps.clear()`), and resets `current_cooldown = INITIAL_COOLDOWN_SECONDS`.
+      - *Neutral Pre-Flight Rejections:* Rejections that occur before contacting the worker—specifically oversized TeX input (`MAX_TEX_LENGTH = 16 KB`) and negative-memo hits—are neutral: they neither consume the single `HALF_OPEN` probe nor alter breaker state, and must be evaluated before the breaker check.
+      - *Failed Probe:* An unrecoverable failure (request timeout, worker crash / stdout EOF, or startup handshake failure) counts as a failed probe. The breaker transitions back to `OPEN`, appends the failure timestamp to `self._restart_timestamps`, doubles the cooldown `current_cooldown = min(current_cooldown * 2, MAX_COOLDOWN_SECONDS)`, and sets `cooldown_deadline = now + current_cooldown`.
+- **Worst-Case Latency Bound:** For a document with $N$ distinct pathological formulas, worst-case latency is bounded by $3 \times (5\text{s} + 1.5\text{s}) \approx 20\text{s}$ (at most $60\text{s}$ under severe cold disk conditions), after which the circuit breaker trips `OPEN` and all remaining formulas fail in $<1\text{ms}$.
+
+### D06 — Shutdown Semantics & Application Exit Coordination
+- **Decision: Single Idempotent Shutdown API:** The supervisor exposes a **single, idempotent `shutdown()`** method. It performs the complete non-blocking teardown: sets `self._is_shutdown = True`, pushes `_AbortSentinel` into all active response queues, terminates/kills the active worker process from outside the lock, and cleans up handles under the lifecycle lock. No split API (e.g. `begin_shutdown()` + `shutdown()`) is exposed, eliminating caller sequencing bugs.
+- **Ordered Teardown Sequence in `DesktopAppContainer.shutdown()`:**
+  1. `mathjax_supervisor.shutdown()` is invoked **first**. It sets `self._is_shutdown = True`, pushes `_AbortSentinel` to response queues, and terminates/kills `self._process`.
+  2. Any in-flight RPC in `MarkdownViewerWorker` unblocks immediately with `MathSupervisorShutdownError`.
+  3. `markdown_viewer_controller.shutdown()` and `export_controller.shutdown()` shut down their thread pools without waiting out RPC timeouts.
+  4. Finalize scheduler, runtime, and container resource handles.
+- **Composition Defect & Test Invariant Update:**
+  - `MathJaxProcessSupervisor.__init__` registers `atexit.register(self.shutdown)`. Because of this, `shutdown()` must be strictly idempotent so calling it explicitly followed by Python interpreter exit causes no errors.
+  - Crucially, in the current codebase (`interfaces/desktop/composition.py:257-266`), `markdown_viewer_controller`, `document_viewer_controller`, and `export_controller` are shut down *before* `mathjax_supervisor.shutdown()`. If a worker is hung, the controller executors block on their in-flight tasks. The implementation **must update `DesktopAppContainer.shutdown()`** to invoke `self.mathjax_supervisor.shutdown()` **first**, immediately unblocking any controller threads waiting on MathJax with `MathSupervisorShutdownError`, before controllers, schedulers, and runtimes shut down.
+  - The existing test `tests/unit/test_desktop_presentation_invariants.py:147` (`test_invariant_5_create_app_lifecycle_startup_and_shutdown`) must be updated to assert this exact teardown order.
+- **Spawn/Shutdown Race Prevention:**
+  - `_ensure_process_locked()` checks `self._is_shutdown` under lock before launching `Popen`, and re-checks immediately after `Popen` returns. If shutdown occurred while `Popen` was running, the newly created process is immediately killed, reaped, and `MathSupervisorShutdownError` is raised. No orphan Node process is ever leaked.
+- **Parent-Death Safety & Residual Risk:**
+  - *Verified in code:* `resources/mathjax/mathjax_worker.js:257-267` listens to `rl.on('close')` and `process.on('SIGTERM')` / `SIGINT`, executing `process.exit(0)`. If the parent PolpoT application is terminated or killed (`SIGKILL`), the OS closes the pipe, stdin emits EOF, and Node exits cleanly.
+  - *Residual Risk:* If the Node worker is stuck in an infinite, synchronous JavaScript CPU loop (e.g. `while(true) {}` in a malformed MathJax extension), Node's single-threaded event loop never yields to process the stdin `'close'` event. If the parent PolpoT application is forcefully killed (e.g. `SIGKILL` or OS crash), the OS closes the pipe, but the stuck Node worker remains spinning as an orphan.
+  - *Status:* Recorded as an **accepted residual risk** for Phase 12 / Investigation B. Kernel-enforced parent-death signaling (Linux `prctl(PR_SET_PDEATHSIG, SIGKILL)`, Windows Job Object `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) is deferred to a future ticket.
+- **Worst-Case Shutdown Latency:** Terminate grace ($0.5\text{s}$) + kill reap ($0.5\text{s}$) + thread joins ($2 \times 0.2\text{s}$) $\approx 1.4\text{s}$ maximum on the GUI thread during `aboutToQuit`, preventing OS force-kill dialogues.
+
+### D07 — Structured Exception Hierarchy
+All errors inherit from `MathRenderError`:
+
+```text
+MathRenderError (base application port exception)
+├── MathWorkerStartupError         # Handshake timeout, bad node path, missing worker script
+├── MathRenderTimeoutError         # In-flight RPC exceeded request_timeout_seconds
+├── MathWorkerCrashedError         # Worker died unexpectedly (EOF / BrokenPipeError)
+├── MathCircuitBreakerOpenError    # 3 failures in 60s; supervisor in circuit-breaker lockout
+├── MathSupervisorShutdownError    # Call attempted after supervisor was shut down
+├── MathBufferLimitExceededError   # TeX > 16 KB or SVG > 512 KB
+└── MathSyntaxError                # Worker reported LaTeX syntax/macro error
+```
+
+**P08 Fallback Behavior Classification:**
+- **Permanent for formula:** `MathSyntaxError`, `MathBufferLimitExceededError`, `MathRenderTimeoutError`. The formula will not render; P08 displays formatted raw TeX with an error badge.
+- **Temporary / Retryable:** `MathCircuitBreakerOpenError` (retryable after cooldown), `MathWorkerCrashedError` (transparent retry on next distinct formula).
+- **Silent Teardown:** `MathSupervisorShutdownError` is **never** recorded in the negative memo or in `MathSvgCache`. It is a transient lifecycle teardown event, not a formula render failure. It is not shown to the user and is swallowed silently by `MarkdownViewerController` and other background workers during exit.
+
+### D08 — Deterministic Test Fixtures & CI Strategy
+- **Fixtures in `tests/fixtures/`:**
+  1. `hung_worker_request.py`: accepts request line, then sleeps indefinitely.
+  2. `hung_worker_startup.py`: never responds to `"ping"` handshake.
+  3. `crash_worker_mid_request.py`: abruptly closes stdout and exits on receiving request.
+  4. `late_worker_response.py`: sleeps beyond timeout, then outputs JSON-RPC response.
+  5. `flood_stderr_worker.py`: emits megabytes of stderr logging while serving math.
+  6. `sigterm_ignoring_worker.py`: ignores `SIGTERM` to exercise `SIGKILL` escalation on POSIX.
+- **Timing & Assertion Rules:**
+  - All test assertions must verify state transitions, exception types, and absence of deadlocks using generous bounds (e.g. `assert elapsed < 3.0s`), avoiding brittle millisecond assertions that flake on CI.
+  - Dedicated tests cover: (a) spawn/shutdown race, (b) poison-pill negative memo hits, (c) initial startup not consuming restart budget, (d) 3-state circuit breaker probe and cooldown, and (e) non-blocking container shutdown.
+
+---
+
+## 4. Problem Register Reconciliation
+
+| Problem ID | Category | Status After ADR-002 | Next Action |
+|---|---|---|---|
+| **P07** | MathJax reliability | **INVESTIGATED & SETTLED (ADR-002)** | Unblocked for implementation tickets (TICK-P07) |
+| **P10** | Process supervision | **INVESTIGATED & SETTLED (ADR-002)** | Folded into supervisor reliability implementation |
+| **P12** | Cleanup exception handling | **INVESTIGATED & SETTLED (ADR-002)** | Folded into supervisor reliability implementation |
+| **P08** | Silent math failure | **BLOCKED ON P07 (DEPENDENCY MAPPED)** | Will consume ADR-002 exception hierarchy and negative memo |
+| **P02** | Manual region publication | **DONE** | Merged in PRs #31, #32, #33, #34 (Commits `7f8317e`, `c18fc72`, `d4d19de`, `222624c`) |
