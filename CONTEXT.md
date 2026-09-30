@@ -97,9 +97,12 @@ Thread-safe, in-memory LRU caches governing math rendering artifacts and failure
 * **Negative Memo (Poison-Pill Protection):** Caches formula hashes that caused unrecoverable timeouts or worker crashes, fast-failing subsequent renders in $O(1)$ to prevent restart budget exhaustion during live typing.
 
 ### 2.12 `MathCircuitBreaker`
-The three-state process reliability governor (`CLOSED`, `OPEN`, `HALF_OPEN`) safeguarding application stability against crash-looping worker processes.
-* **Accounting Invariant:** Initial worker startup is not a restart; only process kills caused by request timeouts, unexpected crashes, or failed startup handshakes consume restart budget.
-* **State Governance:** Restricts worker respawns to at most 3 failures per 60-second rolling window. Enforces explicit cooldown periods and controlled probe requests to prevent persistent probe thrashing.
+The three-state process reliability governor (`CLOSED`, `OPEN`, `HALF_OPEN`) safeguarding application stability against crash-looping worker processes (`infrastructure/math/mathjax_supervisor.py`).
+* **Accounting Invariant:** Initial worker startup is not a restart; only process kills caused by request timeouts, unexpected crashes, or failed startup handshakes consume restart budget (`MAX_RESTARTS_PER_MINUTE = 3` in `RESTART_WINDOW_SECONDS = 60.0`).
+* **State Machine Governance:**
+  * `CLOSED`: Normal operation; failure count within rolling 60s $< 3$.
+  * `OPEN`: Fast-fails all requests in $O(1)$ with `MathCircuitBreakerOpenError`. Lasts for a mandatory cooldown (`INITIAL_COOLDOWN_SECONDS = 30.0`).
+  * `HALF_OPEN`: Allows exactly one probe request. A successful probe closes the breaker and clears failure history; a failed probe re-opens it with doubled cooldown up to `MAX_COOLDOWN_SECONDS = 240.0`.
 
 ---
 
