@@ -17,9 +17,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from application.ports.math_renderer import (
+    MathBufferLimitExceededError,
+    MathCircuitBreakerOpenError,
     MathRenderError,
     MathRenderRequest,
     MathRenderResult,
+    MathSyntaxError,
 )
 from infrastructure.math import (
     MathJaxClient,
@@ -115,8 +118,9 @@ def test_supervisor_rejects_oversized_tex_buffer():
     """Supervisor immediately rejects TeX strings exceeding 16 KB with code -32600."""
     supervisor = MathJaxProcessSupervisor()
     huge_tex = "x + " * 6000  # > 16 KB
-    with pytest.raises(MathRenderError) as exc_info:
+    with pytest.raises(MathBufferLimitExceededError) as exc_info:
         supervisor.render(huge_tex)
+    assert isinstance(exc_info.value, MathRenderError)
     assert exc_info.value.code == -32600
     assert "Buffer limit exceeded" in str(exc_info.value)
 
@@ -131,8 +135,9 @@ def test_supervisor_rate_limiting_prevents_crash_loop():
         time.monotonic() - 1,
     ]
 
-    with pytest.raises(MathRenderError) as exc_info:
+    with pytest.raises(MathCircuitBreakerOpenError) as exc_info:
         supervisor.render("x^2")
+    assert isinstance(exc_info.value, MathRenderError)
     assert exc_info.value.code == -32603
     assert "Restart rate limit exceeded" in str(exc_info.value)
 
@@ -253,12 +258,13 @@ def test_live_client_render_and_metrics(live_supervisor: MathJaxProcessSuperviso
 
 
 def test_live_client_syntax_error_handling(live_supervisor: MathJaxProcessSupervisor):
-    """Invalid TeX produces structured MathRenderError without crashing supervisor."""
+    """Invalid TeX produces structured MathSyntaxError without crashing supervisor."""
     client = MathJaxClient(supervisor=live_supervisor)
     req = MathRenderRequest(tex=r"\frac{1}{", display=False)
 
-    with pytest.raises(MathRenderError) as exc_info:
+    with pytest.raises(MathSyntaxError) as exc_info:
         client.render(req)
+    assert isinstance(exc_info.value, MathRenderError)
     assert exc_info.value.code == -32602
     assert "Missing close brace" in exc_info.value.message
     assert live_supervisor.is_alive is True
