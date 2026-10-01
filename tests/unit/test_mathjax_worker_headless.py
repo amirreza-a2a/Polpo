@@ -128,28 +128,26 @@ def worker_proc(node_executable: Path) -> Generator[subprocess.Popen, None, None
             if proc.stdin and not proc.stdin.closed:
                 try:
                     proc.stdin.close()
-                except Exception:
+                except (OSError, ValueError):
                     pass
             try:
-                proc.wait(timeout=2)
+                proc.wait(timeout=0.5)
             except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=2)
-        if proc.stdin and not proc.stdin.closed:
-            try:
-                proc.stdin.close()
-            except Exception:
-                pass
-        if proc.stdout and not proc.stdout.closed:
-            try:
-                proc.stdout.close()
-            except Exception:
-                pass
-        if proc.stderr and not proc.stderr.closed:
-            try:
-                proc.stderr.close()
-            except Exception:
-                pass
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=0.5)
+                except (subprocess.TimeoutExpired, OSError):
+                    try:
+                        proc.kill()
+                        proc.wait(timeout=0.5)
+                    except (subprocess.TimeoutExpired, OSError):
+                        pass
+        for stream in (proc.stdin, proc.stdout, proc.stderr):
+            if stream and not stream.closed:
+                try:
+                    stream.close()
+                except (OSError, ValueError):
+                    pass
 
 
 def _rpc_call(proc: subprocess.Popen, payload: dict) -> dict:
