@@ -97,12 +97,13 @@ Thread-safe, in-memory LRU caches governing math rendering artifacts and failure
 * **Negative Memo (Poison-Pill Protection):** Caches formula hashes that caused unrecoverable timeouts or worker crashes, fast-failing subsequent renders in $O(1)$ to prevent restart budget exhaustion during live typing.
 
 ### 2.12 `MathCircuitBreaker`
-The three-state process reliability governor (`CLOSED`, `OPEN`, `HALF_OPEN`) safeguarding application stability against crash-looping worker processes (`infrastructure/math/mathjax_supervisor.py`).
+The pure, standalone, thread-safe three-state process reliability governor (`CLOSED`, `OPEN`, `HALF_OPEN`) safeguarding application stability against crash-looping worker processes (`infrastructure/math/circuit_breaker.py`).
+* **Encapsulation & Concurrency:** Encapsulates the failure history previously managed directly in supervisor `self._restart_timestamps`, protected by its own dedicated internal `threading.Lock()` decoupled from supervisor RPC locks.
 * **Accounting Invariant:** Initial worker startup is not a restart; only process kills caused by request timeouts, unexpected crashes, or failed startup handshakes consume restart budget (`MAX_RESTARTS_PER_MINUTE = 3` in `RESTART_WINDOW_SECONDS = 60.0`).
 * **State Machine Governance:**
-  * `CLOSED`: Normal operation; failure count within rolling 60s $< 3$.
-  * `OPEN`: Fast-fails all requests in $O(1)$ with `MathCircuitBreakerOpenError`. Lasts for a mandatory cooldown (`INITIAL_COOLDOWN_SECONDS = 30.0`).
-  * `HALF_OPEN`: Allows exactly one probe request. A successful probe closes the breaker and clears failure history; a failed probe re-opens it with doubled cooldown up to `MAX_COOLDOWN_SECONDS = 240.0`.
+  * `CLOSED`: Normal operation; rolling 60s failure count $< 3$. `record_success()` is a strict no-op in `CLOSED` to prevent alternating success/fail sequences from masking worker instability.
+  * `OPEN`: Fast-fails all requests in $O(1)$ with `MathCircuitBreakerOpenError`. Lasts for a mandatory cooldown (`INITIAL_COOLDOWN_SECONDS = 30.0`). Transitions lazily to `HALF_OPEN` upon cooldown expiration.
+  * `HALF_OPEN`: Allows exactly one atomic probe request via `with breaker.probe_permit():` while rejecting concurrent requests with `MathCircuitBreakerOpenError`. A successful probe closes the breaker, resets cooldown to 30.0s, and clears failure history; a failed probe re-opens it with doubled cooldown up to `MAX_COOLDOWN_SECONDS = 240.0`. Exiting the permit without recording an outcome safely releases the probe slot and preserves `HALF_OPEN` status.
 
 ---
 
