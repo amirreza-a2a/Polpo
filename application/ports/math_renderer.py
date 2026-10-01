@@ -69,7 +69,42 @@ class MathRenderError(Exception):
         super().__init__(self.message)
 
     def __str__(self) -> str:
-        return f"MathRenderError({self.code}): {self.message}"
+        return f"{self.__class__.__name__}({self.code}): {self.message}"
+
+
+@dataclass(frozen=True)
+class MathWorkerStartupError(MathRenderError):
+    """Raised when the worker subprocess cannot be located, spawned, or initialized."""
+
+
+@dataclass(frozen=True)
+class MathRenderTimeoutError(MathRenderError):
+    """Raised when a rendering request exceeds the configured deadline."""
+
+
+@dataclass(frozen=True)
+class MathWorkerCrashedError(MathRenderError):
+    """Raised when the worker process exits unexpectedly or terminates during execution."""
+
+
+@dataclass(frozen=True)
+class MathCircuitBreakerOpenError(MathRenderError):
+    """Raised when requests are rejected because the supervisor circuit breaker is OPEN."""
+
+
+@dataclass(frozen=True)
+class MathSupervisorShutdownError(MathRenderError):
+    """Raised when requests are submitted to a supervisor that has been shut down."""
+
+
+@dataclass(frozen=True)
+class MathBufferLimitExceededError(MathRenderError):
+    """Raised when input TeX or rendered output SVG exceeds maximum allowed buffer size."""
+
+
+@dataclass(frozen=True)
+class MathSyntaxError(MathRenderError):
+    """Raised when TeX formula syntax is invalid and cannot be parsed or rendered."""
 
 
 class IMathRenderer(ABC):
@@ -104,3 +139,18 @@ class IMathRenderer(ABC):
             MathRenderError: If batch processing encounters a fatal error.
         """
         raise NotImplementedError
+
+
+__all__ = [
+    "IMathRenderer",
+    "MathBufferLimitExceededError",
+    "MathCircuitBreakerOpenError",
+    "MathRenderError",
+    "MathRenderRequest",
+    "MathRenderResult",
+    "MathRenderTimeoutError",
+    "MathSupervisorShutdownError",
+    "MathSyntaxError",
+    "MathWorkerCrashedError",
+    "MathWorkerStartupError",
+]
