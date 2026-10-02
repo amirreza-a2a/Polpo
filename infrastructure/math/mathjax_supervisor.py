@@ -32,6 +32,15 @@ from application.ports.math_renderer import (
     MathWorkerCrashedError,
     MathWorkerStartupError,
 )
+from infrastructure.math.circuit_breaker import (
+    INITIAL_COOLDOWN_SECONDS,
+    MAX_COOLDOWN_SECONDS,
+    MAX_RESTARTS_PER_MINUTE,
+    RESTART_WINDOW_SECONDS,
+    CircuitBreakerState,
+    MathCircuitBreaker,
+    ProbePermit,
+)
 from infrastructure.paths import get_runtime_resource_path
 
 logger = logging.getLogger(__name__)
@@ -39,8 +48,6 @@ logger = logging.getLogger(__name__)
 MAX_TEX_LENGTH: int = 16 * 1024  # 16 KB
 MAX_SVG_LENGTH: int = 512 * 1024  # 512 KB
 MAX_STDERR_BUFFER_BYTES: int = 16 * 1024  # 16 KB
-MAX_RESTARTS_PER_MINUTE: int = 3
-RESTART_WINDOW_SECONDS: float = 60.0
 DEFAULT_REQUEST_TIMEOUT_SECONDS: float = 5.0
 DEFAULT_STARTUP_TIMEOUT_SECONDS: float = 15.0
 WINDOWS_SHELL_SHIM_EXTENSIONS = {".cmd", ".bat", ".ps1"}
@@ -59,6 +66,53 @@ class _EofSentinel(_Sentinel):
 class _AbortSentinel(_Sentinel):
     """Pushed when supervisor is shutting down to wake up pending waiters immediately."""
     pass
+
+
+class _WriteWatchdog:
+    """Watchdog timer that terminates/kills a process if writing to stdin blocks.
+
+    Guarantees deadlock-free timeout escalation (ADR-002 section D04):
+    1. Runs on a companion background timer thread.
+    2. Does NOT acquire supervisor._lock.
+    3. Calls proc.terminate() / proc.kill() directly on the subprocess from outside the lock.
+    4. Terminating the process closes the pipe endpoint at OS level, immediately
+       unblocking the blocked stdin.write()/flush() call with BrokenPipeError or OSError.
+    """
+
+    def __init__(self, proc: subprocess.Popen, timeout: float) -> None:
+        self._proc = proc
+        self._timeout = timeout
+        self._timer: Optional[threading.Timer] = None
+        self._triggered: bool = False
+
+    def arm(self) -> None:
+        """Start the watchdog countdown timer."""
+        self._triggered = False
+        self._timer = threading.Timer(self._timeout, self._on_timeout)
+        self._timer.daemon = True
+        self._timer.name = f"MathJaxWriteWatchdog-pid{getattr(self._proc, 'pid', 'unknown')}"
+        self._timer.start()
+
+    def disarm(self) -> None:
+        """Cancel the watchdog countdown timer if active."""
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+
+    def _on_timeout(self) -> None:
+        """Execute forceful process termination outside supervisor lock on write hang."""
+        self._triggered = True
+        pid = getattr(self._proc, "pid", None)
+        logger.warning(
+            "Write watchdog timed out after %.2fs; killing worker process (PID: %s)",
+            self._timeout,
+            pid,
+        )
+        try:
+            if self._proc.poll() is None:
+                self._proc.kill()
+        except (ProcessLookupError, OSError):
+            pass
 
 
 class BoundedStderrBuffer:
@@ -260,6 +314,8 @@ class MathJaxProcessSupervisor:
         auto_start: bool = False,
         request_timeout_seconds: Optional[float] = None,
         startup_timeout_seconds: Optional[float] = None,
+        circuit_breaker: Optional[MathCircuitBreaker] = None,
+        write_timeout_seconds: Optional[float] = None,
     ) -> None:
         """Initialize the supervisor with optional explicit runtime paths and timeouts.
 
@@ -269,6 +325,8 @@ class MathJaxProcessSupervisor:
             auto_start: Whether to spawn the child process immediately upon construction.
             request_timeout_seconds: Optional timeout for rendering requests (seconds).
             startup_timeout_seconds: Optional timeout for worker startup and handshake (seconds).
+            circuit_breaker: Optional injected MathCircuitBreaker instance.
+            write_timeout_seconds: Optional timeout for stdin writes/flushes before watchdog kills process.
         """
         self._node_path_override: Optional[Path] = (
             Path(node_path).expanduser().resolve() if node_path else None
@@ -317,10 +375,18 @@ class MathJaxProcessSupervisor:
                 "POLPO_MATHJAX_STARTUP_TIMEOUT", DEFAULT_STARTUP_TIMEOUT_SECONDS
             )
 
+        self._circuit_breaker: MathCircuitBreaker = (
+            circuit_breaker if circuit_breaker is not None else MathCircuitBreaker()
+        )
+        self._write_watchdog_timeout: float = (
+            write_timeout_seconds
+            if write_timeout_seconds is not None
+            else self._request_timeout
+        )
+
         self._process: Optional[subprocess.Popen] = None
         self._lock: threading.Lock = threading.Lock()
         self._next_id: int = 1
-        self._restart_timestamps: List[float] = []
         self._is_shutdown: bool = False
         self._stderr_buffer: BoundedStderrBuffer = BoundedStderrBuffer()
         self._stderr_drain_thread: Optional[threading.Thread] = None
@@ -333,6 +399,15 @@ class MathJaxProcessSupervisor:
         if auto_start:
             with self._lock:
                 self._ensure_process_locked()
+
+    @property
+    def circuit_breaker(self) -> MathCircuitBreaker:
+        """Return the active circuit breaker governing worker restarts."""
+        return self._circuit_breaker
+
+    def reset_circuit_breaker(self) -> None:
+        """Reset the associated circuit breaker to CLOSED state."""
+        self._circuit_breaker.reset()
 
     def get_stderr_diagnostics(self) -> str:
         """Return the bounded recent stderr diagnostic buffer."""
@@ -407,27 +482,12 @@ class MathJaxProcessSupervisor:
         # Clean up stale process handles
         self._cleanup_process_handles_locked(reason="RESPAWN")
 
-        # Check restart frequency
-        now = time.monotonic()
-        self._restart_timestamps = [
-            t for t in self._restart_timestamps if now - t < RESTART_WINDOW_SECONDS
-        ]
-        if len(self._restart_timestamps) >= MAX_RESTARTS_PER_MINUTE:
+        # Re-check circuit breaker state under supervisor lock (fail fast in O(1))
+        if self._circuit_breaker.state == CircuitBreakerState.OPEN:
             raise MathCircuitBreakerOpenError(
                 code=-32603,
-                message=(
-                    f"MathJax worker crashed repeatedly ({len(self._restart_timestamps)} "
-                    f"times in {RESTART_WINDOW_SECONDS}s). Restart rate limit exceeded."
-                ),
+                message="MathJax circuit breaker is OPEN",
             )
-
-        # Apply exponential backoff when restarting after a crash
-        if self._restart_timestamps:
-            attempt = len(self._restart_timestamps)
-            backoff_duration = min(0.05 * (2 ** (attempt - 1)), 1.0)
-            time.sleep(backoff_duration)
-
-        self._restart_timestamps.append(time.monotonic())
 
         node_path = self._resolve_node()
         if not self._worker_script_path.is_file():
@@ -506,6 +566,11 @@ class MathJaxProcessSupervisor:
             "method": "ping",
         }
 
+        watchdog = None
+        if self._write_watchdog_timeout is not None and self._write_watchdog_timeout > 0:
+            watchdog = _WriteWatchdog(self._process, self._write_watchdog_timeout)
+            watchdog.arm()
+
         try:
             assert self._process.stdin is not None
             self._process.stdin.write(json.dumps(payload) + "\n")
@@ -516,6 +581,9 @@ class MathJaxProcessSupervisor:
                 code=-32603,
                 message=f"Failed to send startup handshake ping to MathJax worker: {write_err}",
             )
+        finally:
+            if watchdog is not None:
+                watchdog.disarm()
 
         deadline = time.monotonic() + self._startup_timeout
         while True:
@@ -743,6 +811,12 @@ class MathJaxProcessSupervisor:
 
     def _call_rpc_locked(self, method: str, params: Optional[Dict[str, Any]] = None) -> Any:
         """Send a JSON-RPC 2.0 request and wait for the correlated response line."""
+        if self._circuit_breaker.state == CircuitBreakerState.OPEN:
+            raise MathCircuitBreakerOpenError(
+                code=-32603,
+                message="MathJax circuit breaker is OPEN",
+            )
+
         proc = self._ensure_process_locked()
         expected_gen = self._process_generation
         q = self._response_queue
@@ -759,6 +833,11 @@ class MathJaxProcessSupervisor:
         if params is not None:
             payload["params"] = params
 
+        watchdog = None
+        if self._write_watchdog_timeout is not None and self._write_watchdog_timeout > 0:
+            watchdog = _WriteWatchdog(proc, self._write_watchdog_timeout)
+            watchdog.arm()
+
         try:
             assert proc.stdin is not None
             proc.stdin.write(json.dumps(payload) + "\n")
@@ -769,6 +848,9 @@ class MathJaxProcessSupervisor:
                 code=-32603,
                 message=f"Failed to communicate with MathJax worker: {write_err}",
             )
+        finally:
+            if watchdog is not None:
+                watchdog.disarm()
 
         deadline = time.monotonic() + self._request_timeout
         while True:
@@ -848,15 +930,34 @@ class MathJaxProcessSupervisor:
 
     def ping(self) -> bool:
         """Send a diagnostic ping request to verify worker connectivity."""
-        with self._lock:
-            result = self._call_rpc_locked("ping")
-            return result == "pong"
+        with self._circuit_breaker.probe_permit() as permit:
+            try:
+                with self._lock:
+                    result = self._call_rpc_locked("ping")
+                if result == "pong":
+                    permit.record_success()
+                    return True
+                permit.record_failure()
+                return False
+            except (MathRenderTimeoutError, MathWorkerCrashedError, MathWorkerStartupError):
+                permit.record_failure()
+                raise
+            except MathSupervisorShutdownError:
+                raise
 
     def version(self) -> Dict[str, str]:
         """Query runtime versions from the worker process."""
-        with self._lock:
-            res = self._call_rpc_locked("version")
-            return dict(res) if isinstance(res, dict) else {}
+        with self._circuit_breaker.probe_permit() as permit:
+            try:
+                with self._lock:
+                    res = self._call_rpc_locked("version")
+                permit.record_success()
+                return dict(res) if isinstance(res, dict) else {}
+            except (MathRenderTimeoutError, MathWorkerCrashedError, MathWorkerStartupError):
+                permit.record_failure()
+                raise
+            except MathSupervisorShutdownError:
+                raise
 
     def render(
         self,
@@ -866,6 +967,13 @@ class MathJaxProcessSupervisor:
         ex: int = 8,
     ) -> Dict[str, str]:
         """Render a single TeX math expression to SVG XML with layout metrics.
+
+        Canonical evaluation order (ADR-002 section D05):
+        1. Pre-flight input validation: MAX_TEX_LENGTH check before acquiring breaker permit.
+        2. Circuit breaker probe permit acquisition (fails fast in O(1) if OPEN).
+        3. RPC dispatch under supervisor lock.
+        4. Post-response output validation: MAX_SVG_LENGTH check.
+        5. Probe outcome classification (success vs failure).
 
         Args:
             tex: TeX math expression.
@@ -880,6 +988,7 @@ class MathJaxProcessSupervisor:
             MathRenderError: If TeX exceeds buffer limits, syntax is invalid,
                              or worker encounters an error.
         """
+        # Step 1: Pre-flight input validation (neutral check, never consumes probe)
         tex_bytes = tex.encode("utf-8")
         if len(tex_bytes) > MAX_TEX_LENGTH:
             raise MathBufferLimitExceededError(
@@ -890,35 +999,65 @@ class MathJaxProcessSupervisor:
                 ),
             )
 
-        with self._lock:
-            result = self._call_rpc_locked(
-                "render",
-                {"tex": tex, "display": display, "em": em, "ex": ex},
-            )
+        # Step 2: Acquire circuit breaker probe permit
+        with self._circuit_breaker.probe_permit() as permit:
+            try:
+                # Step 3: RPC dispatch under supervisor lock
+                with self._lock:
+                    result = self._call_rpc_locked(
+                        "render",
+                        {"tex": tex, "display": display, "em": em, "ex": ex},
+                    )
 
-            if not isinstance(result, dict):
-                raise MathRenderError(
-                    code=-32603,
-                    message="MathJax worker returned unexpected response type.",
-                )
+                if not isinstance(result, dict):
+                    permit.record_failure()
+                    raise MathRenderError(
+                        code=-32603,
+                        message="MathJax worker returned unexpected response type.",
+                    )
 
-            svg_xml = result.get("svg") or result.get("svg_xml") or ""
-            svg_bytes = svg_xml.encode("utf-8")
-            if len(svg_bytes) > MAX_SVG_LENGTH:
-                raise MathBufferLimitExceededError(
-                    code=-32600,
-                    message=(
-                        f"Buffer limit exceeded: SVG output ({len(svg_bytes)} bytes) "
-                        f"exceeds {MAX_SVG_LENGTH} bytes"
-                    ),
-                )
+                svg_xml = result.get("svg") or result.get("svg_xml") or ""
+                svg_bytes = svg_xml.encode("utf-8")
 
-            return {
-                "svg_xml": svg_xml,
-                "width": str(result.get("width", "0ex")),
-                "height": str(result.get("height", "0ex")),
-                "vertical_align": str(result.get("vertical_align", "0ex")),
-            }
+                # Step 4 & 5: Post-response output validation & probe classification
+                if len(svg_bytes) > MAX_SVG_LENGTH:
+                    # Oversized SVG proves worker answered -> SUCCESS
+                    permit.record_success()
+                    raise MathBufferLimitExceededError(
+                        code=-32600,
+                        message=(
+                            f"Buffer limit exceeded: SVG output ({len(svg_bytes)} bytes) "
+                            f"exceeds {MAX_SVG_LENGTH} bytes"
+                        ),
+                    )
+
+                # Valid worker response -> SUCCESS
+                permit.record_success()
+                return {
+                    "svg_xml": svg_xml,
+                    "width": str(result.get("width", "0ex")),
+                    "height": str(result.get("height", "0ex")),
+                    "vertical_align": str(result.get("vertical_align", "0ex")),
+                }
+
+            except MathSyntaxError:
+                # TeX syntax error proves worker is responsive -> SUCCESS
+                permit.record_success()
+                raise
+
+            except MathBufferLimitExceededError:
+                # Worker-side -32600 buffer error or SVG length -> SUCCESS
+                permit.record_success()
+                raise
+
+            except (MathRenderTimeoutError, MathWorkerCrashedError, MathWorkerStartupError):
+                # Unrecoverable worker failure -> FAILED probe
+                permit.record_failure()
+                raise
+
+            except MathSupervisorShutdownError:
+                # Neutral lifecycle teardown event; neither success nor failure
+                raise
 
     def shutdown(self) -> None:
         """Terminate the child worker process and close open pipes.
