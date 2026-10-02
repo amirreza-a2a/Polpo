@@ -24,6 +24,7 @@ FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
 FLOOD_STDERR_WORKER = FIXTURES_DIR / "flood_stderr_worker.py"
 
 from application.ports.math_renderer import (
+    MathRenderTimeoutError,
     MathSupervisorShutdownError,
 )
 from infrastructure.math.circuit_breaker import (
@@ -404,3 +405,111 @@ def test_cleanup_process_handles_locked_never_calls_terminate_kill_or_wait():
     mock_proc.terminate.assert_not_called()
     mock_proc.kill.assert_not_called()
     mock_proc.wait.assert_not_called()
+
+
+def test_rpc_failure_cannot_terminate_new_process_generation():
+    """An RPC failure from generation N must not terminate or clear handles of generation N+1."""
+    supervisor = MathJaxProcessSupervisor()
+
+    mock_proc_gen1 = MagicMock()
+    mock_proc_gen1.pid = 1001
+    mock_proc_gen1.poll.return_value = None
+    mock_proc_gen1.terminate = MagicMock()
+    mock_proc_gen1.kill = MagicMock()
+    mock_proc_gen1.wait = MagicMock(return_value=0)
+
+    mock_proc_gen2 = MagicMock()
+    mock_proc_gen2.pid = 2002
+    mock_proc_gen2.poll.return_value = None
+    mock_proc_gen2.terminate = MagicMock()
+    mock_proc_gen2.kill = MagicMock()
+    mock_proc_gen2.wait = MagicMock()
+
+    supervisor._process = mock_proc_gen1
+    supervisor._process_generation = 1
+    supervisor._response_queue = queue.Queue()
+    mock_reader_gen2 = MagicMock()
+    mock_drain_gen2 = MagicMock()
+
+    original_terminate = supervisor._terminate_process_outside_lock
+
+    def interleave_respawn(proc, reason="CLEANUP"):
+        original_terminate(proc, reason=reason)
+        if proc is mock_proc_gen1:
+            with supervisor._lock:
+                supervisor._process = mock_proc_gen2
+                supervisor._process_generation = 2
+                supervisor._response_queue = queue.Queue()
+                supervisor._stdout_reader_thread = mock_reader_gen2
+                supervisor._stderr_drain_thread = mock_drain_gen2
+
+    supervisor._terminate_process_outside_lock = MagicMock(side_effect=interleave_respawn)
+
+    timeout_err = MathRenderTimeoutError(code=-32603, message="Timeout on Gen 1")
+    supervisor._handle_rpc_exception(timeout_err, proc=mock_proc_gen1, generation=1)
+
+    # 1. Gen 1 was terminated
+    mock_proc_gen1.terminate.assert_called_once()
+
+    # 2. Gen 2 was NOT terminated or killed
+    mock_proc_gen2.terminate.assert_not_called()
+    mock_proc_gen2.kill.assert_not_called()
+    mock_proc_gen2.wait.assert_not_called()
+
+    # 3. Gen 2 process and generation are intact on supervisor
+    assert supervisor._process is mock_proc_gen2
+    assert supervisor._process_generation == 2
+    assert supervisor._response_queue is not None
+    assert supervisor._stdout_reader_thread is mock_reader_gen2
+    assert supervisor._stderr_drain_thread is mock_drain_gen2
+
+
+def test_dispatch_rpc_captures_generation_and_spares_new_generation():
+    """Verify _dispatch_rpc captures failed process/generation under lock and spares generation N+1."""
+    supervisor = MathJaxProcessSupervisor()
+
+    mock_proc_gen1 = MagicMock()
+    mock_proc_gen1.pid = 1111
+    mock_proc_gen1.poll.return_value = None
+    mock_proc_gen1.terminate = MagicMock()
+    mock_proc_gen1.kill = MagicMock()
+    mock_proc_gen1.wait = MagicMock(return_value=0)
+
+    mock_proc_gen2 = MagicMock()
+    mock_proc_gen2.pid = 2222
+    mock_proc_gen2.poll.return_value = None
+    mock_proc_gen2.terminate = MagicMock()
+    mock_proc_gen2.kill = MagicMock()
+    mock_proc_gen2.wait = MagicMock()
+
+    supervisor._process = mock_proc_gen1
+    supervisor._process_generation = 1
+    supervisor._response_queue = queue.Queue()
+
+    def mock_call_rpc(method, params=None):
+        raise MathRenderTimeoutError(code=-32603, message="Timeout on Gen 1")
+
+    supervisor._call_rpc_locked = MagicMock(side_effect=mock_call_rpc)
+
+    original_terminate = supervisor._terminate_process_outside_lock
+
+    def interleave_respawn(proc, reason="CLEANUP"):
+        original_terminate(proc, reason=reason)
+        if proc is mock_proc_gen1:
+            with supervisor._lock:
+                supervisor._process = mock_proc_gen2
+                supervisor._process_generation = 2
+                supervisor._response_queue = queue.Queue()
+
+    supervisor._terminate_process_outside_lock = MagicMock(side_effect=interleave_respawn)
+
+    with pytest.raises(MathRenderTimeoutError):
+        supervisor._dispatch_rpc("render", {"tex": "x"})
+
+    # Gen 1 was terminated
+    mock_proc_gen1.terminate.assert_called_once()
+    # Gen 2 was NOT terminated
+    mock_proc_gen2.terminate.assert_not_called()
+    # Supervisor retained Gen 2
+    assert supervisor._process is mock_proc_gen2
+    assert supervisor._process_generation == 2

@@ -17,7 +17,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from application.ports.math_renderer import MathSupervisorShutdownError
+from application.ports.math_renderer import (
+    MathSupervisorShutdownError,
+    MathWorkerStartupError,
+)
 from infrastructure.math.mathjax_supervisor import (
     BoundedStderrBuffer,
     MathJaxProcessSupervisor,
@@ -702,3 +705,58 @@ def test_spawn_shutdown_race_prevents_orphan_process():
     except subprocess.TimeoutExpired:
         pass
     assert spawned_proc.poll() is not None, "Spawned process must be reaped during shutdown race"
+
+
+def test_respawn_does_not_orphan_process_when_poll_raises_oserror():
+    """Verify that when poll() raises OSError during respawn, old process is terminated and not orphaned."""
+    supervisor = MathJaxProcessSupervisor()
+    mock_old_proc = MagicMock()
+    mock_old_proc.pid = 7777
+    mock_old_proc.poll = MagicMock(side_effect=OSError("Kernel waitpid error"))
+    mock_old_proc.terminate = MagicMock()
+    mock_old_proc.kill = MagicMock()
+    mock_old_proc.wait = MagicMock()
+
+    supervisor._process = mock_old_proc
+
+    try:
+        with patch("subprocess.Popen") as mock_popen:
+            with supervisor._lock:
+                with pytest.raises(MathWorkerStartupError, match="could not be reaped"):
+                    supervisor._ensure_process_locked()
+
+        # 1. Old process termination/reap occurred
+        mock_old_proc.terminate.assert_called_once()
+        mock_old_proc.kill.assert_called_once()
+        assert mock_old_proc.wait.call_count >= 1
+
+        # 2. Old process reference is NOT silently discarded while still alive / unreaped
+        assert supervisor._process is mock_old_proc
+
+        # 3. Replacement spawn was NOT called while old process is un-reaped
+        mock_popen.assert_not_called()
+
+        # 4. Now simulate old process successfully reaping after retry
+        mock_old_proc.poll = MagicMock(return_value=0)
+        mock_old_proc.wait = MagicMock(return_value=0)
+
+        mock_new_proc = MagicMock()
+        mock_new_proc.pid = 8888
+        mock_new_proc.poll.return_value = None
+        mock_new_proc.stdin = MagicMock()
+        mock_new_proc.stdout = MagicMock()
+        mock_new_proc.stdout.readline = MagicMock(return_value="")
+        mock_new_proc.stderr = MagicMock()
+        mock_new_proc.stderr.readline = MagicMock(return_value="")
+
+        with patch("subprocess.Popen", return_value=mock_new_proc) as mock_popen:
+            with patch.object(supervisor, "_perform_startup_handshake_locked"):
+                with supervisor._lock:
+                    new_proc = supervisor._ensure_process_locked()
+
+        # 5. Replacement spawn occurs ONLY after cleanup
+        mock_popen.assert_called_once()
+        assert new_proc is mock_new_proc
+        assert supervisor._process is mock_new_proc
+    finally:
+        supervisor.shutdown()
