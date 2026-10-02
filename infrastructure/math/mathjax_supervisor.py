@@ -33,13 +33,8 @@ from application.ports.math_renderer import (
     MathWorkerStartupError,
 )
 from infrastructure.math.circuit_breaker import (
-    INITIAL_COOLDOWN_SECONDS,
-    MAX_COOLDOWN_SECONDS,
-    MAX_RESTARTS_PER_MINUTE,
-    RESTART_WINDOW_SECONDS,
     CircuitBreakerState,
     MathCircuitBreaker,
-    ProbePermit,
 )
 from infrastructure.paths import get_runtime_resource_path
 
@@ -404,10 +399,6 @@ class MathJaxProcessSupervisor:
     def circuit_breaker(self) -> MathCircuitBreaker:
         """Return the active circuit breaker governing worker restarts."""
         return self._circuit_breaker
-
-    def reset_circuit_breaker(self) -> None:
-        """Reset the associated circuit breaker to CLOSED state."""
-        self._circuit_breaker.reset()
 
     def get_stderr_diagnostics(self) -> str:
         """Return the bounded recent stderr diagnostic buffer."""
@@ -951,8 +942,14 @@ class MathJaxProcessSupervisor:
             try:
                 with self._lock:
                     res = self._call_rpc_locked("version")
+                if not isinstance(res, dict):
+                    permit.record_failure()
+                    raise MathRenderError(
+                        code=-32603,
+                        message="MathJax worker returned unexpected response type for version.",
+                    )
                 permit.record_success()
-                return dict(res) if isinstance(res, dict) else {}
+                return dict(res)
             except (MathRenderTimeoutError, MathWorkerCrashedError, MathWorkerStartupError):
                 permit.record_failure()
                 raise
@@ -988,7 +985,6 @@ class MathJaxProcessSupervisor:
             MathRenderError: If TeX exceeds buffer limits, syntax is invalid,
                              or worker encounters an error.
         """
-        # Step 1: Pre-flight input validation (neutral check, never consumes probe)
         tex_bytes = tex.encode("utf-8")
         if len(tex_bytes) > MAX_TEX_LENGTH:
             raise MathBufferLimitExceededError(
@@ -999,10 +995,8 @@ class MathJaxProcessSupervisor:
                 ),
             )
 
-        # Step 2: Acquire circuit breaker probe permit
         with self._circuit_breaker.probe_permit() as permit:
             try:
-                # Step 3: RPC dispatch under supervisor lock
                 with self._lock:
                     result = self._call_rpc_locked(
                         "render",
@@ -1019,7 +1013,6 @@ class MathJaxProcessSupervisor:
                 svg_xml = result.get("svg") or result.get("svg_xml") or ""
                 svg_bytes = svg_xml.encode("utf-8")
 
-                # Step 4 & 5: Post-response output validation & probe classification
                 if len(svg_bytes) > MAX_SVG_LENGTH:
                     # Oversized SVG proves worker answered -> SUCCESS
                     permit.record_success()

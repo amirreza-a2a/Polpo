@@ -77,10 +77,7 @@ class SyntheticClock:
         self.time += seconds
 
 
-# ==============================================================================
-# 1. Write-Path Watchdog Tests
-# ==============================================================================
-
+# Write-path watchdog tests
 def test_write_watchdog_arms_and_disarms_on_successful_write():
     """Watchdog arms before write and cleanly disarms without firing when write succeeds."""
     mock_proc = MagicMock()
@@ -147,10 +144,7 @@ def test_write_watchdog_unblocks_blocked_stdin_flush_without_deadlock():
     mock_proc.kill.assert_called()
 
 
-# ==============================================================================
-# 2. Canonical Supervisor Evaluation Order Tests
-# ==============================================================================
-
+# Canonical supervisor evaluation order tests
 def test_evaluation_order_preflight_tex_check_precedes_circuit_breaker():
     """Pre-flight MAX_TEX_LENGTH check raises MathBufferLimitExceededError even when breaker is OPEN."""
     clock = SyntheticClock(1000.0)
@@ -193,10 +187,45 @@ def test_evaluation_order_circuit_breaker_fails_fast_in_o1_when_open():
     assert "circuit breaker is OPEN" in exc_info.value.message
 
 
-# ==============================================================================
-# 3. Probe Semantics: Successful Probes
-# ==============================================================================
+def test_ping_fails_fast_in_o1_when_circuit_breaker_open():
+    """When circuit breaker is OPEN, ping() fails fast in O(1) without touching worker process."""
+    clock = SyntheticClock(1000.0)
+    breaker = MathCircuitBreaker(time_provider=clock)
+    for _ in range(MAX_RESTARTS_PER_MINUTE):
+        breaker.record_failure()
+    assert breaker.state == CircuitBreakerState.OPEN
 
+    supervisor = MathJaxProcessSupervisor(circuit_breaker=breaker)
+
+    with patch.object(supervisor, "_call_rpc_locked") as mock_rpc:
+        with pytest.raises(MathCircuitBreakerOpenError) as exc_info:
+            supervisor.ping()
+
+        mock_rpc.assert_not_called()
+
+    assert "circuit breaker is OPEN" in exc_info.value.message
+
+
+def test_version_fails_fast_in_o1_when_circuit_breaker_open():
+    """When circuit breaker is OPEN, version() fails fast in O(1) without touching worker process."""
+    clock = SyntheticClock(1000.0)
+    breaker = MathCircuitBreaker(time_provider=clock)
+    for _ in range(MAX_RESTARTS_PER_MINUTE):
+        breaker.record_failure()
+    assert breaker.state == CircuitBreakerState.OPEN
+
+    supervisor = MathJaxProcessSupervisor(circuit_breaker=breaker)
+
+    with patch.object(supervisor, "_call_rpc_locked") as mock_rpc:
+        with pytest.raises(MathCircuitBreakerOpenError) as exc_info:
+            supervisor.version()
+
+        mock_rpc.assert_not_called()
+
+    assert "circuit breaker is OPEN" in exc_info.value.message
+
+
+# Probe semantics: successful probes
 def test_probe_success_on_valid_worker_response():
     """Successful render response in HALF_OPEN transitions breaker to CLOSED and clears history."""
     clock = SyntheticClock(1000.0)
@@ -301,9 +330,44 @@ def test_probe_success_on_oversized_svg_output():
     assert breaker.failure_count == 0
 
 
-# ==============================================================================
-# 4. Probe Semantics: Failed Probes
-# ==============================================================================
+def test_ping_probe_success_in_half_open():
+    """Successful ping() response ('pong') in HALF_OPEN closes the circuit breaker."""
+    clock = SyntheticClock(1000.0)
+    breaker = MathCircuitBreaker(time_provider=clock)
+    for _ in range(MAX_RESTARTS_PER_MINUTE):
+        breaker.record_failure()
+    clock.advance(INITIAL_COOLDOWN_SECONDS + 1.0)
+    assert breaker.state == CircuitBreakerState.HALF_OPEN
+
+    supervisor = MathJaxProcessSupervisor(circuit_breaker=breaker)
+
+    with patch.object(supervisor, "_call_rpc_locked", return_value="pong"):
+        assert supervisor.ping() is True
+
+    assert breaker.state == CircuitBreakerState.CLOSED
+    assert breaker.failure_count == 0
+
+
+# Probe semantics: failed probes
+def test_version_probe_classification_rejects_invalid_type_and_fails_probe():
+    """When worker returns non-dict response for version(), probe fails and breaker trips OPEN."""
+    clock = SyntheticClock(1000.0)
+    breaker = MathCircuitBreaker(time_provider=clock)
+    for _ in range(MAX_RESTARTS_PER_MINUTE):
+        breaker.record_failure()
+    clock.advance(INITIAL_COOLDOWN_SECONDS + 1.0)
+    assert breaker.state == CircuitBreakerState.HALF_OPEN
+
+    supervisor = MathJaxProcessSupervisor(circuit_breaker=breaker)
+
+    with patch.object(supervisor, "_call_rpc_locked", return_value="invalid_string_version"):
+        with pytest.raises(MathRenderError) as exc_info:
+            supervisor.version()
+
+    assert "unexpected response type" in exc_info.value.message
+    # Probe failed because response was invalid type; trips back to OPEN and doubles cooldown
+    assert breaker.state == CircuitBreakerState.OPEN
+    assert breaker.current_cooldown == INITIAL_COOLDOWN_SECONDS * 2.0
 
 def test_probe_failure_on_request_timeout():
     """Request timeout in HALF_OPEN fails probe, trips back to OPEN, and doubles cooldown."""
@@ -375,10 +439,7 @@ def test_probe_failure_on_startup_handshake_failure():
     assert breaker.current_cooldown == INITIAL_COOLDOWN_SECONDS * 2.0
 
 
-# ==============================================================================
-# 5. Clean Initial Boot & Repeated Failures
-# ==============================================================================
-
+# Clean initial boot & repeated failures
 def test_clean_initial_boot_records_zero_failures():
     """Initial worker startup does not consume restart budget (P10 invariant: initial start != restart)."""
     clock = SyntheticClock(1000.0)
@@ -425,10 +486,7 @@ def test_three_consecutive_failures_trips_breaker_to_open():
     assert breaker.state == CircuitBreakerState.OPEN
 
 
-# ==============================================================================
-# 6. Neutral Shutdown Event
-# ==============================================================================
-
+# Neutral shutdown lifecycle event
 def test_shutdown_error_does_not_record_breaker_failure():
     """MathSupervisorShutdownError is a neutral lifecycle event and does not record breaker failure."""
     clock = SyntheticClock(1000.0)
@@ -447,10 +505,7 @@ def test_shutdown_error_does_not_record_breaker_failure():
     assert breaker.failure_count == 0
 
 
-# ==============================================================================
-# 7. Clean Architecture Invariant: No Qt Imports
-# ==============================================================================
-
+# Clean Architecture invariant: no Qt imports
 def test_supervisor_and_tests_have_no_qt_imports():
     """Clean Architecture invariant: math infrastructure and tests must not import Qt/PySide6."""
     files_to_check = [
