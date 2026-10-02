@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import signal
 import sys
 import time
 
@@ -46,11 +47,19 @@ def main() -> None:
 
         delay = float(os.environ.get("POLPO_TEST_LATE_WORKER_DELAY", "0.5"))
         marker_file = os.environ.get("POLPO_LATE_WORKER_MARKER_FILE")
+        is_gen1 = False
         if marker_file:
             marker_path = Path(marker_file)
             if not marker_path.exists():
-                # Generation 1: record marker and sleep late to trigger request timeout
+                is_gen1 = True
                 marker_path.touch()
+                # Generation 1 ignores SIGTERM so it survives the supervisor's termination
+                # grace period to emit its late response to stdout before exiting.
+                if hasattr(signal, "SIGTERM"):
+                    try:
+                        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+                    except (ValueError, OSError):
+                        pass
                 time.sleep(delay)
             else:
                 # Generation 2+: respond immediately without sleeping
@@ -75,7 +84,9 @@ def main() -> None:
         except OSError:
             # If supervisor already killed the worker, stdout write may fail
             pass
-        break
+
+        if is_gen1:
+            sys.exit(0)
 
 
 if __name__ == "__main__":

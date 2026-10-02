@@ -292,11 +292,13 @@ def test_generation_isolation_with_real_late_worker_subprocess(
         ↓
     send request
         ↓
-    worker intentionally responds late (sleeps 0.5s > 0.2s timeout)
+    worker intentionally responds late (sleeps 0.35s > 0.2s timeout)
         ↓
     request timeout triggers MathRenderTimeoutError
         ↓
-    P07C cleanup terminates/reaps generation 1
+    P07C cleanup initiates termination escalation and reaps generation 1
+        ↓
+    late response from generation 1 enters q_gen1 with generation token 1
         ↓
     Generation 2 is created (queue_2, reader_2, process_generation=2)
         ↓
@@ -306,7 +308,7 @@ def test_generation_isolation_with_real_late_worker_subprocess(
     """
     marker_file = tmp_path / "gen1_marker.txt"
     monkeypatch.setenv("POLPO_LATE_WORKER_MARKER_FILE", str(marker_file))
-    monkeypatch.setenv("POLPO_TEST_LATE_WORKER_DELAY", "0.5")
+    monkeypatch.setenv("POLPO_TEST_LATE_WORKER_DELAY", "0.35")
 
     supervisor = MathJaxProcessSupervisor(
         node_path=sys.executable,
@@ -324,7 +326,13 @@ def test_generation_isolation_with_real_late_worker_subprocess(
     assert proc_gen1 is not None
     assert reader_gen1 is not None
 
-    # Step 1: Request on Generation 1 times out because worker sleeps 0.5s > 0.2s
+    # On Windows, TerminateProcess is non-catchable; prevent immediate termination
+    # during Phase 1 cleanup so the real worker subprocess completes its delay
+    # and emits its late response to stdout before exiting cleanly.
+    if sys.platform == "win32":
+        monkeypatch.setattr(proc_gen1, "terminate", lambda: None)
+
+    # Step 1: Request on Generation 1 times out because worker sleeps 0.35s > 0.2s
     with caplog.at_level(logging.WARNING):
         with pytest.raises(MathRenderTimeoutError) as exc_info:
             supervisor.render("formula_1")
@@ -334,7 +342,23 @@ def test_generation_isolation_with_real_late_worker_subprocess(
     assert supervisor.is_alive is False
     assert supervisor._process is None
 
-    # Step 2: Request on Generation 2 spawns a new process, new queue, new reader
+    # Step 2: Explicitly verify that Generation 1's delayed response arrives in q_gen1
+    observed_gen1_response = None
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        try:
+            item_gen, item_payload = q_gen1.get(timeout=0.1)
+            if item_gen == 1 and isinstance(item_payload, str) and "response-id-2" in item_payload:
+                observed_gen1_response = item_payload
+                break
+        except queue.Empty:
+            continue
+
+    assert observed_gen1_response is not None, (
+        "Generation 1 delayed response with 'response-id-2' was never observed in q_gen1"
+    )
+
+    # Step 3: Request on Generation 2 spawns a new process, new queue, new reader
     result_gen2 = supervisor.render("formula_2")
 
     # Assert Generation 2 properties
@@ -348,15 +372,18 @@ def test_generation_isolation_with_real_late_worker_subprocess(
     assert proc_gen2 is not proc_gen1, "Generation 2 must be a distinct process instance"
     assert reader_gen2 is not reader_gen1, "Generation 2 must have its own reader thread"
 
-    # Step 3: Verify the result was produced by Generation 2's request (ID 4), NOT Generation 1 (ID 2)
+    # Step 4: Verify the result was produced by Generation 2's request (ID 4), NOT Generation 1 (ID 2)
     assert "response-id-4" in result_gen2["svg_xml"]
     assert "response-id-2" not in result_gen2["svg_xml"]
 
-    # Step 4: Verify that if worker 1 wrote its late response, it entered q_gen1, never q_gen2
-    time.sleep(0.4)
+    # Step 5: Verify queue isolation — q_gen2 contains only generation-2 items, never generation-1
     while not q_gen2.empty():
-        item_gen, _ = q_gen2.get_nowait()
+        item_gen, item_payload = q_gen2.get_nowait()
         assert item_gen == 2, f"Item from generation {item_gen} leaked into generation 2 queue!"
+        if isinstance(item_payload, str):
+            assert "response-id-2" not in item_payload, (
+                "Generation 1 response leaked into generation 2 queue!"
+            )
 
     supervisor.shutdown()
 
