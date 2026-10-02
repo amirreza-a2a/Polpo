@@ -619,15 +619,22 @@ class MathJaxProcessSupervisor:
 
             # Re-check shutdown status to prevent spawn/shutdown race (ADR-002 D06)
             if self._is_shutdown:
+                spawned_proc = self._process
+                lock_was_held = False
                 try:
-                    self._process.kill()
-                except (ProcessLookupError, OSError):
-                    pass
+                    self._lock.release()
+                    lock_was_held = True
+                except RuntimeError:
+                    lock_was_held = False
+
                 try:
-                    self._process.wait(timeout=0.5)
-                except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
-                    pass
-                self._cleanup_process_handles_locked(reason="SHUTDOWN_RACE")
+                    if spawned_proc is not None:
+                        self._terminate_process_outside_lock(spawned_proc, reason="SHUTDOWN")
+                finally:
+                    if lock_was_held:
+                        self._lock.acquire()
+
+                self._cleanup_process_handles_locked(reason="SHUTDOWN_RACE", process=spawned_proc)
                 raise MathSupervisorShutdownError(
                     code=-32603,
                     message="MathJaxProcessSupervisor was shut down during spawn.",

@@ -145,6 +145,7 @@ def test_spawn_shutdown_race_kills_process_and_raises_shutdown_error():
             proc.poll.return_value = -9
             return -9
 
+        proc.terminate = MagicMock()
         proc.kill = MagicMock(side_effect=kill_proc)
         proc.wait = MagicMock(side_effect=wait_proc)
         spawned_procs.append(proc)
@@ -160,7 +161,8 @@ def test_spawn_shutdown_race_kills_process_and_raises_shutdown_error():
 
     assert len(spawned_procs) == 1
     new_proc = spawned_procs[0]
-    new_proc.kill.assert_called()
+    assert new_proc.terminate.called or new_proc.kill.called
+    assert new_proc.poll() is not None
     assert supervisor._process is None
     assert supervisor.is_shutdown is True
 
@@ -827,3 +829,100 @@ def test_rpc_failure_does_not_expose_terminating_process_as_healthy():
     mock_popen.assert_called_once()
     assert supervisor._process is mock_proc_gen2
     assert supervisor._process_generation == 2
+
+
+def test_spawn_shutdown_race_termination_occurs_outside_supervisor_lock():
+    """Verify that when shutdown occurs during Popen, post-Popen termination executes outside supervisor lock."""
+    supervisor = MathJaxProcessSupervisor()
+    mock_proc = MagicMock()
+    mock_proc.pid = 9999
+
+    lock_states = {
+        "terminate": [],
+        "kill": [],
+        "wait": [],
+    }
+
+    reaped = False
+
+    def mock_poll():
+        if reaped:
+            return -9
+        return None
+
+    mock_proc.poll = MagicMock(side_effect=mock_poll)
+
+    def spy_terminate():
+        lock_states["terminate"].append(supervisor._lock.locked())
+
+    def spy_kill():
+        nonlocal reaped
+        lock_states["kill"].append(supervisor._lock.locked())
+        reaped = True
+
+    def spy_wait(timeout=None):
+        lock_states["wait"].append(supervisor._lock.locked())
+        if reaped:
+            return -9
+        return None
+
+    mock_proc.terminate = MagicMock(side_effect=spy_terminate)
+    mock_proc.kill = MagicMock(side_effect=spy_kill)
+    mock_proc.wait = MagicMock(side_effect=spy_wait)
+
+    popen_executed = threading.Event()
+    shutdown_started = threading.Event()
+    shutdown_thread_holder = []
+
+    def racing_popen(*args, **kwargs):
+        # 1. supervisor._lock is held
+        assert supervisor._lock.locked() is True
+        popen_executed.set()
+
+        # 3. shutdown starts during Popen from another thread
+        def run_shutdown():
+            shutdown_started.set()
+            supervisor.shutdown()
+
+        shutdown_thread = threading.Thread(target=run_shutdown)
+        shutdown_thread_holder.append(shutdown_thread)
+        shutdown_thread.start()
+
+        # Wait until shutdown starts and sets _is_shutdown
+        assert shutdown_started.wait(timeout=5.0)
+        while not supervisor._is_shutdown:
+            time.sleep(0.001)
+
+        # 4. Popen returns
+        return mock_proc
+
+    with patch("subprocess.Popen", side_effect=racing_popen) as mock_popen:
+        with pytest.raises(MathSupervisorShutdownError) as exc_info:
+            with supervisor._lock:
+                supervisor._ensure_process_locked()
+
+    if shutdown_thread_holder:
+        shutdown_thread_holder[0].join(timeout=5.0)
+
+    assert "shut down during spawn" in exc_info.value.message
+
+    # Verify terminate, wait, and kill were all called
+    assert len(lock_states["terminate"]) >= 1, "proc.terminate() was not called"
+    assert len(lock_states["kill"]) >= 1, "proc.kill() was not called"
+    assert len(lock_states["wait"]) >= 1, "proc.wait() was not called"
+
+    # Assert that for EVERY call, supervisor._lock was NOT held
+    assert all(held is False for held in lock_states["terminate"]), "Lock was held during proc.terminate()"
+    assert all(held is False for held in lock_states["kill"]), "Lock was held during proc.kill()"
+    assert all(held is False for held in lock_states["wait"]), "Lock was held during proc.wait()"
+
+    # Verify spawned process is reaped
+    assert mock_proc.poll() is not None, "Process was not reaped"
+
+    # Verify supervisor._process is None after cleanup
+    assert supervisor._process is None
+    assert supervisor.is_alive is False
+    assert supervisor.is_shutdown is True
+
+    # Verify mock_popen was called exactly once (no replacement worker created)
+    mock_popen.assert_called_once()
