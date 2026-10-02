@@ -165,10 +165,26 @@ class TestDesktopPresentationInvariants(unittest.TestCase):
         self.assertIsNotNone(container.export_controller)
         self.assertIsNotNone(container.export_package_service)
 
-        # Teardown
+        # Teardown: verify MathJax supervisor shuts down before controllers (ADR-002 D06)
+        teardown_order = []
+        orig_mathjax_shutdown = container.mathjax_supervisor.shutdown
+        orig_md_shutdown = container.markdown_viewer_controller.shutdown
+
+        def track_mathjax():
+            teardown_order.append("mathjax")
+            orig_mathjax_shutdown()
+
+        def track_md():
+            teardown_order.append("markdown_viewer")
+            orig_md_shutdown()
+
+        container.mathjax_supervisor.shutdown = track_mathjax
+        container.markdown_viewer_controller.shutdown = track_md
+
         container.shutdown()
         self.assertFalse(container.scheduler.is_running)
         self.assertFalse(container.runtime.is_running)
+        self.assertEqual(teardown_order, ["mathjax", "markdown_viewer"])
 
         temp_dir.cleanup()
 

@@ -77,6 +77,70 @@ def test_bootstrap_order(tmp_path: Path):
     assert call_order == expected_order
 
 
+def test_container_teardown_order(tmp_path: Path):
+    """
+    Verifies that DesktopAppContainer.shutdown() executes cooperative teardown
+    in the strictly approved dependency order (ADR-002 D06 / TICK-P07E):
+    1. mathjax_supervisor.shutdown() (aborts any in-flight RPCs immediately)
+    2. controllers shutdown (markdown_viewer, document_viewer, export)
+    3. scheduler.shutdown()
+    4. runtime.shutdown()
+    """
+    from unittest.mock import MagicMock
+
+    container = DesktopAppContainer(
+        db_path=tmp_path / "test_teardown.db",
+        artifacts_dir=tmp_path / "artifacts",
+        scheduler_tick_interval=100.0,
+    )
+
+    mock_md = MagicMock()
+    mock_doc = MagicMock()
+    mock_export = MagicMock()
+    container.markdown_viewer_controller = mock_md
+    container.document_viewer_controller = mock_doc
+    container.export_controller = mock_export
+
+    call_order: list[str] = []
+
+    def make_tracker(name: str, orig_fn):
+        def wrapper(*args, **kwargs):
+            call_order.append(name)
+            return orig_fn(*args, **kwargs)
+        return wrapper
+
+    container.mathjax_supervisor.shutdown = make_tracker(
+        "mathjax_supervisor", container.mathjax_supervisor.shutdown
+    )
+    mock_md.shutdown = make_tracker(
+        "markdown_viewer_controller", mock_md.shutdown
+    )
+    mock_doc.shutdown = make_tracker(
+        "document_viewer_controller", mock_doc.shutdown
+    )
+    mock_export.shutdown = make_tracker(
+        "export_controller", mock_export.shutdown
+    )
+    container.scheduler.shutdown = make_tracker(
+        "scheduler", container.scheduler.shutdown
+    )
+    container.runtime.shutdown = make_tracker(
+        "runtime", container.runtime.shutdown
+    )
+
+    container.shutdown()
+
+    expected_order = [
+        "mathjax_supervisor",
+        "markdown_viewer_controller",
+        "document_viewer_controller",
+        "export_controller",
+        "scheduler",
+        "runtime",
+    ]
+    assert call_order == expected_order
+
+
 def test_document_viewer_controller_wired(tmp_path: Path):
     """
     Verifies that DocumentViewerController is constructed with

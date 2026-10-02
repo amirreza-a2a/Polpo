@@ -13,10 +13,11 @@ import subprocess
 import sys
 import threading
 import time
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from application.ports.math_renderer import MathSupervisorShutdownError
 from infrastructure.math.mathjax_supervisor import (
     BoundedStderrBuffer,
     MathJaxProcessSupervisor,
@@ -25,6 +26,7 @@ from infrastructure.math.mathjax_supervisor import (
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
 SIGTERM_IGNORING_WORKER = FIXTURES_DIR / "sigterm_ignoring_worker.py"
 FLOOD_STDERR_WORKER = FIXTURES_DIR / "flood_stderr_worker.py"
+HUNG_WORKER_REQUEST = FIXTURES_DIR / "hung_worker_request.py"
 
 
 
@@ -532,3 +534,168 @@ def test_supervisor_has_no_qt_imports():
             mod_name = node.module or ""
             for prefix in forbidden:
                 assert not mod_name.startswith(prefix)
+
+
+# ==============================================================================
+# 7. Idempotent & Race-Safe Shutdown Lifecycle (TICK-P07E / ADR-002 D06)
+# ==============================================================================
+
+def test_double_shutdown_is_idempotent():
+    """Calling shutdown() multiple times is safe, idempotent, and raises no exceptions."""
+    supervisor = MathJaxProcessSupervisor(
+        node_path=sys.executable,
+        worker_script_path=FLOOD_STDERR_WORKER,
+        auto_start=True,
+    )
+    assert supervisor.is_alive is True
+    proc = supervisor._process
+    assert proc is not None
+
+    supervisor.shutdown()
+    assert supervisor._is_shutdown is True
+    assert supervisor.is_alive is False
+    assert supervisor._process is None
+    assert proc.poll() is not None
+
+    # Second shutdown must be a completely silent no-op without exceptions or state corruption
+    supervisor.shutdown()
+    assert supervisor._is_shutdown is True
+    assert supervisor.is_alive is False
+    assert supervisor._process is None
+
+
+def test_shutdown_before_startup_prevents_worker_spawn():
+    """Calling shutdown() on an unstarted supervisor permanently prevents worker spawn."""
+    supervisor = MathJaxProcessSupervisor(
+        node_path=sys.executable,
+        worker_script_path=FLOOD_STDERR_WORKER,
+        auto_start=False,
+    )
+    assert supervisor._process is None
+    assert supervisor.is_alive is False
+    assert supervisor._is_shutdown is False
+
+    supervisor.shutdown()
+    assert supervisor._is_shutdown is True
+    assert supervisor._process is None
+    assert supervisor.is_alive is False
+
+    # Subsequent RPC attempts must fail immediately with MathSupervisorShutdownError
+    with pytest.raises(MathSupervisorShutdownError) as exc_info:
+        supervisor.render("x + y")
+    assert "shut down" in exc_info.value.message
+    assert supervisor._process is None
+    assert supervisor.is_alive is False
+
+    with pytest.raises(MathSupervisorShutdownError):
+        supervisor.ping()
+    assert supervisor._process is None
+
+    with pytest.raises(MathSupervisorShutdownError):
+        supervisor.version()
+    assert supervisor._process is None
+
+
+def test_cleanup_after_active_worker_leaves_handles_closed_and_second_shutdown_noop():
+    """Active worker is cleanly reaped, streams closed, threads stopped, and second shutdown is no-op."""
+    supervisor = MathJaxProcessSupervisor(
+        node_path=sys.executable,
+        worker_script_path=FLOOD_STDERR_WORKER,
+        auto_start=True,
+    )
+    assert supervisor.is_alive is True
+    proc = supervisor._process
+    reader_thread = supervisor._stdout_reader_thread
+    stderr_thread = supervisor._stderr_drain_thread
+    assert proc is not None
+    assert reader_thread is not None
+    assert stderr_thread is not None
+
+    supervisor.shutdown()
+
+    # Verify process terminated
+    assert supervisor.is_alive is False
+    assert supervisor._process is None
+    assert proc.poll() is not None
+
+    # Verify pipes closed
+    assert proc.stdin is None or proc.stdin.closed
+    assert proc.stdout is None or proc.stdout.closed
+    assert proc.stderr is None or proc.stderr.closed
+
+    # Verify reader and drain threads stopped
+    assert not reader_thread.is_alive()
+    assert not stderr_thread.is_alive()
+    assert supervisor._stdout_reader_thread is None
+    assert supervisor._stderr_drain_thread is None
+    assert supervisor._response_queue is None
+
+    # Second shutdown call is a clean no-op
+    supervisor.shutdown()
+    assert supervisor.is_alive is False
+    assert supervisor._process is None
+
+
+def test_shutdown_after_worker_crash():
+    """Calling shutdown() after child worker crashed reaps handles and is idempotent."""
+    supervisor = MathJaxProcessSupervisor(
+        node_path=sys.executable,
+        worker_script_path=FLOOD_STDERR_WORKER,
+        auto_start=True,
+    )
+    assert supervisor.is_alive is True
+    proc = supervisor._process
+    assert proc is not None
+
+    # Forcibly kill worker process externally
+    proc.kill()
+    proc.wait(timeout=1.0)
+    assert supervisor.is_alive is False
+
+    # First shutdown cleans up handles
+    supervisor.shutdown()
+    assert supervisor._is_shutdown is True
+    assert supervisor._process is None
+    assert supervisor._response_queue is None
+
+    # Second shutdown is a safe no-op
+    supervisor.shutdown()
+    assert supervisor._is_shutdown is True
+    assert supervisor._process is None
+
+
+def test_spawn_shutdown_race_prevents_orphan_process():
+    """When shutdown occurs during process launch, newly created process is immediately reaped."""
+    supervisor = MathJaxProcessSupervisor(
+        node_path=sys.executable,
+        worker_script_path=FLOOD_STDERR_WORKER,
+        auto_start=False,
+    )
+
+    real_popen = subprocess.Popen
+    spawned_procs = []
+
+    def racing_popen(*args, **kwargs):
+        proc = real_popen(*args, **kwargs)
+        spawned_procs.append(proc)
+        # Simulate supervisor.shutdown() called by another thread during Popen execution
+        supervisor._is_shutdown = True
+        return proc
+
+    with pytest.raises(MathSupervisorShutdownError) as exc_info:
+        with supervisor._lock:
+            with patch("subprocess.Popen", side_effect=racing_popen):
+                supervisor._ensure_process_locked()
+
+    assert "shut down during spawn" in exc_info.value.message
+    assert supervisor._process is None
+    assert supervisor.is_alive is False
+    assert len(spawned_procs) == 1
+
+    # Verify spawned process was reaped and not orphaned
+    spawned_proc = spawned_procs[0]
+    try:
+        spawned_proc.wait(timeout=1.0)
+    except subprocess.TimeoutExpired:
+        pass
+    assert spawned_proc.poll() is not None, "Spawned process must be reaped during shutdown race"

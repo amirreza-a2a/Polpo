@@ -921,7 +921,17 @@ class MathJaxProcessSupervisor:
             }
 
     def shutdown(self) -> None:
-        """Terminate the child worker process and close open pipes."""
+        """Terminate the child worker process and close open pipes.
+
+        Implements single idempotent shutdown protocol (ADR-002 D06):
+        1. Set _is_shutdown = True and push _AbortSentinel to active response queue
+           outside the lock to immediately unblock any in-flight RPC requests.
+        2. Acquire lock and execute two-phase termination escalation and stream cleanup.
+        """
+        self._is_shutdown = True
+        q = self._response_queue
+        if q is not None:
+            q.put((self._process_generation, _AbortSentinel()))
+
         with self._lock:
-            self._is_shutdown = True
             self._cleanup_process_handles_locked(reason="SHUTDOWN")
