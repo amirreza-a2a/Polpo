@@ -513,3 +513,152 @@ def test_dispatch_rpc_captures_generation_and_spares_new_generation():
     # Supervisor retained Gen 2
     assert supervisor._process is mock_proc_gen2
     assert supervisor._process_generation == 2
+
+
+def test_respawn_cleanup_cannot_clear_new_process_generation():
+    """Verify that respawn cleanup for generation N cannot clear generation N+1 state or handles."""
+    supervisor = MathJaxProcessSupervisor()
+
+    mock_proc_gen1 = MagicMock()
+    mock_proc_gen1.pid = 3001
+    mock_proc_gen1.poll.return_value = -9
+    mock_proc_gen1.terminate = MagicMock()
+    mock_proc_gen1.kill = MagicMock()
+    mock_proc_gen1.wait = MagicMock(return_value=0)
+
+    mock_proc_gen2 = MagicMock()
+    mock_proc_gen2.pid = 4002
+    mock_proc_gen2.poll.return_value = None
+    mock_proc_gen2.terminate = MagicMock()
+    mock_proc_gen2.kill = MagicMock()
+    mock_proc_gen2.wait = MagicMock()
+
+    supervisor._process = mock_proc_gen1
+    supervisor._process_generation = 1
+    supervisor._response_queue = queue.Queue()
+    mock_reader_gen2 = MagicMock()
+    mock_drain_gen2 = MagicMock()
+
+    original_terminate = supervisor._terminate_process_outside_lock
+
+    def interleave_replacement(proc, reason="CLEANUP"):
+        original_terminate(proc, reason=reason)
+        if proc is mock_proc_gen1:
+            with supervisor._lock:
+                supervisor._process = mock_proc_gen2
+                supervisor._process_generation = 2
+                supervisor._response_queue = queue.Queue()
+                supervisor._stdout_reader_thread = mock_reader_gen2
+                supervisor._stderr_drain_thread = mock_drain_gen2
+
+    supervisor._terminate_process_outside_lock = MagicMock(side_effect=interleave_replacement)
+
+    with supervisor._lock:
+        returned_proc = supervisor._ensure_process_locked()
+
+    # Gen 1 termination was initiated during respawn
+    supervisor._terminate_process_outside_lock.assert_called_once_with(mock_proc_gen1, reason="RESPAWN")
+
+    # Gen 2 was NOT terminated or modified
+    mock_proc_gen2.terminate.assert_not_called()
+    mock_proc_gen2.kill.assert_not_called()
+    mock_proc_gen2.wait.assert_not_called()
+
+    # Supervisor returned Gen 2 and preserved all Gen 2 handles
+    assert returned_proc is mock_proc_gen2
+    assert supervisor._process is mock_proc_gen2
+    assert supervisor._process_generation == 2
+    assert supervisor._response_queue is not None
+    assert supervisor._stdout_reader_thread is mock_reader_gen2
+    assert supervisor._stderr_drain_thread is mock_drain_gen2
+
+
+def test_concurrent_respawn_only_one_owner_terminates_stale_process():
+    """Verify that concurrent callers observing a dead process coordinate via CV so only one terminates."""
+    supervisor = MathJaxProcessSupervisor()
+
+    mock_stale_proc = MagicMock()
+    mock_stale_proc.pid = 5001
+    mock_stale_proc.poll.return_value = -9
+    mock_stale_proc.terminate = MagicMock()
+    mock_stale_proc.kill = MagicMock()
+    mock_stale_proc.wait = MagicMock(return_value=0)
+
+    mock_new_proc = MagicMock()
+    mock_new_proc.pid = 5002
+    mock_new_proc.poll.return_value = None
+    mock_new_proc.stdin = MagicMock()
+    mock_new_proc.stdout = MagicMock()
+    mock_new_proc.stdout.readline = MagicMock(return_value="")
+    mock_new_proc.stderr = MagicMock()
+    mock_new_proc.stderr.readline = MagicMock(return_value="")
+
+    supervisor._process = mock_stale_proc
+    supervisor._process_generation = 1
+    supervisor._response_queue = queue.Queue()
+
+    t1_in_terminate = threading.Event()
+    t2_waiting_on_cv = threading.Event()
+    t1_can_proceed = threading.Event()
+
+    orig_terminate = supervisor._terminate_process_outside_lock
+
+    def spy_terminate(proc, reason="CLEANUP"):
+        if proc is mock_stale_proc:
+            t1_in_terminate.set()
+            t1_can_proceed.wait(timeout=5.0)
+        return orig_terminate(proc, reason=reason)
+
+    supervisor._terminate_process_outside_lock = MagicMock(side_effect=spy_terminate)
+
+    orig_wait = supervisor._state_cv.wait
+
+    def spy_wait(*args, **kwargs):
+        t2_waiting_on_cv.set()
+        return orig_wait(*args, **kwargs)
+
+    supervisor._state_cv.wait = spy_wait
+
+    results = {}
+    exceptions = []
+
+    def caller_thread(thread_id: str):
+        try:
+            with supervisor._lock:
+                proc = supervisor._ensure_process_locked()
+            results[thread_id] = proc
+        except Exception as e:
+            exceptions.append((thread_id, e))
+
+    with patch("subprocess.Popen", return_value=mock_new_proc) as mock_popen:
+        with patch.object(supervisor, "_perform_startup_handshake_locked"):
+            t1 = threading.Thread(target=caller_thread, args=("t1",))
+            t2 = threading.Thread(target=caller_thread, args=("t2",))
+
+            t1.start()
+            # Wait until T1 has claimed the stale process and is inside terminate outside lock
+            assert t1_in_terminate.wait(timeout=5.0), "T1 did not reach terminate"
+
+            # Now start T2, which must see self._respawning=True and wait on CV
+            t2.start()
+            assert t2_waiting_on_cv.wait(timeout=5.0), "T2 did not wait on condition variable"
+
+            # Allow T1 to proceed with termination and replacement spawn
+            t1_can_proceed.set()
+
+            t1.join(timeout=5.0)
+            t2.join(timeout=5.0)
+
+    assert exceptions == [], f"Unexpected exceptions: {exceptions}"
+    assert results.get("t1") is mock_new_proc
+    assert results.get("t2") is mock_new_proc
+
+    # Stale process terminated exactly once
+    supervisor._terminate_process_outside_lock.assert_called_once_with(mock_stale_proc, reason="RESPAWN")
+    # Popen called exactly once to spawn replacement
+    mock_popen.assert_called_once()
+
+    # Supervisor state is consistent
+    assert supervisor._process is mock_new_proc
+    assert supervisor._process_generation == 2
+    assert supervisor._respawning is False

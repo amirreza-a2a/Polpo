@@ -128,8 +128,6 @@ class BoundedStderrBuffer:
         """Append text to the buffer, evicting oldest data if capacity is exceeded."""
         if not text:
             return
-        if not isinstance(text, str):
-            text = str(text)
 
         with self._lock:
             encoded_len = len(text.encode("utf-8", errors="replace"))
@@ -167,7 +165,7 @@ class BoundedStderrBuffer:
     def get_content(self) -> str:
         """Return the complete retained stderr content as a single string."""
         with self._lock:
-            return "".join(str(s) for s in self._buffer)
+            return "".join(self._buffer)
 
     def clear(self) -> None:
         """Reset the buffer to empty."""
@@ -310,7 +308,7 @@ def _set_exc_process_identity(
     try:
         object.__setattr__(exc, "_failed_proc", proc)
         object.__setattr__(exc, "_failed_generation", gen)
-    except Exception:
+    except (AttributeError, TypeError):
         pass
 
 
@@ -396,6 +394,8 @@ class MathJaxProcessSupervisor:
 
         self._process: Optional[subprocess.Popen] = None
         self._lock: threading.Lock = threading.Lock()
+        self._state_cv: threading.Condition = threading.Condition(self._lock)
+        self._respawning: bool = False
         self._next_id: int = 1
         self._is_shutdown: bool = False
         self._stderr_buffer: BoundedStderrBuffer = BoundedStderrBuffer()
@@ -492,147 +492,178 @@ class MathJaxProcessSupervisor:
 
     def _ensure_process_locked(self) -> subprocess.Popen:
         """Ensure the child process is running, restarting with backoff if needed."""
-        if self._is_shutdown:
-            raise MathSupervisorShutdownError(
-                code=-32603,
-                message="MathJaxProcessSupervisor has been shut down.",
-            )
-
-        if self._process is not None:
-            is_healthy = False
-            try:
-                is_healthy = (self._process.poll() is None)
-            except (ProcessLookupError, OSError):
-                is_healthy = False
-
-            if is_healthy:
-                return self._process
-
-        stale_proc = self._process
-        if stale_proc is not None:
-            # Terminate and reap stale process outside supervisor lock (D03/D06)
-            lock_was_held = False
-            try:
-                self._lock.release()
-                lock_was_held = True
-            except RuntimeError:
-                lock_was_held = False
-
-            try:
-                self._terminate_process_outside_lock(stale_proc, reason="RESPAWN")
-            finally:
-                if lock_was_held:
-                    self._lock.acquire()
-
-            # Re-check shutdown status in case shutdown was called while lock was released
+        while True:
             if self._is_shutdown:
                 raise MathSupervisorShutdownError(
                     code=-32603,
                     message="MathJaxProcessSupervisor has been shut down.",
                 )
 
-            # Clean up stale process handles and confirm reaping under lock
-            self._cleanup_process_handles_locked(reason="RESPAWN")
+            # If another thread is currently respawning, wait for it to complete
+            if self._respawning:
+                self._state_cv.wait()
+                continue
 
-            # If the process could not be reaped (e.g. poll() keeps raising OSError or reap timed out),
-            # generic OSError does NOT prove reaping (D03). Do not discard reference or spawn replacement!
+            # Check if existing process is healthy
             if self._process is not None:
-                reap_exc = MathWorkerStartupError(
-                    code=-32603,
-                    message=(
-                        f"Cannot respawn worker: previous process (PID: {getattr(stale_proc, 'pid', None)}) "
-                        f"could not be reaped."
-                    ),
-                )
-                _set_exc_process_identity(reap_exc, stale_proc, self._process_generation)
-                raise reap_exc
+                is_healthy = False
+                try:
+                    is_healthy = (self._process.poll() is None)
+                except (ProcessLookupError, OSError):
+                    is_healthy = False
 
-        # Re-check circuit breaker state under supervisor lock (fail fast in O(1))
-        if self._circuit_breaker.state == CircuitBreakerState.OPEN:
-            raise MathCircuitBreakerOpenError(
-                code=-32603,
-                message="MathJax circuit breaker is OPEN",
-            )
+                if is_healthy:
+                    return self._process
 
-        node_path = self._resolve_node()
-        if not self._worker_script_path.is_file():
-            raise MathWorkerStartupError(
-                code=-32603,
-                message=f"MathJax worker script not found at {self._worker_script_path}",
-            )
+            break
 
-        popen_kwargs: Dict[str, Any] = {}
-        if sys.platform == "win32":
-            popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        # Claim the respawn lifecycle transition
+        self._respawning = True
+        stale_proc = self._process
+        stale_gen = self._process_generation
 
-        self._stderr_buffer = BoundedStderrBuffer()
-
-        # Re-check shutdown status immediately before process launch
-        if self._is_shutdown:
-            raise MathSupervisorShutdownError(
-                code=-32603,
-                message="MathJaxProcessSupervisor has been shut down.",
-            )
-
-        # Launch worker daemon directly with pipe I/O without shell
-        self._process = subprocess.Popen(
-            [str(node_path), str(self._worker_script_path)],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            bufsize=1,
-            shell=False,
-            **popen_kwargs,
-        )
-
-        # Re-check shutdown status to prevent spawn/shutdown race (ADR-002 D06)
-        if self._is_shutdown:
-            try:
-                self._process.kill()
-            except (ProcessLookupError, OSError):
-                pass
-            try:
-                self._process.wait(timeout=0.5)
-            except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
-                pass
-            self._cleanup_process_handles_locked(reason="SHUTDOWN_RACE")
-            raise MathSupervisorShutdownError(
-                code=-32603,
-                message="MathJaxProcessSupervisor was shut down during spawn.",
-            )
-
-        # Increment generation token and allocate dedicated response queue (ADR-002 D04)
-        self._process_generation += 1
-        current_gen = self._process_generation
-        current_queue: queue.Queue[Tuple[int, Any]] = queue.Queue()
-        self._response_queue = current_queue
-
-        self._stderr_drain_thread = threading.Thread(
-            target=self._drain_stderr,
-            args=(self._process, self._stderr_buffer),
-            name="MathJaxStderrDrain",
-            daemon=True,
-        )
-        self._stderr_drain_thread.start()
-
-        self._stdout_reader_thread = threading.Thread(
-            target=self._drain_stdout,
-            args=(self._process, current_queue, current_gen),
-            name=f"MathJaxStdoutReader-gen{current_gen}",
-            daemon=True,
-        )
-        self._stdout_reader_thread.start()
-
-        # Perform synchronous cold-start health handshake (ADR-002 D02)
         try:
-            self._perform_startup_handshake_locked(current_gen, current_queue)
-        except MathWorkerStartupError as handshake_exc:
-            _set_exc_process_identity(handshake_exc, self._process, current_gen)
-            raise
+            if stale_proc is not None:
+                # Terminate and reap stale process outside supervisor lock (D03/D06)
+                lock_was_held = False
+                try:
+                    self._lock.release()
+                    lock_was_held = True
+                except RuntimeError:
+                    lock_was_held = False
 
-        return self._process
+                try:
+                    self._terminate_process_outside_lock(stale_proc, reason="RESPAWN")
+                finally:
+                    if lock_was_held:
+                        self._lock.acquire()
+
+                # Re-check shutdown status in case shutdown was called while lock was released
+                if self._is_shutdown:
+                    raise MathSupervisorShutdownError(
+                        code=-32603,
+                        message="MathJaxProcessSupervisor has been shut down.",
+                    )
+
+                # Clean up stale process handles and confirm reaping under lock
+                self._cleanup_process_handles_locked(
+                    reason="RESPAWN",
+                    process=stale_proc,
+                    generation=stale_gen,
+                )
+
+                # If another lifecycle operation installed a replacement process while lock was released:
+                if self._process is not None and self._process is not stale_proc:
+                    is_healthy = False
+                    try:
+                        is_healthy = (self._process.poll() is None)
+                    except (ProcessLookupError, OSError):
+                        is_healthy = False
+                    if is_healthy:
+                        return self._process
+
+                # If the process could not be reaped (e.g. poll() keeps raising OSError or reap timed out),
+                # generic OSError does NOT prove reaping (D03). Do not discard reference or spawn replacement!
+                if self._process is not None and self._process is stale_proc:
+                    reap_exc = MathWorkerStartupError(
+                        code=-32603,
+                        message=(
+                            f"Cannot respawn worker: previous process (PID: {getattr(stale_proc, 'pid', None)}) "
+                            f"could not be reaped."
+                        ),
+                    )
+                    _set_exc_process_identity(reap_exc, stale_proc, stale_gen)
+                    raise reap_exc
+
+            # Re-check circuit breaker state under supervisor lock (fail fast in O(1))
+            if self._circuit_breaker.state == CircuitBreakerState.OPEN:
+                raise MathCircuitBreakerOpenError(
+                    code=-32603,
+                    message="MathJax circuit breaker is OPEN",
+                )
+
+            node_path = self._resolve_node()
+            if not self._worker_script_path.is_file():
+                raise MathWorkerStartupError(
+                    code=-32603,
+                    message=f"MathJax worker script not found at {self._worker_script_path}",
+                )
+
+            popen_kwargs: Dict[str, Any] = {}
+            if sys.platform == "win32":
+                popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
+            self._stderr_buffer = BoundedStderrBuffer()
+
+            # Re-check shutdown status immediately before process launch
+            if self._is_shutdown:
+                raise MathSupervisorShutdownError(
+                    code=-32603,
+                    message="MathJaxProcessSupervisor has been shut down.",
+                )
+
+            # Launch worker daemon directly with pipe I/O without shell
+            self._process = subprocess.Popen(
+                [str(node_path), str(self._worker_script_path)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                bufsize=1,
+                shell=False,
+                **popen_kwargs,
+            )
+
+            # Re-check shutdown status to prevent spawn/shutdown race (ADR-002 D06)
+            if self._is_shutdown:
+                try:
+                    self._process.kill()
+                except (ProcessLookupError, OSError):
+                    pass
+                try:
+                    self._process.wait(timeout=0.5)
+                except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
+                    pass
+                self._cleanup_process_handles_locked(reason="SHUTDOWN_RACE")
+                raise MathSupervisorShutdownError(
+                    code=-32603,
+                    message="MathJaxProcessSupervisor was shut down during spawn.",
+                )
+
+            # Increment generation token and allocate dedicated response queue (ADR-002 D04)
+            self._process_generation += 1
+            current_gen = self._process_generation
+            current_queue: queue.Queue[Tuple[int, Any]] = queue.Queue()
+            self._response_queue = current_queue
+
+            self._stderr_drain_thread = threading.Thread(
+                target=self._drain_stderr,
+                args=(self._process, self._stderr_buffer),
+                name="MathJaxStderrDrain",
+                daemon=True,
+            )
+            self._stderr_drain_thread.start()
+
+            self._stdout_reader_thread = threading.Thread(
+                target=self._drain_stdout,
+                args=(self._process, current_queue, current_gen),
+                name=f"MathJaxStdoutReader-gen{current_gen}",
+                daemon=True,
+            )
+            self._stdout_reader_thread.start()
+
+            # Perform synchronous cold-start health handshake (ADR-002 D02)
+            try:
+                self._perform_startup_handshake_locked(current_gen, current_queue)
+            except MathWorkerStartupError as handshake_exc:
+                _set_exc_process_identity(handshake_exc, self._process, current_gen)
+                raise
+
+            return self._process
+        finally:
+            self._respawning = False
+            self._state_cv.notify_all()
 
     def _perform_startup_handshake_locked(
         self,
@@ -839,26 +870,48 @@ class MathJaxProcessSupervisor:
         except (ProcessLookupError, OSError):
             pass
 
-    def _cleanup_process_handles_locked(self, reason: str = "CLEANUP") -> None:
-        """Close pipes, drain threads, and terminate abandoned process instances.
+    def _cleanup_process_handles_locked(
+        self,
+        reason: str = "CLEANUP",
+        process: Optional[subprocess.Popen] = None,
+        generation: Optional[int] = None,
+    ) -> None:
+        """Close pipes, drain threads, and clear reaped process handles under supervisor lock.
 
-        Implements the two-phase cross-platform termination escalation protocol (D03):
-        Phase 1: proc.terminate() with 0.5s wait.
-        Phase 2: proc.kill() with 0.5s reap if still alive.
+        If process/generation identity is specified, cleans state ONLY if the current
+        supervisor process and generation still match that exact identity.
+        If supervisor has already advanced to a newer generation, newer state and handles
+        are strictly preserved (ADR-002 D04/D06).
         """
-        if self._process is None:
+        target_proc = process if process is not None else self._process
+        if target_proc is None:
             return
-        proc = self._process
-        pid = getattr(proc, "pid", None)
 
-        # Close open stream pipes safely with narrow exception handling
+        # Close open stream pipes for the target process safely with narrow exception handling
         for stream_name in ("stdin", "stdout", "stderr"):
-            stream = getattr(proc, stream_name, None)
+            stream = getattr(target_proc, stream_name, None)
             if stream and not getattr(stream, "closed", True):
                 try:
                     stream.close()
                 except (OSError, ValueError):
                     pass
+
+        # Check if the supervisor's active process/generation still matches the target
+        matches_current = (
+            self._process is target_proc
+            and (generation is None or self._process_generation == generation)
+        )
+
+        if not matches_current:
+            logger.info(
+                "Skipping handle and thread cleanup for PID %s (gen %s) because supervisor has "
+                "already advanced to PID %s (gen %s)",
+                getattr(target_proc, "pid", None),
+                generation,
+                getattr(self._process, "pid", None),
+                self._process_generation,
+            )
+            return
 
         # Join the daemon drain and reader threads with a short bounded timeout if not shutting down
         if not self._is_shutdown:
@@ -875,8 +928,9 @@ class MathJaxProcessSupervisor:
         # Generic OSError does not prove reaping; retain self._process so subsequent
         # cleanup calls can retry process termination/reaping.
         is_reaped = False
+        pid = getattr(target_proc, "pid", None)
         try:
-            is_reaped = proc.poll() is not None
+            is_reaped = target_proc.poll() is not None
         except ProcessLookupError:
             is_reaped = True
         except OSError as exc:
@@ -1051,28 +1105,13 @@ class MathJaxProcessSupervisor:
             # Terminate and reap ONLY the failed process outside lock
             self._terminate_process_outside_lock(target_proc, reason=reason)
 
-            # Close target process stream pipes safely outside lock
-            for stream_name in ("stdin", "stdout", "stderr"):
-                stream = getattr(target_proc, stream_name, None)
-                if stream and not getattr(stream, "closed", True):
-                    try:
-                        stream.close()
-                    except (OSError, ValueError):
-                        pass
-
             # Acquire supervisor lock to clear handles ONLY if current process/generation matches
             with self._lock:
-                if self._process is target_proc and (target_gen is None or self._process_generation == target_gen):
-                    self._cleanup_process_handles_locked(reason=reason)
-                else:
-                    logger.info(
-                        "Skipping handle cleanup for process PID %s (gen %s) because supervisor has "
-                        "already advanced to process PID %s (gen %s)",
-                        getattr(target_proc, "pid", None),
-                        target_gen,
-                        getattr(self._process, "pid", None),
-                        self._process_generation,
-                    )
+                self._cleanup_process_handles_locked(
+                    reason=reason,
+                    process=target_proc,
+                    generation=target_gen,
+                )
 
     def _dispatch_rpc(self, method: str, params: Optional[Dict[str, Any]] = None) -> Any:
         """Dispatch an RPC request under supervisor lock, capturing process identity on failure."""
@@ -1260,6 +1299,7 @@ class MathJaxProcessSupervisor:
         # Clean up stream handles and confirm reaping under supervisor lock
         with self._lock:
             self._cleanup_process_handles_locked(reason="SHUTDOWN")
+            self._state_cv.notify_all()
 
         # Join daemon drain and reader threads with bounded timeout outside supervisor lock
         if drain_thread is not None and drain_thread.is_alive():
