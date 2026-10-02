@@ -511,6 +511,55 @@ def test_dequeuing_abort_sentinel_raises_math_supervisor_shutdown_error():
     assert "shut down" in exc_info.value.message
 
 
+def test_shutdown_unblocks_in_flight_rpc_immediately():
+    """Shutdown unblocks in-flight RPC immediately with MathSupervisorShutdownError without waiting out timeout."""
+    supervisor = MathJaxProcessSupervisor(
+        node_path=sys.executable,
+        worker_script_path=HUNG_WORKER_REQUEST,
+        request_timeout_seconds=5.0,
+        startup_timeout_seconds=5.0,
+        auto_start=True,
+    )
+    assert supervisor.is_alive is True
+
+    caught_exception: list[MathSupervisorShutdownError] = []
+    rpc_start_time: float = 0.0
+    rpc_end_time: float = 0.0
+
+    def call_render() -> None:
+        nonlocal rpc_start_time, rpc_end_time
+        rpc_start_time = time.monotonic()
+        try:
+            supervisor.render("x + y")
+        except MathSupervisorShutdownError as exc:
+            caught_exception.append(exc)
+        finally:
+            rpc_end_time = time.monotonic()
+
+    t = threading.Thread(target=call_render, daemon=True)
+    t.start()
+
+    # Wait briefly for render() to acquire lock, send request, and block in q.get()
+    time.sleep(0.2)
+    assert t.is_alive()
+
+    shutdown_start = time.monotonic()
+    supervisor.shutdown()
+    shutdown_duration = time.monotonic() - shutdown_start
+
+    t.join(timeout=2.0)
+    assert not t.is_alive(), "In-flight RPC thread must unblock and terminate immediately upon shutdown"
+
+    assert len(caught_exception) == 1
+    assert "shut down" in caught_exception[0].message
+    total_rpc_time = rpc_end_time - rpc_start_time
+    # Must unblock well before the 5.0s request timeout (typically < 1.0s)
+    assert total_rpc_time < 3.0
+    assert shutdown_duration < 2.0
+    assert supervisor._is_shutdown is True
+    assert supervisor._process is None
+
+
 def test_reader_thread_joined_on_shutdown():
     """Stdout reader daemon thread terminates and is joined within 0.2s on supervisor shutdown."""
     supervisor = MathJaxProcessSupervisor(

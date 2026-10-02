@@ -253,14 +253,21 @@ class DesktopAppContainer:
         self.start_runtime()
 
     def shutdown(self) -> None:
-        """Shuts down the desktop scheduler, runtime, and controllers, releasing resources."""
+        """Shuts down the desktop scheduler, runtime, and controllers, releasing resources.
+
+        Ordered teardown sequence (ADR-002 D06):
+        1. mathjax_supervisor.shutdown() is invoked first to unblock any in-flight
+           RPC requests waiting on worker responses with MathSupervisorShutdownError.
+        2. Controllers shut down their thread pools without waiting out RPC timeouts.
+        3. Scheduler and runtime shut down.
+        """
+        if hasattr(self, "mathjax_supervisor") and self.mathjax_supervisor:
+            self.mathjax_supervisor.shutdown()
         if hasattr(self, "markdown_viewer_controller") and self.markdown_viewer_controller:
             self.markdown_viewer_controller.shutdown()
         if hasattr(self, "document_viewer_controller") and self.document_viewer_controller:
             self.document_viewer_controller.shutdown()
         if hasattr(self, "export_controller") and self.export_controller:
             self.export_controller.shutdown()
-        if hasattr(self, "mathjax_supervisor") and self.mathjax_supervisor:
-            self.mathjax_supervisor.shutdown()
         self.scheduler.shutdown()
         self.runtime.shutdown()
