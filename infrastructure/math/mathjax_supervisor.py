@@ -13,13 +13,14 @@ import json
 import logging
 import math
 import os
+import queue
 import shutil
 import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from application.ports.math_renderer import (
     MathBufferLimitExceededError,
@@ -43,6 +44,21 @@ RESTART_WINDOW_SECONDS: float = 60.0
 DEFAULT_REQUEST_TIMEOUT_SECONDS: float = 5.0
 DEFAULT_STARTUP_TIMEOUT_SECONDS: float = 15.0
 WINDOWS_SHELL_SHIM_EXTENSIONS = {".cmd", ".bat", ".ps1"}
+
+
+class _Sentinel:
+    """Base sentinel type for internal supervisor queue signaling."""
+    pass
+
+
+class _EofSentinel(_Sentinel):
+    """Pushed by stdout reader thread when worker stdout closes (crash, exit, EOF)."""
+    pass
+
+
+class _AbortSentinel(_Sentinel):
+    """Pushed when supervisor is shutting down to wake up pending waiters immediately."""
+    pass
 
 
 class BoundedStderrBuffer:
@@ -308,6 +324,9 @@ class MathJaxProcessSupervisor:
         self._is_shutdown: bool = False
         self._stderr_buffer: BoundedStderrBuffer = BoundedStderrBuffer()
         self._stderr_drain_thread: Optional[threading.Thread] = None
+        self._process_generation: int = 0
+        self._response_queue: Optional[queue.Queue[Tuple[int, Any]]] = None
+        self._stdout_reader_thread: Optional[threading.Thread] = None
 
         atexit.register(self.shutdown)
 
@@ -328,6 +347,23 @@ class MathJaxProcessSupervisor:
                 buffer.append(line)
         except (OSError, ValueError):
             pass
+
+    def _drain_stdout(
+        self,
+        proc: subprocess.Popen,
+        q: queue.Queue[Tuple[int, Any]],
+        generation: int,
+    ) -> None:
+        """Continuously read stdout lines and push them to the response queue until EOF."""
+        try:
+            if proc.stdout is None:
+                return
+            for line in iter(proc.stdout.readline, ""):
+                q.put((generation, line))
+        except (OSError, ValueError):
+            pass
+        finally:
+            q.put((generation, _EofSentinel()))
 
     @property
     def request_timeout_seconds(self) -> float:
@@ -419,6 +455,20 @@ class MathJaxProcessSupervisor:
             **popen_kwargs,
         )
 
+        # Re-check shutdown status to prevent spawn/shutdown race (ADR-002 D06)
+        if self._is_shutdown:
+            self._cleanup_process_handles_locked(reason="SHUTDOWN_RACE")
+            raise MathSupervisorShutdownError(
+                code=-32603,
+                message="MathJaxProcessSupervisor was shut down during spawn.",
+            )
+
+        # Increment generation token and allocate dedicated response queue (ADR-002 D04)
+        self._process_generation += 1
+        current_gen = self._process_generation
+        current_queue: queue.Queue[Tuple[int, Any]] = queue.Queue()
+        self._response_queue = current_queue
+
         self._stderr_drain_thread = threading.Thread(
             target=self._drain_stderr,
             args=(self._process, self._stderr_buffer),
@@ -427,7 +477,131 @@ class MathJaxProcessSupervisor:
         )
         self._stderr_drain_thread.start()
 
+        self._stdout_reader_thread = threading.Thread(
+            target=self._drain_stdout,
+            args=(self._process, current_queue, current_gen),
+            name=f"MathJaxStdoutReader-gen{current_gen}",
+            daemon=True,
+        )
+        self._stdout_reader_thread.start()
+
+        # Perform synchronous cold-start health handshake (ADR-002 D02)
+        self._perform_startup_handshake_locked(current_gen, current_queue)
+
         return self._process
+
+    def _perform_startup_handshake_locked(
+        self,
+        expected_gen: int,
+        q: queue.Queue[Tuple[int, Any]],
+    ) -> None:
+        """Perform synchronous startup health handshake by sending 'ping' and awaiting 'pong'."""
+        assert self._process is not None
+        req_id = self._next_id
+        self._next_id += 1
+
+        payload = {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "method": "ping",
+        }
+
+        try:
+            assert self._process.stdin is not None
+            self._process.stdin.write(json.dumps(payload) + "\n")
+            self._process.stdin.flush()
+        except (BrokenPipeError, OSError) as write_err:
+            self._cleanup_process_handles_locked(reason="STARTUP_HANDSHAKE_WRITE_FAILED")
+            raise MathWorkerStartupError(
+                code=-32603,
+                message=f"Failed to send startup handshake ping to MathJax worker: {write_err}",
+            )
+
+        deadline = time.monotonic() + self._startup_timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                self._cleanup_process_handles_locked(reason="STARTUP_TIMEOUT")
+                raise MathWorkerStartupError(
+                    code=-32603,
+                    message=f"MathJax worker startup handshake timed out after {self._startup_timeout:.1f}s.",
+                )
+
+            try:
+                item = q.get(timeout=max(0.0, remaining))
+            except queue.Empty:
+                self._cleanup_process_handles_locked(reason="STARTUP_TIMEOUT")
+                raise MathWorkerStartupError(
+                    code=-32603,
+                    message=f"MathJax worker startup handshake timed out after {self._startup_timeout:.1f}s.",
+                )
+
+            gen, payload_item = item
+            if gen != expected_gen:
+                logger.warning(
+                    "Discarding response from stale generation %s during startup (expected %s)",
+                    gen,
+                    expected_gen,
+                )
+                continue
+
+            if isinstance(payload_item, _AbortSentinel):
+                raise MathSupervisorShutdownError(
+                    code=-32603,
+                    message="MathJaxProcessSupervisor has been shut down.",
+                )
+
+            if isinstance(payload_item, _EofSentinel):
+                stderr_diag = self._stderr_buffer.get_content().strip()
+                diag_suffix = f" Stderr: {stderr_diag}" if stderr_diag else ""
+                self._cleanup_process_handles_locked(reason="STARTUP_CRASH")
+                raise MathWorkerStartupError(
+                    code=-32603,
+                    message=f"MathJax worker process exited unexpectedly during startup handshake.{diag_suffix}",
+                )
+
+            assert isinstance(payload_item, str)
+            try:
+                response = json.loads(payload_item.strip())
+            except json.JSONDecodeError as decode_err:
+                self._cleanup_process_handles_locked(reason="STARTUP_INVALID_JSON")
+                raise MathWorkerStartupError(
+                    code=-32700,
+                    message=f"Invalid JSON received from MathJax worker during startup: {decode_err}",
+                )
+
+            if not isinstance(response, dict):
+                self._cleanup_process_handles_locked(reason="STARTUP_INVALID_RESPONSE")
+                raise MathWorkerStartupError(
+                    code=-32603,
+                    message="MathJax worker returned unexpected response type during startup handshake.",
+                )
+
+            if response.get("id") != req_id:
+                logger.warning(
+                    "Dropped mismatched JSON-RPC response ID during startup (expected %s, got %s)",
+                    req_id,
+                    response.get("id"),
+                )
+                continue
+
+            if "error" in response:
+                err = response["error"]
+                self._cleanup_process_handles_locked(reason="STARTUP_ERROR_RESPONSE")
+                raise MathWorkerStartupError(
+                    code=err.get("code", -32603),
+                    message=f"MathJax worker returned error during startup handshake: {err.get('message', '')}",
+                )
+
+            if response.get("result") != "pong":
+                self._cleanup_process_handles_locked(reason="STARTUP_UNEXPECTED_RESULT")
+                raise MathWorkerStartupError(
+                    code=-32603,
+                    message=f"MathJax worker startup handshake returned unexpected result: {response.get('result')!r}",
+                )
+
+            # Handshake successful
+            return
 
     def _cleanup_process_handles_locked(self, reason: str = "CLEANUP") -> None:
         """Close pipes, drain threads, and terminate abandoned process instances.
@@ -534,10 +708,14 @@ class MathJaxProcessSupervisor:
                 except (OSError, ValueError):
                     pass
 
-        # Join the daemon stderr drain thread with a short bounded timeout
+        # Join the daemon drain and reader threads with a short bounded timeout
         if self._stderr_drain_thread and self._stderr_drain_thread.is_alive():
             if threading.current_thread() != self._stderr_drain_thread:
                 self._stderr_drain_thread.join(timeout=0.2)
+
+        if self._stdout_reader_thread and self._stdout_reader_thread.is_alive():
+            if threading.current_thread() != self._stdout_reader_thread:
+                self._stdout_reader_thread.join(timeout=0.2)
 
         # Confirm process has been reaped before clearing process reference.
         # ProcessLookupError confirms the process is gone from the OS.
@@ -559,11 +737,16 @@ class MathJaxProcessSupervisor:
 
         if is_reaped:
             self._stderr_drain_thread = None
+            self._stdout_reader_thread = None
+            self._response_queue = None
             self._process = None
 
     def _call_rpc_locked(self, method: str, params: Optional[Dict[str, Any]] = None) -> Any:
         """Send a JSON-RPC 2.0 request and wait for the correlated response line."""
         proc = self._ensure_process_locked()
+        expected_gen = self._process_generation
+        q = self._response_queue
+        assert q is not None
 
         req_id = self._next_id
         self._next_id += 1
@@ -587,39 +770,81 @@ class MathJaxProcessSupervisor:
                 message=f"Failed to communicate with MathJax worker: {write_err}",
             )
 
-        assert proc.stdout is not None
-        resp_line = proc.stdout.readline()
-        if not resp_line:
-            stderr_output = self._stderr_buffer.get_content()
-            self._cleanup_process_handles_locked(reason="CRASHED")
-            raise MathWorkerCrashedError(
-                code=-32603,
-                message=f"MathJax worker process exited unexpectedly. Stderr: {stderr_output.strip()}",
-            )
+        deadline = time.monotonic() + self._request_timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                self._cleanup_process_handles_locked(reason="REQUEST_TIMEOUT")
+                raise MathRenderTimeoutError(
+                    code=-32603,
+                    message=f"MathJax RPC request '{method}' timed out after {self._request_timeout:.1f}s.",
+                )
 
-        try:
-            response = json.loads(resp_line.strip())
-        except json.JSONDecodeError as decode_err:
-            self._cleanup_process_handles_locked(reason="INVALID_JSON")
-            raise MathRenderError(
-                code=-32700,
-                message=f"Invalid JSON received from MathJax worker: {decode_err}",
-            )
+            try:
+                item = q.get(timeout=max(0.0, remaining))
+            except queue.Empty:
+                self._cleanup_process_handles_locked(reason="REQUEST_TIMEOUT")
+                raise MathRenderTimeoutError(
+                    code=-32603,
+                    message=f"MathJax RPC request '{method}' timed out after {self._request_timeout:.1f}s.",
+                )
 
-        if response.get("id") != req_id:
-            self._cleanup_process_handles_locked(reason="ID_MISMATCH")
-            raise MathRenderError(
-                code=-32603,
-                message=f"Request ID mismatch: expected {req_id}, got {response.get('id')}",
-            )
+            gen, payload_item = item
+            if gen != expected_gen:
+                logger.warning(
+                    "Discarding response from stale generation %s (expected %s)",
+                    gen,
+                    expected_gen,
+                )
+                continue
 
-        if "error" in response:
-            err = response["error"]
-            code = err.get("code", -32603)
-            message = err.get("message", "Unknown MathJax worker error")
-            raise _map_rpc_error_to_exception(code, message)
+            if isinstance(payload_item, _AbortSentinel):
+                raise MathSupervisorShutdownError(
+                    code=-32603,
+                    message="MathJaxProcessSupervisor has been shut down.",
+                )
 
-        return response.get("result")
+            if isinstance(payload_item, _EofSentinel):
+                stderr_diag = self._stderr_buffer.get_content().strip()
+                diag_suffix = f" Stderr: {stderr_diag}" if stderr_diag else ""
+                self._cleanup_process_handles_locked(reason="CRASHED")
+                raise MathWorkerCrashedError(
+                    code=-32603,
+                    message=f"MathJax worker process exited unexpectedly.{diag_suffix}",
+                )
+
+            assert isinstance(payload_item, str)
+            try:
+                response = json.loads(payload_item.strip())
+            except json.JSONDecodeError as decode_err:
+                self._cleanup_process_handles_locked(reason="INVALID_JSON")
+                raise MathRenderError(
+                    code=-32700,
+                    message=f"Invalid JSON received from MathJax worker: {decode_err}",
+                )
+
+            if not isinstance(response, dict):
+                self._cleanup_process_handles_locked(reason="INVALID_RESPONSE")
+                raise MathRenderError(
+                    code=-32603,
+                    message="MathJax worker returned unexpected response type.",
+                )
+
+            if response.get("id") != req_id:
+                logger.warning(
+                    "Dropped mismatched JSON-RPC response ID (expected %s, got %s)",
+                    req_id,
+                    response.get("id"),
+                )
+                continue
+
+            if "error" in response:
+                err = response["error"]
+                code = err.get("code", -32603)
+                message = err.get("message", "Unknown MathJax worker error")
+                raise _map_rpc_error_to_exception(code, message)
+
+            return response.get("result")
 
     def ping(self) -> bool:
         """Send a diagnostic ping request to verify worker connectivity."""

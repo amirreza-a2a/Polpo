@@ -9,6 +9,7 @@ import inspect
 import logging
 import math
 import os
+import queue
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -30,6 +31,7 @@ from infrastructure.math.mathjax_supervisor import (
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
     MathJaxProcessSupervisor,
+    _EofSentinel,
     _map_rpc_error_to_exception,
     _parse_timeout_env_var,
     resolve_node_executable,
@@ -344,16 +346,19 @@ def test_rpc_error_to_exception_mapping(code: int, message: str, expected_cls: t
 def test_supervisor_call_rpc_raises_mapped_exceptions():
     """Supervisor._call_rpc_locked transforms JSON-RPC error responses into mapped exception subclasses."""
     supervisor = MathJaxProcessSupervisor()
+    q: queue.Queue = queue.Queue()
+    supervisor._response_queue = q
+    supervisor._process_generation = 1
 
     mock_proc = MagicMock()
     mock_proc.poll.return_value = None
     mock_proc.stdin = MagicMock()
-    mock_proc.stdout = MagicMock()
 
     # 1. Test syntax error mapping
-    mock_proc.stdout.readline.return_value = (
-        '{"jsonrpc": "2.0", "id": 1, "error": {"code": -32602, "message": "Missing close brace"}}\n'
-    )
+    q.put((
+        1,
+        '{"jsonrpc": "2.0", "id": 1, "error": {"code": -32602, "message": "Missing close brace"}}\n',
+    ))
     with patch.object(supervisor, "_ensure_process_locked", return_value=mock_proc):
         with pytest.raises(MathSyntaxError) as exc_info:
             supervisor._call_rpc_locked("render", {"tex": r"\frac{1}{"})
@@ -362,9 +367,10 @@ def test_supervisor_call_rpc_raises_mapped_exceptions():
 
     # 2. Test buffer limit error mapping
     supervisor._next_id = 2
-    mock_proc.stdout.readline.return_value = (
-        '{"jsonrpc": "2.0", "id": 2, "error": {"code": -32600, "message": "Buffer limit exceeded: TeX length..."}}\n'
-    )
+    q.put((
+        1,
+        '{"jsonrpc": "2.0", "id": 2, "error": {"code": -32600, "message": "Buffer limit exceeded: TeX length..."}}\n',
+    ))
     with patch.object(supervisor, "_ensure_process_locked", return_value=mock_proc):
         with pytest.raises(MathBufferLimitExceededError) as exc_info:
             supervisor._call_rpc_locked("render", {"tex": "huge"})
@@ -372,10 +378,11 @@ def test_supervisor_call_rpc_raises_mapped_exceptions():
 
     # 3. Test params validation error mapping (base MathRenderError)
     supervisor._next_id = 3
-    mock_proc.stdout.readline.return_value = (
+    q.put((
+        1,
         '{"jsonrpc": "2.0", "id": 3, "error": {"code": -32602, "message": "Invalid params: '
-        'expected an object with \'tex\'"}}\n'
-    )
+        'expected an object with \'tex\'"}}\n',
+    ))
     with patch.object(supervisor, "_ensure_process_locked", return_value=mock_proc):
         with pytest.raises(MathRenderError) as exc_info:
             supervisor._call_rpc_locked("render", {})
@@ -417,13 +424,14 @@ def test_supervisor_shutdown_error_when_already_shut_down():
 def test_supervisor_crash_raises_math_worker_crashed_error():
     """Worker EOF / unexpected exit raises MathWorkerCrashedError."""
     supervisor = MathJaxProcessSupervisor()
+    q: queue.Queue = queue.Queue()
+    supervisor._response_queue = q
+    supervisor._process_generation = 1
+    q.put((1, _EofSentinel()))
+
     mock_proc = MagicMock()
     mock_proc.poll.return_value = None
     mock_proc.stdin = MagicMock()
-    mock_proc.stdout = MagicMock()
-    mock_proc.stdout.readline.return_value = ""  # EOF
-    mock_proc.stderr = MagicMock()
-    mock_proc.stderr.read.return_value = "Fatal worker crash"
 
     with patch.object(supervisor, "_ensure_process_locked", return_value=mock_proc):
         with pytest.raises(MathWorkerCrashedError) as exc_info:

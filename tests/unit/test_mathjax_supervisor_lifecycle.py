@@ -27,46 +27,6 @@ SIGTERM_IGNORING_WORKER = FIXTURES_DIR / "sigterm_ignoring_worker.py"
 FLOOD_STDERR_WORKER = FIXTURES_DIR / "flood_stderr_worker.py"
 
 
-def wait_for_stdout_line(
-    proc: subprocess.Popen,
-    expected: str = "READY\n",
-    timeout: float = 5.0,
-) -> str:
-    """Read a line from proc.stdout with a deadline to prevent indefinite test hangs.
-
-    Uses a daemon reader thread and queue to wait up to `timeout` seconds, failing
-    with a clear assertion rather than blocking forever if the fixture never signals ready.
-    """
-    assert proc.stdout is not None, "Worker stdout stream is not available"
-
-    line_queue: queue.Queue[tuple[str | None, Exception | None]] = queue.Queue()
-
-    def _reader() -> None:
-        try:
-            line = proc.stdout.readline()
-            line_queue.put((line, None))
-        except Exception as exc:
-            line_queue.put((None, exc))
-
-    reader_thread = threading.Thread(
-        target=_reader,
-        name="TestStdoutLineReader",
-        daemon=True,
-    )
-    reader_thread.start()
-
-    try:
-        line, exc = line_queue.get(timeout=timeout)
-    except queue.Empty:
-        pytest.fail(
-            f"Timed out after {timeout:.1f}s waiting for {expected!r} on worker stdout (PID: {proc.pid})"
-        )
-
-    if exc is not None:
-        raise exc
-
-    assert line == expected, f"Expected stdout line {expected!r}, got {line!r}"
-    return line
 
 
 # ==============================================================================
@@ -83,9 +43,6 @@ def test_cooperative_child_termination():
     assert supervisor.is_alive is True
     proc = supervisor._process
     assert proc is not None
-
-    # Wait until cooperative worker has installed its SIGTERM handler and signaled ready
-    wait_for_stdout_line(proc, expected="READY\n", timeout=5.0)
 
     # Track kill calls to verify cooperative termination does not escalate
     orig_kill = proc.kill
@@ -126,9 +83,6 @@ def test_sigterm_escalation_to_sigkill_on_hung_worker(caplog: pytest.LogCaptureF
     assert supervisor.is_alive is True
     proc = supervisor._process
     assert proc is not None
-
-    # Bounded wait until worker signals readiness
-    wait_for_stdout_line(proc, expected="READY\n", timeout=5.0)
 
     # Track terminate and kill calls
     orig_terminate = proc.terminate
@@ -178,9 +132,6 @@ def test_cleanup_preserves_process_on_second_phase_reap_timeout(caplog: pytest.L
     proc = supervisor._process
     assert proc is not None
     real_pid = proc.pid
-
-    # Ensure worker has started and emitted ready signal
-    wait_for_stdout_line(proc, expected="READY\n", timeout=5.0)
 
     # Mock wait to simulate second-phase reap timeout and poll returning None
     proc.wait = MagicMock(side_effect=subprocess.TimeoutExpired(cmd=["mock"], timeout=0.5))
@@ -241,8 +192,6 @@ def test_cleanup_preserves_process_when_final_poll_raises_generic_oserror(caplog
     proc = supervisor._process
     assert proc is not None
     real_pid = proc.pid
-
-    wait_for_stdout_line(proc, expected="READY\n", timeout=5.0)
 
     # Initial poll calls in cleanup check if alive (returns None).
     # Then after Phase 1 and 2, final reap confirmation poll raises generic OSError.
@@ -311,8 +260,6 @@ def test_terminate_failure_still_escalates_to_kill_if_process_alive(caplog: pyte
     proc = supervisor._process
     assert proc is not None
     real_pid = proc.pid
-
-    wait_for_stdout_line(proc, expected="READY\n", timeout=5.0)
 
     # Simulate terminate() failing with OSError
     proc.terminate = MagicMock(side_effect=OSError("Operation not permitted on SIGTERM"))
@@ -522,7 +469,7 @@ def test_flood_stderr_does_not_deadlock_and_buffer_is_bounded():
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
         content = supervisor.get_stderr_diagnostics()
-        if len(content.encode("utf-8")) > 1000:
+        if "[099" in content or "[0999]" in content:
             break
         time.sleep(0.05)
 
