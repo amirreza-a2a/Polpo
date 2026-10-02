@@ -12,12 +12,16 @@ from __future__ import annotations
 
 import logging
 import queue
-import subprocess
+import sys
 import threading
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
+FLOOD_STDERR_WORKER = FIXTURES_DIR / "flood_stderr_worker.py"
 
 from application.ports.math_renderer import (
     MathSupervisorShutdownError,
@@ -232,3 +236,171 @@ def test_silent_teardown_swallows_shutdown_error_without_logging_or_failure(capl
     assert dto is not None
     error_logs = [r for r in caplog.records if r.levelno >= logging.ERROR]
     assert len(error_logs) == 0
+
+
+# Test 6 — Concurrent shutdown from multiple threads
+def test_concurrent_simultaneous_shutdown_from_multiple_threads():
+    """Simultaneous shutdown() calls from multiple threads do not raise, deadlock, or corrupt state."""
+    supervisor = MathJaxProcessSupervisor()
+    mock_proc = MagicMock()
+    mock_proc.pid = 9999
+    mock_proc.poll.return_value = None
+
+    def mock_wait(timeout=None):
+        mock_proc.poll.return_value = 0
+        return 0
+
+    mock_proc.terminate = MagicMock()
+    mock_proc.kill = MagicMock()
+    mock_proc.wait = MagicMock(side_effect=mock_wait)
+
+    supervisor._process = mock_proc
+    supervisor._response_queue = queue.Queue()
+
+    thread_count = 10
+    barrier = threading.Barrier(thread_count)
+    exceptions = []
+
+    def worker():
+        try:
+            barrier.wait(timeout=5.0)
+            supervisor.shutdown()
+        except Exception as e:
+            exceptions.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(thread_count)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5.0)
+
+    # Verify:
+    # - no exception
+    assert exceptions == [], f"Unexpected exceptions during concurrent shutdown: {exceptions}"
+    # - no deadlock
+    assert all(not t.is_alive() for t in threads)
+    # - final process reference is None
+    assert supervisor._process is None
+    # - supervisor remains is_shutdown == True
+    assert supervisor.is_shutdown is True
+    assert supervisor.is_alive is False
+
+
+def test_concurrent_simultaneous_shutdown_with_real_process():
+    """Simultaneous shutdown() calls against a real worker process do not raise or deadlock."""
+    supervisor = MathJaxProcessSupervisor(
+        node_path=sys.executable,
+        worker_script_path=FLOOD_STDERR_WORKER,
+        auto_start=True,
+    )
+    assert supervisor.is_alive is True
+
+    thread_count = 8
+    barrier = threading.Barrier(thread_count)
+    exceptions = []
+
+    def worker():
+        try:
+            barrier.wait(timeout=5.0)
+            supervisor.shutdown()
+        except Exception as e:
+            exceptions.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(thread_count)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5.0)
+
+    assert exceptions == []
+    assert all(not t.is_alive() for t in threads)
+    assert supervisor._process is None
+    assert supervisor.is_shutdown is True
+    assert supervisor.is_alive is False
+
+
+# Test 7 — Deterministic lock-boundary observation
+def test_process_termination_never_executes_while_supervisor_lock_held():
+    """Verify that proc.terminate(), proc.kill(), and proc.wait() are never called while self._lock is held."""
+    supervisor = MathJaxProcessSupervisor()
+    mock_proc = MagicMock()
+    mock_proc.pid = 4321
+    mock_proc.poll.return_value = None
+
+    lock_states = {
+        "terminate": [],
+        "kill": [],
+        "wait": [],
+    }
+
+    def spy_terminate():
+        lock_states["terminate"].append(supervisor._lock.locked())
+
+    def spy_kill():
+        lock_states["kill"].append(supervisor._lock.locked())
+        mock_proc.poll.return_value = -9
+
+    def spy_wait(timeout=None):
+        lock_states["wait"].append(supervisor._lock.locked())
+        return -9
+
+    mock_proc.terminate = MagicMock(side_effect=spy_terminate)
+    mock_proc.kill = MagicMock(side_effect=spy_kill)
+    mock_proc.wait = MagicMock(side_effect=spy_wait)
+
+    supervisor._process = mock_proc
+    supervisor._response_queue = queue.Queue()
+
+    thread_join_lock_states = []
+    mock_reader = MagicMock()
+    mock_reader.is_alive.return_value = True
+
+    def spy_join(timeout=None):
+        thread_join_lock_states.append(supervisor._lock.locked())
+        mock_reader.is_alive.return_value = False
+
+    mock_reader.join = MagicMock(side_effect=spy_join)
+    supervisor._stdout_reader_thread = mock_reader
+
+    supervisor.shutdown()
+
+    # Verify terminate was called
+    assert len(lock_states["terminate"]) >= 1
+    # Verify lock was NOT held during terminate
+    assert all(held is False for held in lock_states["terminate"])
+
+    # Verify wait was called
+    assert len(lock_states["wait"]) >= 1
+    # Verify lock was NOT held during wait
+    assert all(held is False for held in lock_states["wait"])
+
+    # Verify lock was NOT held during kill (if kill was called)
+    assert all(held is False for held in lock_states["kill"])
+
+    # Verify thread joins happened outside lock
+    assert len(thread_join_lock_states) >= 1
+    assert all(held is False for held in thread_join_lock_states)
+
+    assert supervisor._process is None
+    assert supervisor.is_shutdown is True
+
+
+def test_cleanup_process_handles_locked_never_calls_terminate_kill_or_wait():
+    """_cleanup_process_handles_locked must strictly not call terminate(), kill(), or wait()."""
+    supervisor = MathJaxProcessSupervisor()
+    mock_proc = MagicMock()
+    mock_proc.pid = 1111
+    mock_proc.poll.return_value = 0
+
+    mock_proc.terminate = MagicMock()
+    mock_proc.kill = MagicMock()
+    mock_proc.wait = MagicMock()
+
+    supervisor._process = mock_proc
+
+    with supervisor._lock:
+        supervisor._cleanup_process_handles_locked(reason="TEST")
+
+    mock_proc.terminate.assert_not_called()
+    mock_proc.kill.assert_not_called()
+    mock_proc.wait.assert_not_called()

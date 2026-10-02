@@ -141,6 +141,7 @@ def test_cleanup_preserves_process_on_second_phase_reap_timeout(caplog: pytest.L
 
     try:
         with caplog.at_level(logging.WARNING):
+            supervisor._terminate_process_outside_lock(proc, reason="TEST_REAP_TIMEOUT")
             with supervisor._lock:
                 supervisor._cleanup_process_handles_locked(reason="TEST_REAP_TIMEOUT")
 
@@ -160,6 +161,7 @@ def test_cleanup_preserves_process_on_second_phase_reap_timeout(caplog: pytest.L
         proc.poll = MagicMock(return_value=0)
         proc.wait = MagicMock(return_value=0)
 
+        supervisor._terminate_process_outside_lock(proc, reason="RETRY_CLEANUP")
         with supervisor._lock:
             supervisor._cleanup_process_handles_locked(reason="RETRY_CLEANUP")
 
@@ -210,6 +212,7 @@ def test_cleanup_preserves_process_when_final_poll_raises_generic_oserror(caplog
 
     try:
         with caplog.at_level(logging.WARNING):
+            supervisor._terminate_process_outside_lock(proc, reason="TEST_POLL_OSERROR")
             with supervisor._lock:
                 supervisor._cleanup_process_handles_locked(reason="TEST_POLL_OSERROR")
 
@@ -228,6 +231,7 @@ def test_cleanup_preserves_process_when_final_poll_raises_generic_oserror(caplog
         proc.poll = MagicMock(return_value=0)
         proc.wait = MagicMock(return_value=0)
 
+        supervisor._terminate_process_outside_lock(proc, reason="RETRY_AFTER_OSERROR")
         with supervisor._lock:
             supervisor._cleanup_process_handles_locked(reason="RETRY_AFTER_OSERROR")
 
@@ -401,8 +405,7 @@ def test_cleanup_does_not_swallow_unexpected_broad_exceptions():
 
     try:
         with pytest.raises(TypeError, match="Unexpected programming bug"):
-            with supervisor._lock:
-                supervisor._cleanup_process_handles_locked()
+            supervisor._terminate_process_outside_lock(proc)
         # Assert process reference was not discarded prematurely
         assert supervisor._process is not None
         assert supervisor._process is proc
