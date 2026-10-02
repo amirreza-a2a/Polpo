@@ -126,20 +126,17 @@ def test_supervisor_rejects_oversized_tex_buffer():
 
 
 def test_supervisor_rate_limiting_prevents_crash_loop():
-    """Supervisor raises rate limit error when worker crashes more than 3 times in 1 minute."""
+    """Supervisor raises circuit breaker error when worker crashes more than 3 times in 1 minute."""
     supervisor = MathJaxProcessSupervisor()
-    # Simulate 3 recent restarts
-    supervisor._restart_timestamps = [
-        time.monotonic() - 10,
-        time.monotonic() - 5,
-        time.monotonic() - 1,
-    ]
+    # Trip circuit breaker by recording 3 recent failures
+    for _ in range(3):
+        supervisor.circuit_breaker.record_failure()
 
     with pytest.raises(MathCircuitBreakerOpenError) as exc_info:
         supervisor.render("x^2")
     assert isinstance(exc_info.value, MathRenderError)
     assert exc_info.value.code == -32603
-    assert "Restart rate limit exceeded" in str(exc_info.value)
+    assert "circuit breaker is OPEN" in str(exc_info.value)
 
 
 def test_client_cache_hit_bypasses_supervisor():
