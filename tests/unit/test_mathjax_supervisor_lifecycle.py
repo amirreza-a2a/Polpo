@@ -469,7 +469,7 @@ def test_flood_stderr_does_not_deadlock_and_buffer_is_bounded():
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
         content = supervisor.get_stderr_diagnostics()
-        if len(content.encode("utf-8")) > 1000:
+        if "[099" in content or "[0999]" in content:
             break
         time.sleep(0.05)
 
