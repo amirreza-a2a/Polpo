@@ -280,6 +280,146 @@ def test_late_worker_response_times_out_and_reaps_generation(caplog: pytest.LogC
     supervisor.shutdown()
 
 
+def test_generation_isolation_with_real_late_worker_subprocess(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    """Real subprocess lifecycle test: late response from generation 1 cannot satisfy generation 2.
+
+    Demonstrates:
+    Generation 1
+        ↓
+    send request
+        ↓
+    worker intentionally responds late (sleeps 0.5s > 0.2s timeout)
+        ↓
+    request timeout triggers MathRenderTimeoutError
+        ↓
+    P07C cleanup terminates/reaps generation 1
+        ↓
+    Generation 2 is created (queue_2, reader_2, process_generation=2)
+        ↓
+    send request on generation 2
+        ↓
+    late response from generation 1 must not satisfy request on generation 2.
+    """
+    marker_file = tmp_path / "gen1_marker.txt"
+    monkeypatch.setenv("POLPO_LATE_WORKER_MARKER_FILE", str(marker_file))
+    monkeypatch.setenv("POLPO_TEST_LATE_WORKER_DELAY", "0.5")
+
+    supervisor = MathJaxProcessSupervisor(
+        node_path=sys.executable,
+        worker_script_path=LATE_WORKER_RESPONSE,
+        request_timeout_seconds=0.2,
+        startup_timeout_seconds=5.0,
+        auto_start=True,
+    )
+    assert supervisor.is_alive is True
+    assert supervisor._process_generation == 1
+    q_gen1 = supervisor._response_queue
+    proc_gen1 = supervisor._process
+    reader_gen1 = supervisor._stdout_reader_thread
+    assert q_gen1 is not None
+    assert proc_gen1 is not None
+    assert reader_gen1 is not None
+
+    # Step 1: Request on Generation 1 times out because worker sleeps 0.5s > 0.2s
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(MathRenderTimeoutError) as exc_info:
+            supervisor.render("formula_1")
+
+    assert "timed out after 0.2s" in exc_info.value.message
+    # Generation 1 is cleaned up and reaped
+    assert supervisor.is_alive is False
+    assert supervisor._process is None
+
+    # Step 2: Request on Generation 2 spawns a new process, new queue, new reader
+    result_gen2 = supervisor.render("formula_2")
+
+    # Assert Generation 2 properties
+    assert supervisor.is_alive is True
+    assert supervisor._process_generation == 2
+    q_gen2 = supervisor._response_queue
+    proc_gen2 = supervisor._process
+    reader_gen2 = supervisor._stdout_reader_thread
+    assert q_gen2 is not None
+    assert q_gen2 is not q_gen1, "Generation 2 must allocate its own dedicated response queue"
+    assert proc_gen2 is not proc_gen1, "Generation 2 must be a distinct process instance"
+    assert reader_gen2 is not reader_gen1, "Generation 2 must have its own reader thread"
+
+    # Step 3: Verify the result was produced by Generation 2's request (ID 4), NOT Generation 1 (ID 2)
+    assert "response-id-4" in result_gen2["svg_xml"]
+    assert "response-id-2" not in result_gen2["svg_xml"]
+
+    # Step 4: Verify that if worker 1 wrote its late response, it entered q_gen1, never q_gen2
+    time.sleep(0.4)
+    while not q_gen2.empty():
+        item_gen, _ = q_gen2.get_nowait()
+        assert item_gen == 2, f"Item from generation {item_gen} leaked into generation 2 queue!"
+
+    supervisor.shutdown()
+
+
+def test_stale_reader_and_eof_sentinel_cannot_corrupt_new_generation():
+    """Old generation reader and its _EofSentinel never pollute or terminate the new generation."""
+    supervisor = MathJaxProcessSupervisor()
+
+    # Simulate Generation 1
+    q1: queue.Queue = queue.Queue()
+    supervisor._response_queue = q1
+    supervisor._process_generation = 1
+
+    # Simulate Generation 2 starting
+    q2: queue.Queue = queue.Queue()
+    supervisor._response_queue = q2
+    supervisor._process_generation = 2
+
+    # Old reader for generation 1 pushes late response and EOF sentinel into q1
+    q1.put((1, '{"jsonrpc": "2.0", "id": 1, "result": "stale-gen1"}\n'))
+    q1.put((1, _EofSentinel()))
+
+    # Generation 2's queue q2 receives its own response
+    q2.put((2, '{"jsonrpc": "2.0", "id": 1, "result": "fresh-gen2"}\n'))
+
+    mock_proc = MagicMock()
+    mock_proc.poll.return_value = None
+    mock_proc.stdin = MagicMock()
+
+    with patch.object(supervisor, "_ensure_process_locked", return_value=mock_proc):
+        result = supervisor._call_rpc_locked("render", {"tex": "x"})
+
+    assert result == "fresh-gen2"
+    assert q1.qsize() == 2
+
+
+def test_stale_eof_sentinel_in_current_queue_is_discarded(caplog: pytest.LogCaptureFixture):
+    """Stale _EofSentinel from an earlier generation is safely discarded and does not crash."""
+    supervisor = MathJaxProcessSupervisor()
+    q: queue.Queue = queue.Queue()
+    supervisor._response_queue = q
+    supervisor._process_generation = 2
+
+    # Stale EOF sentinel from generation 1 in queue, followed by valid generation 2 response
+    q.put((1, _EofSentinel()))
+    q.put((2, '{"jsonrpc": "2.0", "id": 1, "result": "gen2-ok"}\n'))
+
+    mock_proc = MagicMock()
+    mock_proc.poll.return_value = None
+    mock_proc.stdin = MagicMock()
+
+    with caplog.at_level(logging.WARNING):
+        with patch.object(supervisor, "_ensure_process_locked", return_value=mock_proc):
+            result = supervisor._call_rpc_locked("render", {"tex": "x"})
+
+    assert result == "gen2-ok"
+    stale_logs = [
+        rec.message for rec in caplog.records
+        if "Discarding response from stale generation 1 (expected 2)" in rec.message
+    ]
+    assert len(stale_logs) == 1
+
+
 # ==============================================================================
 # 5. JSON-RPC Correlation ID Verification (ADR-002 D04)
 # ==============================================================================
@@ -362,6 +502,23 @@ def test_reader_thread_joined_on_shutdown():
 
     assert reader_thread.is_alive() is False
     assert elapsed < 1.0
+
+
+def test_cleanup_bounded_reader_thread_join():
+    """Cleanup joins stdout reader thread with a bounded 0.2s timeout."""
+    supervisor = MathJaxProcessSupervisor()
+    mock_proc = MagicMock()
+    mock_proc.poll.return_value = 0
+    supervisor._process = mock_proc
+
+    mock_reader = MagicMock()
+    mock_reader.is_alive.return_value = True
+    supervisor._stdout_reader_thread = mock_reader
+
+    with supervisor._lock:
+        supervisor._cleanup_process_handles_locked(reason="TEST")
+
+    mock_reader.join.assert_called_once_with(timeout=0.2)
 
 
 # ==============================================================================

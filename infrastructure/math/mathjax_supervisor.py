@@ -922,10 +922,6 @@ class MathJaxProcessSupervisor:
 
     def shutdown(self) -> None:
         """Terminate the child worker process and close open pipes."""
-        self._is_shutdown = True
-        q = self._response_queue
-        if q is not None:
-            q.put((self._process_generation, _AbortSentinel()))
-
         with self._lock:
+            self._is_shutdown = True
             self._cleanup_process_handles_locked(reason="SHUTDOWN")
