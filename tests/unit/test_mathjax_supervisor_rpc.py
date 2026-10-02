@@ -581,7 +581,7 @@ def test_reader_thread_joined_on_shutdown():
 
 
 def test_cleanup_bounded_reader_thread_join():
-    """Cleanup joins stdout reader thread with a bounded 0.2s timeout."""
+    """Shutdown joins stdout reader thread with a bounded 0.2s timeout outside supervisor lock."""
     supervisor = MathJaxProcessSupervisor()
     mock_proc = MagicMock()
     mock_proc.poll.return_value = 0
@@ -591,8 +591,7 @@ def test_cleanup_bounded_reader_thread_join():
     mock_reader.is_alive.return_value = True
     supervisor._stdout_reader_thread = mock_reader
 
-    with supervisor._lock:
-        supervisor._cleanup_process_handles_locked(reason="TEST")
+    supervisor.shutdown()
 
     mock_reader.join.assert_called_once_with(timeout=0.2)
 

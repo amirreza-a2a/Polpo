@@ -387,7 +387,7 @@ def test_process_termination_never_executes_while_supervisor_lock_held():
 
 
 def test_cleanup_process_handles_locked_never_calls_terminate_kill_or_wait():
-    """_cleanup_process_handles_locked must strictly not call terminate(), kill(), or wait()."""
+    """_cleanup_process_handles_locked must strictly not call terminate(), kill(), wait(), or thread.join()."""
     supervisor = MathJaxProcessSupervisor()
     mock_proc = MagicMock()
     mock_proc.pid = 1111
@@ -397,6 +397,10 @@ def test_cleanup_process_handles_locked_never_calls_terminate_kill_or_wait():
     mock_proc.kill = MagicMock()
     mock_proc.wait = MagicMock()
 
+    mock_reader = MagicMock()
+    mock_drain = MagicMock()
+    supervisor._stdout_reader_thread = mock_reader
+    supervisor._stderr_drain_thread = mock_drain
     supervisor._process = mock_proc
 
     with supervisor._lock:
@@ -405,6 +409,8 @@ def test_cleanup_process_handles_locked_never_calls_terminate_kill_or_wait():
     mock_proc.terminate.assert_not_called()
     mock_proc.kill.assert_not_called()
     mock_proc.wait.assert_not_called()
+    mock_reader.join.assert_not_called()
+    mock_drain.join.assert_not_called()
 
 
 def test_rpc_failure_cannot_terminate_new_process_generation():
@@ -662,3 +668,162 @@ def test_concurrent_respawn_only_one_owner_terminates_stale_process():
     assert supervisor._process is mock_new_proc
     assert supervisor._process_generation == 2
     assert supervisor._respawning is False
+
+
+def test_shutdown_wakes_waiting_thread_when_processless_respawn_active():
+    """Verify that shutdown() wakes threads waiting on CV even when process=None and response_queue=None."""
+    supervisor = MathJaxProcessSupervisor()
+    assert supervisor._process is None
+    assert supervisor._response_queue is None
+
+    # Simulate an active respawn transition before Popen assigns process/queue
+    supervisor._respawning = True
+
+    waiting_on_cv = threading.Event()
+    orig_wait = supervisor._state_cv.wait
+
+    def spy_wait(*args, **kwargs):
+        waiting_on_cv.set()
+        return orig_wait(*args, **kwargs)
+
+    supervisor._state_cv.wait = spy_wait
+
+    thread_error = []
+
+    def caller_thread():
+        try:
+            with supervisor._lock:
+                supervisor._ensure_process_locked()
+        except Exception as e:
+            thread_error.append(e)
+
+    t = threading.Thread(target=caller_thread)
+    t.start()
+
+    # Deterministically ensure caller_thread is waiting on state_cv
+    assert waiting_on_cv.wait(timeout=5.0), "Thread did not enter state_cv.wait"
+
+    # Invariants before shutdown:
+    assert supervisor._respawning is True
+    assert supervisor._process is None
+    assert supervisor._response_queue is None
+
+    # Trigger shutdown from a different thread
+    supervisor.shutdown()
+
+    # Caller thread must wake up and exit immediately
+    t.join(timeout=2.0)
+    assert not t.is_alive(), "Waiting thread was stranded after shutdown"
+    assert len(thread_error) == 1
+    assert isinstance(thread_error[0], MathSupervisorShutdownError)
+    assert supervisor.is_shutdown is True
+
+
+def test_rpc_failure_does_not_expose_terminating_process_as_healthy():
+    """Verify that an RPC-failed worker is never treated as healthy while teardown is in progress."""
+    supervisor = MathJaxProcessSupervisor()
+
+    mock_proc_gen1 = MagicMock()
+    mock_proc_gen1.pid = 7001
+    mock_proc_gen1.poll.return_value = None  # Process appears alive to OS poll()
+    mock_proc_gen1.terminate = MagicMock()
+    mock_proc_gen1.kill = MagicMock()
+    mock_proc_gen1.wait = MagicMock(return_value=0)
+
+    mock_proc_gen2 = MagicMock()
+    mock_proc_gen2.pid = 7002
+    mock_proc_gen2.poll.return_value = None
+    mock_proc_gen2.stdin = MagicMock()
+    mock_proc_gen2.stdout = MagicMock()
+    mock_proc_gen2.stdout.readline = MagicMock(return_value="")
+    mock_proc_gen2.stderr = MagicMock()
+    mock_proc_gen2.stderr.readline = MagicMock(return_value="")
+
+    supervisor._process = mock_proc_gen1
+    supervisor._process_generation = 1
+    supervisor._response_queue = queue.Queue()
+
+    t1_in_terminate = threading.Event()
+    t2_waiting_on_cv = threading.Event()
+    t1_can_proceed = threading.Event()
+
+    orig_terminate = supervisor._terminate_process_outside_lock
+
+    def spy_terminate(proc, reason="CLEANUP"):
+        if proc is mock_proc_gen1 and reason == "REQUEST_TIMEOUT":
+            t1_in_terminate.set()
+            assert t1_can_proceed.wait(timeout=5.0), "Timeout waiting for t1_can_proceed"
+            mock_proc_gen1.poll.return_value = -9
+        return orig_terminate(proc, reason=reason)
+
+    supervisor._terminate_process_outside_lock = MagicMock(side_effect=spy_terminate)
+
+    orig_wait = supervisor._state_cv.wait
+
+    def spy_wait(*args, **kwargs):
+        t2_waiting_on_cv.set()
+        return orig_wait(*args, **kwargs)
+
+    supervisor._state_cv.wait = spy_wait
+
+    t1_error = []
+    t2_result = []
+
+    def failing_rpc_thread():
+        try:
+            def mock_call_rpc(method, params=None):
+                timeout_exc = MathRenderTimeoutError(code=-32603, message="Timeout on Gen 1")
+                object.__setattr__(timeout_exc, "_failed_proc", mock_proc_gen1)
+                object.__setattr__(timeout_exc, "_failed_generation", 1)
+                raise timeout_exc
+
+            with patch.object(supervisor, "_call_rpc_locked", side_effect=mock_call_rpc):
+                supervisor._dispatch_rpc("render", {"tex": "x"})
+        except Exception as e:
+            t1_error.append(e)
+
+    def concurrent_caller_thread():
+        try:
+            with supervisor._lock:
+                proc = supervisor._ensure_process_locked()
+            t2_result.append(proc)
+        except Exception as e:
+            t2_result.append(e)
+
+    with patch("subprocess.Popen", return_value=mock_proc_gen2) as mock_popen:
+        with patch.object(supervisor, "_perform_startup_handshake_locked"):
+            t1 = threading.Thread(target=failing_rpc_thread)
+            t2 = threading.Thread(target=concurrent_caller_thread)
+
+            t1.start()
+
+            # 1. Wait until Gen 1 failure handler begins out-of-lock process termination
+            assert t1_in_terminate.wait(timeout=5.0), "T1 did not reach terminate"
+
+            # 2. Concurrent caller attempts _ensure_process_locked() while Gen 1 is terminating
+            t2.start()
+
+            # 3. Verify T2 does NOT receive mock_proc_gen1 as healthy, but instead waits on CV
+            assert t2_waiting_on_cv.wait(timeout=5.0), "T2 did not wait on CV while Gen 1 was terminating"
+            assert len(t2_result) == 0, "T2 must not have returned while Gen 1 is terminating"
+
+            # 4. Now let T1 complete out-of-lock termination and cleanup
+            t1_can_proceed.set()
+
+            t1.join(timeout=5.0)
+            t2.join(timeout=5.0)
+
+    # 5. Verify T1 raised MathRenderTimeoutError
+    assert len(t1_error) == 1
+    assert isinstance(t1_error[0], MathRenderTimeoutError)
+
+    # 6. Verify T2 did NOT receive mock_proc_gen1, but performed coordinated replacement and received Gen 2
+    assert len(t2_result) == 1
+    assert t2_result[0] is mock_proc_gen2
+    assert t2_result[0] is not mock_proc_gen1
+
+    # 7. Verify Gen 1 was terminated and Gen 2 remains intact
+    supervisor._terminate_process_outside_lock.assert_called_once_with(mock_proc_gen1, reason="REQUEST_TIMEOUT")
+    mock_popen.assert_called_once()
+    assert supervisor._process is mock_proc_gen2
+    assert supervisor._process_generation == 2

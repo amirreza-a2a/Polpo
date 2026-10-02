@@ -396,6 +396,7 @@ class MathJaxProcessSupervisor:
         self._lock: threading.Lock = threading.Lock()
         self._state_cv: threading.Condition = threading.Condition(self._lock)
         self._respawning: bool = False
+        self._respawn_owner_thread_id: Optional[int] = None
         self._next_id: int = 1
         self._is_shutdown: bool = False
         self._stderr_buffer: BoundedStderrBuffer = BoundedStderrBuffer()
@@ -519,6 +520,7 @@ class MathJaxProcessSupervisor:
 
         # Claim the respawn lifecycle transition
         self._respawning = True
+        self._respawn_owner_thread_id = threading.get_ident()
         stale_proc = self._process
         stale_gen = self._process_generation
 
@@ -663,6 +665,7 @@ class MathJaxProcessSupervisor:
             return self._process
         finally:
             self._respawning = False
+            self._respawn_owner_thread_id = None
             self._state_cv.notify_all()
 
     def _perform_startup_handshake_locked(
@@ -913,16 +916,6 @@ class MathJaxProcessSupervisor:
             )
             return
 
-        # Join the daemon drain and reader threads with a short bounded timeout if not shutting down
-        if not self._is_shutdown:
-            if self._stderr_drain_thread and self._stderr_drain_thread.is_alive():
-                if threading.current_thread() != self._stderr_drain_thread:
-                    self._stderr_drain_thread.join(timeout=0.2)
-
-            if self._stdout_reader_thread and self._stdout_reader_thread.is_alive():
-                if threading.current_thread() != self._stdout_reader_thread:
-                    self._stdout_reader_thread.join(timeout=0.2)
-
         # Confirm process has been reaped before clearing process reference.
         # ProcessLookupError confirms the process is gone from the OS.
         # Generic OSError does not prove reaping; retain self._process so subsequent
@@ -1096,22 +1089,37 @@ class MathJaxProcessSupervisor:
         target_proc = proc if proc is not None else getattr(exc, "_failed_proc", None)
         target_gen = generation if generation is not None else getattr(exc, "_failed_generation", None)
 
-        if target_proc is None and target_gen is None:
-            with self._lock:
+        claimed_respawn = False
+        with self._lock:
+            if target_proc is None and target_gen is None:
                 target_proc = self._process
                 target_gen = self._process_generation
+            if target_proc is not None and self._process is target_proc:
+                if not self._respawning:
+                    self._respawning = True
+                self._respawn_owner_thread_id = threading.get_ident()
+                claimed_respawn = True
+            elif self._respawning and self._respawn_owner_thread_id == threading.get_ident():
+                claimed_respawn = True
 
-        if target_proc is not None:
-            # Terminate and reap ONLY the failed process outside lock
-            self._terminate_process_outside_lock(target_proc, reason=reason)
+        try:
+            if target_proc is not None:
+                # Terminate and reap ONLY the failed process outside lock
+                self._terminate_process_outside_lock(target_proc, reason=reason)
 
-            # Acquire supervisor lock to clear handles ONLY if current process/generation matches
-            with self._lock:
-                self._cleanup_process_handles_locked(
-                    reason=reason,
-                    process=target_proc,
-                    generation=target_gen,
-                )
+                # Acquire supervisor lock to clear handles ONLY if current process/generation matches
+                with self._lock:
+                    self._cleanup_process_handles_locked(
+                        reason=reason,
+                        process=target_proc,
+                        generation=target_gen,
+                    )
+        finally:
+            if claimed_respawn:
+                with self._lock:
+                    self._respawning = False
+                    self._respawn_owner_thread_id = None
+                    self._state_cv.notify_all()
 
     def _dispatch_rpc(self, method: str, params: Optional[Dict[str, Any]] = None) -> Any:
         """Dispatch an RPC request under supervisor lock, capturing process identity on failure."""
@@ -1124,6 +1132,9 @@ class MathJaxProcessSupervisor:
                 except (MathWorkerStartupError, MathRenderTimeoutError, MathWorkerCrashedError) as rpc_exc:
                     failed_proc = getattr(rpc_exc, "_failed_proc", self._process)
                     failed_gen = getattr(rpc_exc, "_failed_generation", self._process_generation)
+                    if failed_proc is not None and self._process is failed_proc:
+                        self._respawning = True
+                        self._respawn_owner_thread_id = threading.get_ident()
                     raise
         except (MathWorkerStartupError, MathRenderTimeoutError, MathWorkerCrashedError) as exc:
             self._handle_rpc_exception(exc, proc=failed_proc, generation=failed_gen)
@@ -1278,8 +1289,8 @@ class MathJaxProcessSupervisor:
         drain_thread = self._stderr_drain_thread
         reader_thread = self._stdout_reader_thread
 
-        # If already cleanly shut down (process and queue are None), fast no-op
-        if proc is None and q is None:
+        # If already cleanly shut down (process and queue are None and not respawning), fast no-op
+        if proc is None and q is None and not self._respawning:
             if hasattr(self._circuit_breaker, "release_probe"):
                 self._circuit_breaker.release_probe()
             return
@@ -1296,8 +1307,13 @@ class MathJaxProcessSupervisor:
         if proc is not None:
             self._terminate_process_outside_lock(proc, reason="SHUTDOWN")
 
-        # Clean up stream handles and confirm reaping under supervisor lock
-        with self._lock:
+        # Clean up stream handles and wake condition variable waiters under supervisor lock
+        is_reentrant = (self._respawn_owner_thread_id == threading.get_ident())
+        if not is_reentrant:
+            with self._lock:
+                self._cleanup_process_handles_locked(reason="SHUTDOWN")
+                self._state_cv.notify_all()
+        else:
             self._cleanup_process_handles_locked(reason="SHUTDOWN")
             self._state_cv.notify_all()
 
