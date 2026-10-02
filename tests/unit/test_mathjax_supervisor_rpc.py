@@ -298,13 +298,13 @@ def test_generation_isolation_with_real_late_worker_subprocess(
         ↓
     P07C cleanup initiates termination escalation and reaps generation 1
         ↓
-    late response from generation 1 enters q_gen1 with generation token 1
-        ↓
     Generation 2 is created (queue_2, reader_2, process_generation=2)
         ↓
-    send request on generation 2
+    send request on generation 2 -> returns prompt Generation 2 response
         ↓
-    late response from generation 1 must not satisfy request on generation 2.
+    stale response from generation 1 remains in q_gen1 and is observed after Generation 2 is active
+        ↓
+    late response from generation 1 must not satisfy request on generation 2 or enter q_gen2.
     """
     marker_file = tmp_path / "gen1_marker.txt"
     monkeypatch.setenv("POLPO_LATE_WORKER_MARKER_FILE", str(marker_file))
@@ -342,23 +342,7 @@ def test_generation_isolation_with_real_late_worker_subprocess(
     assert supervisor.is_alive is False
     assert supervisor._process is None
 
-    # Step 2: Explicitly verify that Generation 1's delayed response arrives in q_gen1
-    observed_gen1_response = None
-    deadline = time.monotonic() + 3.0
-    while time.monotonic() < deadline:
-        try:
-            item_gen, item_payload = q_gen1.get(timeout=0.1)
-            if item_gen == 1 and isinstance(item_payload, str) and "response-id-2" in item_payload:
-                observed_gen1_response = item_payload
-                break
-        except queue.Empty:
-            continue
-
-    assert observed_gen1_response is not None, (
-        "Generation 1 delayed response with 'response-id-2' was never observed in q_gen1"
-    )
-
-    # Step 3: Request on Generation 2 spawns a new process, new queue, new reader
+    # Step 2: Immediately start Generation 2 and verify its properties and response
     result_gen2 = supervisor.render("formula_2")
 
     # Assert Generation 2 properties
@@ -372,11 +356,27 @@ def test_generation_isolation_with_real_late_worker_subprocess(
     assert proc_gen2 is not proc_gen1, "Generation 2 must be a distinct process instance"
     assert reader_gen2 is not reader_gen1, "Generation 2 must have its own reader thread"
 
-    # Step 4: Verify the result was produced by Generation 2's request (ID 4), NOT Generation 1 (ID 2)
+    # Verify the result was produced by Generation 2's request (ID 4), NOT Generation 1 (ID 2)
     assert "response-id-4" in result_gen2["svg_xml"]
     assert "response-id-2" not in result_gen2["svg_xml"]
 
-    # Step 5: Verify queue isolation — q_gen2 contains only generation-2 items, never generation-1
+    # Step 3: ONLY AFTER Generation 2 exists and is active, inspect q_gen1 for the stale response
+    observed_gen1_response = None
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        try:
+            item_gen, item_payload = q_gen1.get(timeout=0.1)
+            if item_gen == 1 and isinstance(item_payload, str) and "response-id-2" in item_payload:
+                observed_gen1_response = item_payload
+                break
+        except queue.Empty:
+            continue
+
+    assert observed_gen1_response is not None, (
+        "Generation 1 delayed response with 'response-id-2' was never observed in q_gen1 after Generation 2 started"
+    )
+
+    # Step 4: Verify queue isolation — q_gen2 contains only generation-2 items, never generation-1
     while not q_gen2.empty():
         item_gen, item_payload = q_gen2.get_nowait()
         assert item_gen == 2, f"Item from generation {item_gen} leaked into generation 2 queue!"
