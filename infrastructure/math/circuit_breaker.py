@@ -190,6 +190,13 @@ class MathCircuitBreaker:
                     self._probe_in_flight = False
                     self._state = CircuitBreakerState.HALF_OPEN
 
+    def release_probe(self) -> None:
+        """Release any active probe reservation cleanly without altering failure count."""
+        with self._lock:
+            if self._probe_in_flight:
+                self._probe_in_flight = False
+                self._state = CircuitBreakerState.HALF_OPEN
+
     def record_failure(
         self,
         now: Optional[float] = None,

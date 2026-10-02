@@ -447,6 +447,11 @@ class MathJaxProcessSupervisor:
         with self._lock:
             return self._process is not None and self._process.poll() is None
 
+    @property
+    def is_shutdown(self) -> bool:
+        """Return True if the supervisor has been shut down."""
+        return self._is_shutdown
+
     def _resolve_node(self) -> Path:
         """Return the active Node executable path."""
         if self._node_path_override is not None:
@@ -493,6 +498,13 @@ class MathJaxProcessSupervisor:
 
         self._stderr_buffer = BoundedStderrBuffer()
 
+        # Re-check shutdown status immediately before process launch
+        if self._is_shutdown:
+            raise MathSupervisorShutdownError(
+                code=-32603,
+                message="MathJaxProcessSupervisor has been shut down.",
+            )
+
         # Launch worker daemon directly with pipe I/O without shell
         self._process = subprocess.Popen(
             [str(node_path), str(self._worker_script_path)],
@@ -508,6 +520,14 @@ class MathJaxProcessSupervisor:
 
         # Re-check shutdown status to prevent spawn/shutdown race (ADR-002 D06)
         if self._is_shutdown:
+            try:
+                self._process.kill()
+            except (ProcessLookupError, OSError):
+                pass
+            try:
+                self._process.wait(timeout=0.5)
+            except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
+                pass
             self._cleanup_process_handles_locked(reason="SHUTDOWN_RACE")
             raise MathSupervisorShutdownError(
                 code=-32603,
@@ -662,18 +682,13 @@ class MathJaxProcessSupervisor:
             # Handshake successful
             return
 
-    def _cleanup_process_handles_locked(self, reason: str = "CLEANUP") -> None:
-        """Close pipes, drain threads, and terminate abandoned process instances.
+    def _terminate_process_outside_lock(self, proc: subprocess.Popen, reason: str = "CLEANUP") -> None:
+        """Execute two-phase termination escalation outside supervisor lock (ADR-002 D03/D06).
 
-        Implements the two-phase cross-platform termination escalation protocol (D03):
         Phase 1: proc.terminate() with 0.5s wait.
         Phase 2: proc.kill() with 0.5s reap if still alive.
         """
-        if self._process is None:
-            return
-        proc = self._process
         pid = getattr(proc, "pid", None)
-
         try:
             is_alive = False
             try:
@@ -758,6 +773,20 @@ class MathJaxProcessSupervisor:
         except (ProcessLookupError, OSError):
             pass
 
+    def _cleanup_process_handles_locked(self, reason: str = "CLEANUP") -> None:
+        """Close pipes, drain threads, and terminate abandoned process instances.
+
+        Implements the two-phase cross-platform termination escalation protocol (D03):
+        Phase 1: proc.terminate() with 0.5s wait.
+        Phase 2: proc.kill() with 0.5s reap if still alive.
+        """
+        if self._process is None:
+            return
+        proc = self._process
+        pid = getattr(proc, "pid", None)
+
+        self._terminate_process_outside_lock(proc, reason=reason)
+
         # Close open stream pipes safely with narrow exception handling
         for stream_name in ("stdin", "stdout", "stderr"):
             stream = getattr(proc, stream_name, None)
@@ -767,14 +796,15 @@ class MathJaxProcessSupervisor:
                 except (OSError, ValueError):
                     pass
 
-        # Join the daemon drain and reader threads with a short bounded timeout
-        if self._stderr_drain_thread and self._stderr_drain_thread.is_alive():
-            if threading.current_thread() != self._stderr_drain_thread:
-                self._stderr_drain_thread.join(timeout=0.2)
+        # Join the daemon drain and reader threads with a short bounded timeout if not shutting down
+        if not self._is_shutdown:
+            if self._stderr_drain_thread and self._stderr_drain_thread.is_alive():
+                if threading.current_thread() != self._stderr_drain_thread:
+                    self._stderr_drain_thread.join(timeout=0.2)
 
-        if self._stdout_reader_thread and self._stdout_reader_thread.is_alive():
-            if threading.current_thread() != self._stdout_reader_thread:
-                self._stdout_reader_thread.join(timeout=0.2)
+            if self._stdout_reader_thread and self._stdout_reader_thread.is_alive():
+                if threading.current_thread() != self._stdout_reader_thread:
+                    self._stdout_reader_thread.join(timeout=0.2)
 
         # Confirm process has been reaped before clearing process reference.
         # ProcessLookupError confirms the process is gone from the OS.
@@ -1053,17 +1083,51 @@ class MathJaxProcessSupervisor:
                 raise
 
     def shutdown(self) -> None:
-        """Terminate the child worker process and close open pipes.
+        """Terminate the child worker process and close open pipes idempotently.
 
-        Implements single idempotent shutdown protocol (ADR-002 D06):
-        1. Set _is_shutdown = True and push _AbortSentinel to active response queue
-           outside the lock to immediately unblock any in-flight RPC requests.
-        2. Acquire lock and execute two-phase termination escalation and stream cleanup.
+        Ordered teardown sequence (ADR-002 section D06):
+        1. Set self._is_shutdown = True early to reject any new incoming operations.
+        2. Push _AbortSentinel to active response queue outside lock to wake RPC waiters immediately.
+        3. Release any active circuit breaker probe reservation cleanly.
+        4. Terminate worker process outside supervisor lock via two-phase escalation.
+        5. Cleanup process handles under the lifecycle lock.
+        6. Join reader and stderr drain threads with bounded timeout (<= 0.2s) outside the lock.
+        7. Leave supervisor in safe terminal state (repeated calls are no-ops).
         """
         self._is_shutdown = True
+
+        proc = self._process
         q = self._response_queue
+        drain_thread = self._stderr_drain_thread
+        reader_thread = self._stdout_reader_thread
+
+        # If already cleanly shut down (process and queue are None), fast no-op
+        if proc is None and q is None:
+            if hasattr(self._circuit_breaker, "release_probe"):
+                self._circuit_breaker.release_probe()
+            return
+
+        # Wake blocked RPC waiters immediately without waiting out request timeouts
         if q is not None:
             q.put((self._process_generation, _AbortSentinel()))
 
+        # Release active probe reservation so circuit breaker is not left in probe lockout
+        if hasattr(self._circuit_breaker, "release_probe"):
+            self._circuit_breaker.release_probe()
+
+        # Terminate worker process outside supervisor lock to prevent lock contention
+        if proc is not None:
+            self._terminate_process_outside_lock(proc, reason="SHUTDOWN")
+
+        # Clean up stream handles and confirm reaping under supervisor lock
         with self._lock:
             self._cleanup_process_handles_locked(reason="SHUTDOWN")
+
+        # Join daemon drain and reader threads with bounded timeout outside supervisor lock
+        if drain_thread is not None and drain_thread.is_alive():
+            if threading.current_thread() != drain_thread:
+                drain_thread.join(timeout=0.2)
+
+        if reader_thread is not None and reader_thread.is_alive():
+            if threading.current_thread() != reader_thread:
+                reader_thread.join(timeout=0.2)

@@ -165,10 +165,14 @@ class TestDesktopPresentationInvariants(unittest.TestCase):
         self.assertIsNotNone(container.export_controller)
         self.assertIsNotNone(container.export_package_service)
 
-        # Teardown: verify MathJax supervisor shuts down before controllers (ADR-002 D06)
+        # Teardown: verify MathJax supervisor shuts down before controllers, scheduler, runtime (ADR-002 D06)
         teardown_order = []
         orig_mathjax_shutdown = container.mathjax_supervisor.shutdown
         orig_md_shutdown = container.markdown_viewer_controller.shutdown
+        orig_doc_shutdown = container.document_viewer_controller.shutdown
+        orig_export_shutdown = container.export_controller.shutdown
+        orig_scheduler_shutdown = container.scheduler.shutdown
+        orig_runtime_shutdown = container.runtime.shutdown
 
         def track_mathjax():
             teardown_order.append("mathjax")
@@ -178,13 +182,39 @@ class TestDesktopPresentationInvariants(unittest.TestCase):
             teardown_order.append("markdown_viewer")
             orig_md_shutdown()
 
+        def track_doc():
+            teardown_order.append("document_viewer")
+            orig_doc_shutdown()
+
+        def track_export():
+            teardown_order.append("export")
+            orig_export_shutdown()
+
+        def track_scheduler():
+            teardown_order.append("scheduler")
+            orig_scheduler_shutdown()
+
+        def track_runtime():
+            teardown_order.append("runtime")
+            orig_runtime_shutdown()
+
         container.mathjax_supervisor.shutdown = track_mathjax
         container.markdown_viewer_controller.shutdown = track_md
+        container.document_viewer_controller.shutdown = track_doc
+        container.export_controller.shutdown = track_export
+        container.scheduler.shutdown = track_scheduler
+        container.runtime.shutdown = track_runtime
 
         container.shutdown()
         self.assertFalse(container.scheduler.is_running)
         self.assertFalse(container.runtime.is_running)
-        self.assertEqual(teardown_order, ["mathjax", "markdown_viewer"])
+        self.assertEqual(
+            teardown_order,
+            ["mathjax", "markdown_viewer", "document_viewer", "export", "scheduler", "runtime"],
+        )
+        mathjax_idx = teardown_order.index("mathjax")
+        for comp in ("markdown_viewer", "document_viewer", "export", "scheduler", "runtime"):
+            self.assertLess(mathjax_idx, teardown_order.index(comp))
 
         temp_dir.cleanup()
 
