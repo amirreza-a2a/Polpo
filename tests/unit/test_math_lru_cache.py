@@ -2,7 +2,7 @@
 
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
-from typing import List
+from typing import List, Mapping, Sequence, Union
 
 import pytest
 
@@ -68,6 +68,11 @@ def test_imath_renderer_is_abstract_and_subclassable():
         def render_batch(self, requests: List[MathRenderRequest]) -> List[MathRenderResult]:
             return [self.render(r) for r in requests]
 
+        def render_batch_isolated(
+            self, requests: Sequence[MathRenderRequest]
+        ) -> Mapping[str, Union[MathRenderResult, MathRenderError]]:
+            return {r.compute_hash(): self.render(r) for r in requests}
+
     renderer = ConcreteRenderer()
     req = MathRenderRequest(tex="x", display=False)
     single = renderer.render(req)
@@ -75,6 +80,10 @@ def test_imath_renderer_is_abstract_and_subclassable():
 
     batch = renderer.render_batch([req, req])
     assert len(batch) == 2
+
+    isolated = renderer.render_batch_isolated([req])
+    assert req.compute_hash() in isolated
+    assert isolated[req.compute_hash()].svg_xml == "<svg>rendered</svg>"
 
 
 def test_lru_cache_capacity_validation_and_default():

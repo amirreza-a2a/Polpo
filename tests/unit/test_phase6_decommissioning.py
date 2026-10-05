@@ -59,7 +59,7 @@ class TestPhase6DecommissioningAndCleanArchitecture(unittest.TestCase):
 
         violations = []
         for root, _, files in os.walk(self.root_dir):
-            if ".git" in root or "__pycache__" in root or ".system_generated" in root:
+            if any(part.startswith(".") or part in ("venv", "build", "dist", "__pycache__") for part in Path(root).parts):
                 continue
             for f in files:
                 if not f.endswith(".py"):

@@ -6,13 +6,15 @@ cached, high-throughput formula rendering.
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Dict, List, Mapping, Optional, Sequence, Union
 
 from application.ports.math_renderer import (
     IMathRenderer,
+    MathRenderError,
     MathRenderRequest,
     MathRenderResult,
     MathRenderTimeoutError,
+    MathSupervisorShutdownError,
     MathWorkerCrashedError,
 )
 from infrastructure.math.lru_cache import MathSvgCache
@@ -132,4 +134,33 @@ class MathJaxClient(IMathRenderer):
         results: List[MathRenderResult] = []
         for req in requests:
             results.append(self.render(req))
+        return results
+
+    def render_batch_isolated(
+        self, requests: Sequence[MathRenderRequest]
+    ) -> Mapping[str, Union[MathRenderResult, MathRenderError]]:
+        """Render formulas isolating failures per request.
+
+        Returns mapping of formula content hash to result or structured error.
+        Fatal errors like MathSupervisorShutdownError must propagate out immediately.
+
+        Args:
+            requests: Sequence of formula rendering specifications.
+
+        Returns:
+            Mapping of request content SHA-256 hash to either MathRenderResult
+            (on success) or MathRenderError (on isolated failure).
+
+        Raises:
+            MathSupervisorShutdownError: If the supervisor has been shut down.
+        """
+        results: Dict[str, Union[MathRenderResult, MathRenderError]] = {}
+        for req in requests:
+            req_hash = req.compute_hash()
+            try:
+                results[req_hash] = self.render(req)
+            except MathSupervisorShutdownError:
+                raise
+            except MathRenderError as exc:
+                results[req_hash] = exc
         return results

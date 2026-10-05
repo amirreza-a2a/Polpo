@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List
+from typing import List, Mapping, Sequence, Union
 
 
 @dataclass(frozen=True)
@@ -137,6 +137,27 @@ class IMathRenderer(ABC):
 
         Raises:
             MathRenderError: If batch processing encounters a fatal error.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def render_batch_isolated(
+        self, requests: Sequence[MathRenderRequest]
+    ) -> Mapping[str, Union[MathRenderResult, MathRenderError]]:
+        """Render multiple TeX math expressions with per-formula failure isolation.
+
+        Unlike render_batch(), an individual formula syntax error, timeout, or crash
+        does not abort processing for subsequent requests in the batch.
+
+        Args:
+            requests: Sequence of formula rendering specifications.
+
+        Returns:
+            Mapping of formula SHA-256 hash to either MathRenderResult (on success)
+            or MathRenderError (on failure).
+
+        Raises:
+            MathSupervisorShutdownError: If the supervisor is shut down during processing.
         """
         raise NotImplementedError
 
