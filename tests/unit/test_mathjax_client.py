@@ -22,13 +22,21 @@ from application.ports.math_renderer import (
     MathRenderError,
     MathRenderRequest,
     MathRenderResult,
+    MathRenderTimeoutError,
+    MathSupervisorShutdownError,
     MathSyntaxError,
+    MathWorkerCrashedError,
 )
 from infrastructure.math import (
     MathJaxClient,
     MathJaxProcessSupervisor,
     MathSvgCache,
 )
+from infrastructure.math.circuit_breaker import (
+    CircuitBreakerState,
+    MathCircuitBreaker,
+)
+from infrastructure.math.negative_memo import NegativeFailureMemo
 from infrastructure.paths import get_runtime_resource_path
 
 EXPECTED_NODE_VERSION = "22.23.2"
@@ -224,6 +232,243 @@ def test_client_render_batch_handles_mixed_cache_hits():
     assert batch_results[0].svg_xml == "<svg>a</svg>"
     assert batch_results[1].svg_xml == "<svg>new</svg>"
     mock_supervisor.render.assert_called_once_with(tex="b", display=False, em=16, ex=8)
+
+
+def test_client_negative_memo_hit_bypasses_supervisor():
+    """Client returns cached terminal error from negative memo without calling supervisor."""
+    mock_supervisor = MagicMock(spec=MathJaxProcessSupervisor)
+    memo = NegativeFailureMemo(capacity=10)
+    req = MathRenderRequest(tex=r"\pathological", display=False)
+    cache_key = req.compute_hash()
+    memo.put(cache_key, MathRenderTimeoutError(code=-32603, message="Timeout occurred"))
+
+    client = MathJaxClient(supervisor=mock_supervisor, negative_memo=memo)
+
+    with pytest.raises(MathRenderTimeoutError) as exc_info:
+        client.render(req)
+
+    assert "Timeout occurred" in exc_info.value.message
+    # Assert supervisor was called zero times (no timing assertions)
+    mock_supervisor.render.assert_not_called()
+
+
+def test_client_records_timeout_in_negative_memo():
+    """Pathological formula timing out records hash in memo; subsequent calls fail fast."""
+    mock_supervisor = MagicMock(spec=MathJaxProcessSupervisor)
+    mock_supervisor.render.side_effect = MathRenderTimeoutError(code=-32603, message="Timed out")
+
+    client = MathJaxClient(supervisor=mock_supervisor)
+    req = MathRenderRequest(tex=r"\infinite_macro", display=True)
+    cache_key = req.compute_hash()
+
+    with pytest.raises(MathRenderTimeoutError):
+        client.render(req)
+
+    assert mock_supervisor.render.call_count == 1
+    cached_err = client.negative_memo.get(cache_key)
+    assert isinstance(cached_err, MathRenderTimeoutError)
+
+    # Subsequent render hits negative memo; supervisor is called zero additional times
+    mock_supervisor.render.reset_mock()
+    with pytest.raises(MathRenderTimeoutError):
+        client.render(req)
+
+    mock_supervisor.render.assert_not_called()
+
+
+def test_client_records_crash_in_negative_memo():
+    """Worker crash records hash in negative memo; subsequent calls fail fast."""
+    mock_supervisor = MagicMock(spec=MathJaxProcessSupervisor)
+    mock_supervisor.render.side_effect = MathWorkerCrashedError(code=-32603, message="Worker died")
+
+    client = MathJaxClient(supervisor=mock_supervisor)
+    req = MathRenderRequest(tex=r"\segfault_formula", display=False)
+    cache_key = req.compute_hash()
+
+    with pytest.raises(MathWorkerCrashedError):
+        client.render(req)
+
+    assert mock_supervisor.render.call_count == 1
+    cached_err = client.negative_memo.get(cache_key)
+    assert isinstance(cached_err, MathWorkerCrashedError)
+
+    mock_supervisor.render.reset_mock()
+    with pytest.raises(MathWorkerCrashedError):
+        client.render(req)
+
+    mock_supervisor.render.assert_not_called()
+
+
+def test_client_never_records_shutdown_error_in_memo_or_cache():
+    """MathSupervisorShutdownError is never recorded in negative memo or positive cache."""
+    mock_supervisor = MagicMock(spec=MathJaxProcessSupervisor)
+    mock_supervisor.render.side_effect = MathSupervisorShutdownError(
+        code=-32603, message="MathJaxProcessSupervisor has been shut down."
+    )
+
+    client = MathJaxClient(supervisor=mock_supervisor)
+    req = MathRenderRequest(tex="x + y", display=False)
+    cache_key = req.compute_hash()
+
+    with pytest.raises(MathSupervisorShutdownError):
+        client.render(req)
+
+    assert client.negative_memo.get(cache_key) is None
+    assert cache_key not in client.negative_memo
+    assert client.cache.get(cache_key) is None
+    assert cache_key not in client.cache
+
+
+def test_client_negative_memo_hit_neutral_to_circuit_breaker():
+    """Negative memo hit leaves HALF_OPEN probe slot unclaimed and breaker state untouched."""
+    simulated_time = [100.0]
+    breaker = MathCircuitBreaker(time_provider=lambda: simulated_time[0])
+    # Trip breaker to OPEN
+    for _ in range(3):
+        breaker.record_failure()
+    assert breaker.state == CircuitBreakerState.OPEN
+
+    # Transition to HALF_OPEN by advancing time past cooldown (30.0s)
+    simulated_time[0] += 35.0
+    assert breaker.state == CircuitBreakerState.HALF_OPEN
+    assert breaker.is_probe_in_flight is False
+
+    mock_supervisor = MagicMock(spec=MathJaxProcessSupervisor)
+    mock_supervisor.circuit_breaker = breaker
+
+    memo = NegativeFailureMemo(capacity=10)
+    req = MathRenderRequest(tex=r"\bad", display=False)
+    cache_key = req.compute_hash()
+    memo.put(cache_key, MathRenderTimeoutError(code=-32603, message="Timeout"))
+
+    client = MathJaxClient(supervisor=mock_supervisor, negative_memo=memo)
+
+    with pytest.raises(MathRenderTimeoutError):
+        client.render(req)
+
+    mock_supervisor.render.assert_not_called()
+    # Circuit breaker remains in HALF_OPEN with NO probe claimed
+    assert breaker.state == CircuitBreakerState.HALF_OPEN
+    assert breaker.is_probe_in_flight is False
+
+    # Verify a subsequent valid probe can still claim the permit slot
+    with breaker.probe_permit() as permit:
+        assert breaker.is_probe_in_flight is True
+        permit.record_success()
+
+    assert breaker.state == CircuitBreakerState.CLOSED
+
+
+def test_client_canonical_5_stage_evaluation_order():
+    """Verifies strict 5-stage evaluation order defined in ADR-002 section D05:
+    1. Positive SVG Cache Lookup -> returns immediately.
+    2. Negative Memo Check -> raises cached error immediately without calling supervisor.
+    3. Pre-flight input validation -> supervisor rejects oversized TeX (>16 KB).
+    4. Circuit breaker evaluation -> supervisor rejects if OPEN.
+    5. Post-response validation -> supervisor checks SVG length, caches success in positive cache.
+    """
+    mock_supervisor = MagicMock(spec=MathJaxProcessSupervisor)
+    mock_supervisor.render.return_value = {
+        "svg_xml": "<svg>ok</svg>",
+        "width": "1ex",
+        "height": "1ex",
+        "vertical_align": "0ex",
+    }
+
+    client = MathJaxClient(supervisor=mock_supervisor)
+    req = MathRenderRequest(tex="x = 1", display=False)
+    cache_key = req.compute_hash()
+
+    # Stage 1: Positive cache hit returns immediately without supervisor call
+    cached_res = MathRenderResult(cache_key, "<svg>hit</svg>", "1ex", "1ex", "0ex")
+    client.cache.put(cache_key, cached_res)
+    assert client.render(req) == cached_res
+    mock_supervisor.render.assert_not_called()
+
+    # Stage 2: When positive cache misses, negative memo hit raises immediately without supervisor call
+    client.cache.clear()
+    client.negative_memo.put(cache_key, MathRenderTimeoutError(-32603, "Cached timeout"))
+    with pytest.raises(MathRenderTimeoutError):
+        client.render(req)
+    mock_supervisor.render.assert_not_called()
+
+    # Stage 3: Pre-flight input validation (TeX > 16 KB rejected before contacting worker/breaker)
+    client.negative_memo.clear()
+    huge_req = MathRenderRequest(tex="a + " * 6000, display=False)
+    mock_supervisor.render.side_effect = MathBufferLimitExceededError(
+        code=-32600, message="Buffer limit exceeded: TeX length exceeds 16384 bytes"
+    )
+    with pytest.raises(MathBufferLimitExceededError) as exc_info:
+        client.render(huge_req)
+    assert "Buffer limit exceeded" in str(exc_info.value)
+
+    # Direct verification with real supervisor instances for Stage 3 & 4
+    real_supervisor = MathJaxProcessSupervisor()
+    real_client = MathJaxClient(supervisor=real_supervisor)
+
+    # Stage 3 end-to-end: Pre-flight TeX length rejected before worker or breaker
+    with pytest.raises(MathBufferLimitExceededError):
+        real_client.render(MathRenderRequest(tex="x + " * 6000, display=False))
+
+    # Stage 4 end-to-end: Circuit breaker in OPEN state fast-fails before worker
+    for _ in range(3):
+        real_supervisor.circuit_breaker.record_failure()
+    with pytest.raises(MathCircuitBreakerOpenError):
+        real_client.render(MathRenderRequest(tex="x = 1", display=False))
+
+    # Stage 5: Successful render -> result validated and cached in positive MathSvgCache
+    mock_supervisor.render.side_effect = None
+    mock_supervisor.render.return_value = {
+        "svg_xml": "<svg>ok</svg>",
+        "width": "1ex",
+        "height": "1ex",
+        "vertical_align": "0ex",
+    }
+    res = client.render(req)
+    assert res.svg_xml == "<svg>ok</svg>"
+    assert client.cache.get(cache_key) is not None
+
+
+def test_client_render_batch_evaluation_order_and_negative_memo():
+    """render_batch applies canonical 5-stage order per request, using cache and negative memo."""
+    mock_supervisor = MagicMock(spec=MathJaxProcessSupervisor)
+    mock_supervisor.render.return_value = {
+        "svg_xml": "<svg>normal</svg>",
+        "width": "1ex",
+        "height": "1ex",
+        "vertical_align": "0ex",
+    }
+
+    client = MathJaxClient(supervisor=mock_supervisor)
+
+    req_cached = MathRenderRequest(tex="cached", display=False)
+    req_bad = MathRenderRequest(tex="bad", display=False)
+    req_fresh = MathRenderRequest(tex="fresh", display=False)
+
+    # Warm positive cache for req_cached
+    client.cache.put(
+        req_cached.compute_hash(),
+        MathRenderResult(req_cached.compute_hash(), "<svg>cached</svg>", "1ex", "1ex", "0ex"),
+    )
+    # Warm negative memo for req_bad
+    client.negative_memo.put(
+        req_bad.compute_hash(),
+        MathRenderTimeoutError(-32603, "Timeout on bad"),
+    )
+
+    # Batch with cached and fresh succeeds
+    batch_res = client.render_batch([req_cached, req_fresh])
+    assert len(batch_res) == 2
+    assert batch_res[0].svg_xml == "<svg>cached</svg>"
+    assert batch_res[1].svg_xml == "<svg>normal</svg>"
+    # Supervisor only called for req_fresh
+    mock_supervisor.render.assert_called_once_with(tex="fresh", display=False, em=16, ex=8)
+
+    # Batch containing negative memo entry raises without calling supervisor again
+    mock_supervisor.render.reset_mock()
+    with pytest.raises(MathRenderTimeoutError):
+        client.render_batch([req_bad, req_fresh])
+    mock_supervisor.render.assert_not_called()
 
 
 # ==============================================================================
