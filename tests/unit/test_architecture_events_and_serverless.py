@@ -159,6 +159,8 @@ class TestArchitectureEventsAndServerless(unittest.TestCase):
         forbidden_server_packages = {"fastapi", "uvicorn", "starlette", "interfaces.api"}
 
         for py_file in self.root_dir.rglob("*.py"):
+            if any(part.startswith(".") or part in ("venv", "build", "dist", "__pycache__") for part in py_file.parts):
+                continue
             # Exclude this test file and other architectural AST inspection tests from inspecting their own string literals
             if "test_architecture" in py_file.name or "test_phase8" in py_file.name or "test_secret_non_persistence" in py_file.name or "test_domain_reconciliation" in py_file.name or "test_ai_adapters" in py_file.name or "test_desktop_presentation_invariants" in py_file.name:
                 continue

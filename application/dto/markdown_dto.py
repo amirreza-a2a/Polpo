@@ -35,6 +35,9 @@ class InlineSegmentDTO:
     image_ref: Optional[VisualRegionRefDTO] = None
     math_tex: Optional[str] = None
     math_hash: Optional[str] = None
+    has_error: bool = False
+    error_category: str = ""
+    error_message: str = ""
 
 
 @dataclass(frozen=True)
@@ -85,6 +88,9 @@ class MarkdownNodeDTO:
     source_end_col: Optional[int] = None
     math_tex: Optional[str] = None
     math_hash: Optional[str] = None
+    has_error: bool = False
+    error_category: str = ""
+    error_message: str = ""
 
 
 
@@ -98,3 +104,4 @@ class MarkdownDocumentDTO:
     version: int
     nodes: Tuple[MarkdownNodeDTO, ...]
     region_to_occurrences: Mapping[str, Tuple[RegionOccurrenceRef, ...]]
+    had_math_timeout: bool = False

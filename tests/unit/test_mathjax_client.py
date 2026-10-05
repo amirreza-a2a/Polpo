@@ -471,6 +471,132 @@ def test_client_render_batch_evaluation_order_and_negative_memo():
     mock_supervisor.render.assert_not_called()
 
 
+def test_client_render_batch_isolated_all_success():
+    """render_batch_isolated returns dictionary mapping hash to MathRenderResult when all succeed."""
+    mock_supervisor = MagicMock(spec=MathJaxProcessSupervisor)
+    mock_supervisor.render.return_value = {
+        "svg_xml": "<svg>ok</svg>",
+        "width": "1ex",
+        "height": "1ex",
+        "vertical_align": "0ex",
+    }
+    client = MathJaxClient(supervisor=mock_supervisor)
+    req1 = MathRenderRequest(tex="x+1", display=False)
+    req2 = MathRenderRequest(tex="x+2", display=True)
+
+    results = client.render_batch_isolated([req1, req2])
+    assert len(results) == 2
+    assert req1.compute_hash() in results
+    assert req2.compute_hash() in results
+    assert isinstance(results[req1.compute_hash()], MathRenderResult)
+    assert isinstance(results[req2.compute_hash()], MathRenderResult)
+    assert results[req1.compute_hash()].svg_xml == "<svg>ok</svg>"
+    # Positive cache is populated
+    assert client.cache.get(req1.compute_hash()) is not None
+    assert client.cache.get(req2.compute_hash()) is not None
+
+
+def test_client_render_batch_isolated_mixed_partial_failures():
+    """render_batch_isolated isolates failures and continues processing subsequent formulas."""
+    mock_supervisor = MagicMock(spec=MathJaxProcessSupervisor)
+
+    def fake_render(tex, display, em, ex):
+        if tex == "valid1":
+            return {"svg_xml": "<svg>v1</svg>", "width": "1ex", "height": "1ex", "vertical_align": "0ex"}
+        elif tex == "syntax_err":
+            raise MathSyntaxError(-32602, "Syntax error")
+        elif tex == "timeout_err":
+            raise MathRenderTimeoutError(-32603, "Timeout error")
+        elif tex == "valid2":
+            return {"svg_xml": "<svg>v2</svg>", "width": "2ex", "height": "2ex", "vertical_align": "0ex"}
+        raise RuntimeError("Unexpected tex")
+
+    mock_supervisor.render.side_effect = fake_render
+    client = MathJaxClient(supervisor=mock_supervisor)
+
+    req1 = MathRenderRequest(tex="valid1", display=False)
+    req2 = MathRenderRequest(tex="syntax_err", display=False)
+    req3 = MathRenderRequest(tex="timeout_err", display=True)
+    req4 = MathRenderRequest(tex="valid2", display=True)
+
+    results = client.render_batch_isolated([req1, req2, req3, req4])
+
+    assert len(results) == 4
+    # Valid 1 succeeded
+    assert isinstance(results[req1.compute_hash()], MathRenderResult)
+    assert results[req1.compute_hash()].svg_xml == "<svg>v1</svg>"
+    assert client.cache.get(req1.compute_hash()) is not None
+
+    # Syntax err captured
+    assert isinstance(results[req2.compute_hash()], MathSyntaxError)
+    assert results[req2.compute_hash()].message == "Syntax error"
+    assert client.cache.get(req2.compute_hash()) is None
+
+    # Timeout err captured and recorded in negative memo
+    assert isinstance(results[req3.compute_hash()], MathRenderTimeoutError)
+    assert results[req3.compute_hash()].message == "Timeout error"
+    assert client.negative_memo.get(req3.compute_hash()) is not None
+
+    # Valid 2 succeeded despite previous errors
+    assert isinstance(results[req4.compute_hash()], MathRenderResult)
+    assert results[req4.compute_hash()].svg_xml == "<svg>v2</svg>"
+    assert client.cache.get(req4.compute_hash()) is not None
+
+
+def test_client_render_batch_isolated_negative_memo_hit_does_not_call_supervisor():
+    """Negative memo hit returns cached error without calling supervisor."""
+    mock_supervisor = MagicMock(spec=MathJaxProcessSupervisor)
+    mock_supervisor.render.return_value = {
+        "svg_xml": "<svg>fresh</svg>",
+        "width": "1ex",
+        "height": "1ex",
+        "vertical_align": "0ex",
+    }
+    client = MathJaxClient(supervisor=mock_supervisor)
+
+    req_cached_err = MathRenderRequest(tex="memo_bad", display=False)
+    req_fresh = MathRenderRequest(tex="fresh_good", display=False)
+
+    client.negative_memo.put(
+        req_cached_err.compute_hash(),
+        MathRenderTimeoutError(-32603, "Earlier timeout"),
+    )
+
+    results = client.render_batch_isolated([req_cached_err, req_fresh])
+
+    assert isinstance(results[req_cached_err.compute_hash()], MathRenderTimeoutError)
+    assert isinstance(results[req_fresh.compute_hash()], MathRenderResult)
+    # Supervisor was only called once for req_fresh, never for req_cached_err
+    mock_supervisor.render.assert_called_once_with(tex="fresh_good", display=False, em=16, ex=8)
+
+
+def test_client_render_batch_isolated_propagates_fatal_shutdown():
+    """render_batch_isolated allows fatal MathSupervisorShutdownError to propagate immediately."""
+    mock_supervisor = MagicMock(spec=MathJaxProcessSupervisor)
+
+    def fake_render(tex, display, em, ex):
+        if tex == "ok":
+            return {"svg_xml": "<svg>ok</svg>", "width": "1ex", "height": "1ex", "vertical_align": "0ex"}
+        elif tex == "shutdown":
+            raise MathSupervisorShutdownError(-32000, "Supervisor is shut down")
+        return {"svg_xml": "<svg>unreached</svg>", "width": "1ex", "height": "1ex", "vertical_align": "0ex"}
+
+    mock_supervisor.render.side_effect = fake_render
+    client = MathJaxClient(supervisor=mock_supervisor)
+
+    req1 = MathRenderRequest(tex="ok", display=False)
+    req2 = MathRenderRequest(tex="shutdown", display=False)
+    req3 = MathRenderRequest(tex="after_shutdown", display=False)
+
+    with pytest.raises(MathSupervisorShutdownError) as exc_info:
+        client.render_batch_isolated([req1, req2, req3])
+
+    assert "Supervisor is shut down" in str(exc_info.value)
+    # req3 should never have been dispatched
+    assert mock_supervisor.render.call_count == 2
+
+
+
 # ==============================================================================
 # Live Integration Tests with Headless Daemon
 # ==============================================================================
