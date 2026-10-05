@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, Mapping, Sequence, Union
+from typing import Any, List, Mapping, Optional, Sequence, Union
 
 
 @dataclass(frozen=True)
@@ -107,8 +107,24 @@ class MathSyntaxError(MathRenderError):
     """Raised when TeX formula syntax is invalid and cannot be parsed or rendered."""
 
 
+@dataclass(frozen=True)
+class MathDegradedError(MathRenderError):
+    """Raised or projected when math rendering is bypassed during active degraded typing."""
+
+    code: int = -32099
+    message: str = "Math rendering degraded during active typing; waiting for quiescence."
+
+
 class IMathRenderer(ABC):
     """Port interface for mathematical equation rendering services."""
+
+    cache: Optional[Any] = None
+    negative_memo: Optional[Any] = None
+
+    def clear_negative_memo(self) -> None:
+        """Clears negative failure memo if supported by the implementation."""
+        if self.negative_memo is not None and hasattr(self.negative_memo, "clear"):
+            self.negative_memo.clear()
 
     @abstractmethod
     def render(self, request: MathRenderRequest) -> MathRenderResult:
@@ -166,6 +182,7 @@ __all__ = [
     "IMathRenderer",
     "MathBufferLimitExceededError",
     "MathCircuitBreakerOpenError",
+    "MathDegradedError",
     "MathRenderError",
     "MathRenderRequest",
     "MathRenderResult",
