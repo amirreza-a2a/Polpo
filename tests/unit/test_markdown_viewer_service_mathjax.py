@@ -43,7 +43,7 @@ class StubParser(IMarkdownParser):
 
 
 def test_markdown_viewer_service_traverses_math_and_calls_render_batch():
-    """Service collects all MathBlock and inline Math spans and calls render_batch."""
+    """Service collects all MathBlock and inline Math spans and calls render_batch_isolated."""
     tex_display = r"\int_0^\infty e^{-x} dx = 1"
     tex_inline1 = "E = mc^2"
     tex_inline2 = "a^2 + b^2 = c^2"
@@ -65,7 +65,7 @@ def test_markdown_viewer_service_traverses_math_and_calls_render_batch():
 
     doc = MarkdownDocument(blocks=(block_heading, block_para, block_math))
     mock_renderer = MagicMock(spec=IMathRenderer)
-    mock_renderer.render_batch.return_value = []
+    mock_renderer.render_batch_isolated.return_value = {}
 
     service = MarkdownViewerService(
         parser=StubParser(doc),
@@ -76,9 +76,9 @@ def test_markdown_viewer_service_traverses_math_and_calls_render_batch():
 
     dto = service.render_text("", active_regions=[], job_id=1)
 
-    # Verify render_batch was called with all 3 math requests
-    mock_renderer.render_batch.assert_called_once()
-    called_requests: List[MathRenderRequest] = mock_renderer.render_batch.call_args[0][0]
+    # Verify render_batch_isolated was called with all 3 math requests
+    mock_renderer.render_batch_isolated.assert_called_once()
+    called_requests: List[MathRenderRequest] = mock_renderer.render_batch_isolated.call_args[0][0]
     assert len(called_requests) == 3
 
     # Check request parameters
@@ -119,7 +119,7 @@ def test_markdown_viewer_service_deduplicates_batch_requests():
     doc = MarkdownDocument(blocks=(p1, p2))
 
     mock_renderer = MagicMock(spec=IMathRenderer)
-    mock_renderer.render_batch.return_value = []
+    mock_renderer.render_batch_isolated.return_value = {}
 
     service = MarkdownViewerService(
         parser=StubParser(doc),
@@ -130,8 +130,8 @@ def test_markdown_viewer_service_deduplicates_batch_requests():
 
     service.render_text("", active_regions=[], job_id=1)
 
-    mock_renderer.render_batch.assert_called_once()
-    called_requests = mock_renderer.render_batch.call_args[0][0]
+    mock_renderer.render_batch_isolated.assert_called_once()
+    called_requests = mock_renderer.render_batch_isolated.call_args[0][0]
     assert len(called_requests) == 1
     assert called_requests[0].tex == tex
 
@@ -161,7 +161,7 @@ def test_markdown_viewer_service_traverses_lists_blockquotes_and_tables():
 
     doc = MarkdownDocument(blocks=(list_blk, quote_blk, table_blk))
     mock_renderer = MagicMock(spec=IMathRenderer)
-    mock_renderer.render_batch.return_value = []
+    mock_renderer.render_batch_isolated.return_value = {}
 
     service = MarkdownViewerService(
         parser=StubParser(doc),
@@ -172,8 +172,8 @@ def test_markdown_viewer_service_traverses_lists_blockquotes_and_tables():
 
     dto = service.render_text("", active_regions=[], job_id=1)
 
-    mock_renderer.render_batch.assert_called_once()
-    called_tex = {r.tex for r in mock_renderer.render_batch.call_args[0][0]}
+    mock_renderer.render_batch_isolated.assert_called_once()
+    called_tex = {r.tex for r in mock_renderer.render_batch_isolated.call_args[0][0]}
     assert called_tex == {tex_list, tex_quote, tex_table}
 
     # Verify blockquote math block has image tag in inner HTML
@@ -237,7 +237,7 @@ def test_markdown_viewer_service_tolerates_math_render_error():
     )
 
     failing_renderer = MagicMock(spec=IMathRenderer)
-    failing_renderer.render_batch.side_effect = MathRenderError(-32602, "Syntax error")
+    failing_renderer.render_batch_isolated.side_effect = MathRenderError(-32602, "Syntax error")
 
     service = MarkdownViewerService(
         parser=StubParser(doc),

@@ -8,7 +8,7 @@ import html
 import os
 import re
 from collections import defaultdict
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from application.dto.markdown_dto import (
     InlineSegmentDTO,
@@ -19,7 +19,19 @@ from application.dto.markdown_dto import (
     VisualRegionRefDTO,
 )
 from application.ports.markdown_parser import IMarkdownParser
-from application.ports.math_renderer import IMathRenderer, MathRenderError, MathRenderRequest
+from application.ports.math_renderer import (
+    IMathRenderer,
+    MathBufferLimitExceededError,
+    MathCircuitBreakerOpenError,
+    MathDegradedError,
+    MathRenderError,
+    MathRenderRequest,
+    MathRenderResult,
+    MathRenderTimeoutError,
+    MathSupervisorShutdownError,
+    MathSyntaxError,
+    MathWorkerCrashedError,
+)
 from application.ports.storage import IArtifactStorage
 from application.ports.unit_of_work import IUnitOfWorkFactory
 from core.entities.artifact import ArtifactHandle, ArtifactType, StorageBackendType
@@ -40,6 +52,11 @@ from core.markdown.ast import (
     ThematicBreakBlock,
 )
 from core.markdown.resolver import resolve_image_regions
+
+_MATH_ERROR_SPAN_STYLE = (
+    "color:#f87171; background-color:#2a1515; font-family:monospace; "
+    "border-bottom:1px dotted #f87171; padding:1px 3px; border-radius:3px;"
+)
 
 
 def _slugify(text: str) -> str:
@@ -69,6 +86,36 @@ def _is_safe_url(url: Optional[str]) -> bool:
         or u.startswith("https://")
         or u.startswith("#")
     )
+
+
+def _map_math_error_category(err: MathRenderError) -> str:
+    """Maps a structured MathRenderError into a canonical category string token."""
+    if isinstance(err, MathSyntaxError):
+        return "syntax"
+    if isinstance(err, MathRenderTimeoutError):
+        return "timeout"
+    if isinstance(err, MathWorkerCrashedError):
+        return "crash"
+    if isinstance(err, MathBufferLimitExceededError):
+        return "buffer_limit"
+    if isinstance(err, MathCircuitBreakerOpenError):
+        return "circuit_breaker"
+    if (
+        isinstance(err, MathDegradedError)
+        or getattr(err, "code", None) == -32099
+        or "degraded" in getattr(err, "message", "").lower()
+    ):
+        return "degraded"
+    return "unknown"
+
+
+def _extract_math_outcome_metadata(
+    outcome: Optional[Union[MathRenderResult, MathRenderError]],
+) -> Tuple[bool, str, str]:
+    """Extracts presentation error metadata (has_error, error_category, error_message) from an outcome."""
+    if isinstance(outcome, MathRenderError):
+        return True, _map_math_error_category(outcome), getattr(outcome, "message", str(outcome))
+    return False, "", ""
 
 
 class MarkdownViewerService:
@@ -147,6 +194,8 @@ class MarkdownViewerService:
         job_id: int,
         raw_text: str,
         base_version: int = 1,
+        *,
+        degraded_math: bool = False,
     ) -> MarkdownDocumentDTO:
         """
         Pure in-memory transient projection of uncommitted editor text against
@@ -171,7 +220,17 @@ class MarkdownViewerService:
             job_id=job_id,
             version=base_version,
             base_dir=base_dir,
+            degraded_math=degraded_math,
         )
+
+    def clear_math_negative_memo(self) -> None:
+        """Clears the session-scoped negative failure memo in the configured math renderer."""
+        if self.math_renderer is not None:
+            memo = getattr(self.math_renderer, "negative_memo", None)
+            if memo is not None and hasattr(memo, "clear"):
+                memo.clear()
+            elif hasattr(self.math_renderer, "clear_negative_memo"):
+                self.math_renderer.clear_negative_memo()
 
     def render_text(
         self,
@@ -180,6 +239,8 @@ class MarkdownViewerService:
         job_id: int,
         version: int = 1,
         base_dir: Optional[str] = None,
+        *,
+        degraded_math: bool = False,
     ) -> MarkdownDocumentDTO:
         """
         Pure projection: parses raw Markdown text, resolves visual regions,
@@ -188,14 +249,37 @@ class MarkdownViewerService:
         doc = self.parser.parse(raw_text)
         resolved_doc = resolve_image_regions(doc, active_regions, job_id)
 
-        # Pre-render all math formulas through IMathRenderer into cache before DTO construction
+        math_outcomes: Dict[str, Union[MathRenderResult, MathRenderError]] = {}
+        had_math_timeout: bool = False
+
+        # Pre-render or probe math formulas through IMathRenderer into cache before DTO construction
         if self.math_renderer is not None:
             math_requests = self._collect_math_requests(resolved_doc.blocks)
             if math_requests:
-                try:
-                    self.math_renderer.render_batch(math_requests)
-                except MathRenderError:
-                    pass
+                if not degraded_math:
+                    try:
+                        raw_outcomes = self.math_renderer.render_batch_isolated(math_requests)
+                        if isinstance(raw_outcomes, Mapping):
+                            math_outcomes = dict(raw_outcomes)
+                    except MathSupervisorShutdownError:
+                        raise
+                    except MathRenderError as exc:
+                        for req in math_requests:
+                            math_outcomes[req.compute_hash()] = exc
+                else:
+                    cache = getattr(self.math_renderer, "cache", None)
+                    for req in math_requests:
+                        h = req.compute_hash()
+                        cached = cache.get(h) if cache is not None else None
+                        if cached is not None:
+                            math_outcomes[h] = cached
+                        else:
+                            math_outcomes[h] = MathDegradedError()
+
+                had_math_timeout = any(
+                    isinstance(outcome, MathRenderTimeoutError)
+                    for outcome in math_outcomes.values()
+                )
 
         regions_by_id = {
             r.region_id: r
@@ -214,6 +298,7 @@ class MarkdownViewerService:
                 seen_counts=seen_counts,
                 regions_by_id=regions_by_id,
                 base_dir=base_dir,
+                math_outcomes=math_outcomes,
             )
             nodes.append(node_dto)
 
@@ -235,6 +320,7 @@ class MarkdownViewerService:
             version=version,
             nodes=tuple(nodes),
             region_to_occurrences=frozen_occurrences,
+            had_math_timeout=had_math_timeout,
         )
 
     def _create_visual_region_ref(
@@ -329,6 +415,7 @@ class MarkdownViewerService:
         seen_counts: Dict[Tuple[str, ...], int],
         regions_by_id: Mapping[str, VisualRegion],
         base_dir: Optional[str] = None,
+        math_outcomes: Optional[Mapping[str, Union[MathRenderResult, MathRenderError]]] = None,
     ) -> MarkdownNodeDTO:
         """
         Projects a canonical AST block into an immutable presentation MarkdownNodeDTO.
@@ -351,6 +438,7 @@ class MarkdownViewerService:
                 node_id=node_id,
                 regions_by_id=regions_by_id,
                 base_dir=base_dir,
+                math_outcomes=math_outcomes,
             )
             raw = f"{'#' * block.level} {plain}"
             return MarkdownNodeDTO(
@@ -379,6 +467,7 @@ class MarkdownViewerService:
                 node_id=node_id,
                 regions_by_id=regions_by_id,
                 base_dir=base_dir,
+                math_outcomes=math_outcomes,
             )
             return MarkdownNodeDTO(
                 node_id=node_id,
@@ -478,6 +567,7 @@ class MarkdownViewerService:
                     regions_by_id=regions_by_id,
                     base_dir=base_dir,
                     counter=img_counter,
+                    math_outcomes=math_outcomes,
                 )
                 if prefix:
                     if item_segs and item_segs[0].segment_type == "text":
@@ -550,6 +640,7 @@ class MarkdownViewerService:
                         regions_by_id=regions_by_id,
                         base_dir=base_dir,
                         counter=quote_img_counter,
+                        math_outcomes=math_outcomes,
                     )
                     inner_htmls.append(f"<p>{c_html}</p>")
                     quote_regions.extend(r_list)
@@ -570,6 +661,7 @@ class MarkdownViewerService:
                         regions_by_id=regions_by_id,
                         base_dir=base_dir,
                         counter=quote_img_counter,
+                        math_outcomes=math_outcomes,
                     )
                     inner_htmls.append(f"<h{sub_b.level}>{c_html}</h{sub_b.level}>")
                     quote_regions.extend(r_list)
@@ -585,7 +677,12 @@ class MarkdownViewerService:
                 elif isinstance(sub_b, MathBlock):
                     math_hash = MathRenderRequest(tex=sub_b.content, display=True).compute_hash()
                     escaped_tex = html.escape(sub_b.content, quote=True)
-                    if self.math_renderer is not None:
+                    outcome = math_outcomes.get(math_hash) if math_outcomes else None
+                    has_err, err_cat, err_msg = _extract_math_outcome_metadata(outcome)
+                    if has_err:
+                        seg_html = f'<span style="{_MATH_ERROR_SPAN_STYLE}" class="math-error">$${escaped_tex}$$</span>'
+                        inner_htmls.append(f'<p align="center">{seg_html}</p>')
+                    elif self.math_renderer is not None:
                         inner_htmls.append(f'<p align="center"><img src="image://math/{math_hash}"/></p>')
                         seg_html = f'<img src="image://math/{math_hash}"/>'
                     else:
@@ -596,6 +693,9 @@ class MarkdownViewerService:
                         text_html=seg_html,
                         math_tex=sub_b.content,
                         math_hash=math_hash,
+                        has_error=has_err,
+                        error_category=err_cat,
+                        error_message=err_msg,
                     )
                     quote_segments.append(math_seg)
                     quote_children.append(
@@ -614,6 +714,7 @@ class MarkdownViewerService:
                         regions_by_id=regions_by_id,
                         base_dir=base_dir,
                         counter=quote_img_counter,
+                        math_outcomes=math_outcomes,
                     )
                     inner_htmls.append(f"<p>{c_html}</p>")
                     quote_regions.extend(r_list)
@@ -676,6 +777,7 @@ class MarkdownViewerService:
                         regions_by_id=regions_by_id,
                         base_dir=base_dir,
                         counter=table_img_counter,
+                        math_outcomes=math_outcomes,
                     )
                     header_row_segs.append(c_segs)
                     table_regions.extend(c_regs)
@@ -692,6 +794,7 @@ class MarkdownViewerService:
                             regions_by_id=regions_by_id,
                             base_dir=base_dir,
                             counter=table_img_counter,
+                            math_outcomes=math_outcomes,
                         )
                         row_segs.append(c_segs)
                         table_regions.extend(c_regs)
@@ -719,6 +822,8 @@ class MarkdownViewerService:
             seen_counts[key] += 1
             node_id = f"math_{math_hash[:12]}_{seen_counts[key]}"
             raw = f"$${tex}$$"
+            outcome = math_outcomes.get(math_hash) if math_outcomes else None
+            has_error, error_category, error_message = _extract_math_outcome_metadata(outcome)
             return MarkdownNodeDTO(
                 node_id=node_id,
                 node_type="math_block",
@@ -726,6 +831,9 @@ class MarkdownViewerService:
                 raw_markdown=raw,
                 math_tex=tex,
                 math_hash=math_hash,
+                has_error=has_error,
+                error_category=error_category,
+                error_message=error_message,
                 source_start_line=block.source_start_line,
                 source_end_line=block.source_end_line,
                 source_start_col=block.source_start_col,
@@ -752,6 +860,7 @@ class MarkdownViewerService:
         regions_by_id: Mapping[str, VisualRegion],
         base_dir: Optional[str] = None,
         counter: Optional[List[int]] = None,
+        math_outcomes: Optional[Mapping[str, Union[MathRenderResult, MathRenderError]]] = None,
     ) -> Tuple[str, Tuple[InlineSegmentDTO, ...], Tuple[VisualRegionRefDTO, ...]]:
         img_counter = counter if counter is not None else [0]
         regions_list: List[VisualRegionRefDTO] = []
@@ -815,7 +924,11 @@ class MarkdownViewerService:
                 math_tex = span.text
                 math_hash = MathRenderRequest(tex=math_tex, display=False).compute_hash()
                 escaped_tex = html.escape(math_tex, quote=True)
-                if self.math_renderer is not None:
+                outcome = math_outcomes.get(math_hash) if math_outcomes else None
+                has_error, error_category, error_message = _extract_math_outcome_metadata(outcome)
+                if has_error:
+                    math_html = f'<span style="{_MATH_ERROR_SPAN_STYLE}" class="math-error">${escaped_tex}$</span>'
+                elif self.math_renderer is not None:
                     math_html = f'<img src="image://math/{math_hash}" align="middle"/>'
                 else:
                     math_html = f"${escaped_tex}$"
@@ -834,6 +947,9 @@ class MarkdownViewerService:
                         text_html=math_html,
                         math_tex=math_tex,
                         math_hash=math_hash,
+                        has_error=has_error,
+                        error_category=error_category,
+                        error_message=error_message,
                     )
                 )
 
