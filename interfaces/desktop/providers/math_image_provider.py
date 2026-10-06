@@ -8,6 +8,7 @@ Never invokes MathJax synchronously or blocks the GUI thread.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 
 from infrastructure.math.lru_cache import MathSvgCache
@@ -17,12 +18,49 @@ from interfaces.desktop.qt_compat import (
     QGuiApplication,
     QImage,
     QPainter,
+    QPixmap,
     QQuickImageProvider,
     QSize,
     QSvgRenderer,
 )
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_MATH_THEME = "dark"
+MATH_THEME_COLORS = {
+    "dark": "#e6edf3",
+    "light": "#1f2328",
+}
+
+
+def parse_math_image_url(url_id: str) -> tuple[str, str]:
+    """
+    Parses 'image://math/{id}' parameter into (theme_name, formula_hash).
+    Supports:
+    - 3-component URL: '{theme}/{hash}' -> (theme, hash)
+    - 2-component legacy URL: '{hash}' -> ('dark', hash)
+    """
+    if not url_id:
+        return DEFAULT_MATH_THEME, ""
+    parts = [p.strip() for p in url_id.strip("/").split("/") if p.strip()]
+    if len(parts) >= 2:
+        theme = parts[0].lower()
+        formula_hash = parts[-1]
+        return theme if theme in MATH_THEME_COLORS else DEFAULT_MATH_THEME, formula_hash
+    if len(parts) == 1:
+        return DEFAULT_MATH_THEME, parts[0]
+    return DEFAULT_MATH_THEME, ""
+
+
+def inject_svg_color(svg_xml: str, color_hex: str) -> str:
+    """
+    Injects a 'color' attribute into the root <svg> element so that glyphs
+    referencing 'currentColor' resolve to the theme foreground.
+    Does not mutate the input string or cached SVG content.
+    """
+    if not svg_xml:
+        return ""
+    return re.sub(r"<svg(\s|>)", rf'<svg color="{color_hex}"\1', svg_xml, count=1)
 
 
 class MathImageProvider(QQuickImageProvider):
@@ -64,17 +102,19 @@ class MathImageProvider(QQuickImageProvider):
     def requestImage(self, id: str, size: QSize, requestedSize: QSize) -> QImage:
         """Handle QML image requests for 'image://math/{id}'.
 
+        Supports both 3-component ('{theme}/{hash}') and legacy 2-component ('{hash}') URLs.
+
         Args:
-            id: Deterministic formula hash string.
+            id: Deterministic URL parameter string ('{theme}/{hash}' or '{hash}').
             size: Output size parameter populated by provider.
             requestedSize: Requested dimensions from QML (or <= 0 if unspecified).
 
         Returns:
-            Rendered QImage scaled by devicePixelRatio, or 1x1 transparent image on cache miss.
+            Rendered QImage scaled by devicePixelRatio with theme color injected,
+            or 1x1 transparent image on cache miss or invalid SVG.
         """
-        cached = self._cache.get(id)
-        if cached is None:
-            logger.debug(f"MathSvgCache miss for formula hash: {id}")
+        theme_name, formula_hash = parse_math_image_url(id)
+        if not formula_hash:
             transparent = QImage(1, 1, QImage.Format.Format_ARGB32_Premultiplied)
             transparent.fill(QColor(0, 0, 0, 0))
             if size is not None:
@@ -82,9 +122,22 @@ class MathImageProvider(QQuickImageProvider):
                 size.setHeight(1)
             return transparent
 
-        renderer = QSvgRenderer(QByteArray(cached.svg_xml.encode("utf-8")))
+        cached = self._cache.get(formula_hash)
+        if cached is None:
+            logger.debug(f"MathSvgCache miss for formula hash: {formula_hash} (requested id: {id})")
+            transparent = QImage(1, 1, QImage.Format.Format_ARGB32_Premultiplied)
+            transparent.fill(QColor(0, 0, 0, 0))
+            if size is not None:
+                size.setWidth(1)
+                size.setHeight(1)
+            return transparent
+
+        color_hex = MATH_THEME_COLORS.get(theme_name, MATH_THEME_COLORS[DEFAULT_MATH_THEME])
+        themed_svg = inject_svg_color(cached.svg_xml, color_hex)
+
+        renderer = QSvgRenderer(QByteArray(themed_svg.encode("utf-8")))
         if not renderer.isValid():
-            logger.warning(f"Invalid SVG in MathSvgCache for formula hash: {id}")
+            logger.warning(f"Invalid SVG in MathSvgCache for formula hash: {formula_hash}")
             transparent = QImage(1, 1, QImage.Format.Format_ARGB32_Premultiplied)
             transparent.fill(QColor(0, 0, 0, 0))
             if size is not None:
@@ -125,6 +178,11 @@ class MathImageProvider(QQuickImageProvider):
             size.setHeight(target_h)
 
         return image
+
+    def requestPixmap(self, id: str, size: QSize, requestedSize: QSize) -> QPixmap:
+        """Handle QML pixmap requests for 'image://math/{id}'."""
+        image = self.requestImage(id, size, requestedSize)
+        return QPixmap.fromImage(image)
 
     @staticmethod
     def _parse_dimension(dim_str: str, fallback: float, base_unit: float) -> float:

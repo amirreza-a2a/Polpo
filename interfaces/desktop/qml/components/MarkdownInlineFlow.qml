@@ -35,6 +35,14 @@ Item {
     // Retained until downstream visual region delegates are consolidated.
     readonly property bool hasImages: hasFlowElements
 
+    function formatThemedHtml(html) {
+        if (!html) return "";
+        var activeTheme = (typeof theme !== "undefined" && theme && theme.resolvedTheme) ? theme.resolvedTheme : "dark";
+        return html.replace(/src=["']image:\/\/math\/(?:(?:dark|light)\/)?([^"']+)["']/g, function(match, hash) {
+            return 'src="image://math/' + activeTheme + '/' + hash + '"';
+        });
+    }
+
     width: parent ? parent.width : 600
     implicitHeight: hasFlowElements ? flowLayout.implicitHeight : singleText.implicitHeight
 
@@ -46,9 +54,9 @@ Item {
         visible: !inlineFlowRoot.hasFlowElements
         width: parent.width
         textFormat: Text.RichText
-        text: inlineFlowRoot.textFallback !== "" ? inlineFlowRoot.textFallback : (
+        text: inlineFlowRoot.formatThemedHtml(inlineFlowRoot.textFallback !== "" ? inlineFlowRoot.textFallback : (
             inlineFlowRoot.segments && inlineFlowRoot.segments.length > 0 ? inlineFlowRoot.segments[0].textHtml : ""
-        )
+        ))
         color: inlineFlowRoot.textColor
         font.pixelSize: Math.round(inlineFlowRoot.defaultPixelSize * inlineFlowRoot.scaleFactor)
         font.bold: inlineFlowRoot.fontBold
@@ -81,7 +89,7 @@ Item {
                     id: inlineTextComp
                     Text {
                         textFormat: Text.RichText
-                        text: modelData.textHtml
+                        text: inlineFlowRoot.formatThemedHtml(modelData.textHtml)
                         color: inlineFlowRoot.textColor
                         font.pixelSize: Math.round(inlineFlowRoot.defaultPixelSize * inlineFlowRoot.scaleFactor)
                         font.bold: inlineFlowRoot.fontBold
@@ -105,9 +113,9 @@ Item {
                     id: inlineMathErrorComp
                     Rectangle {
                         id: errorBadge
-                        color: "#2a1518"
+                        color: (typeof theme !== "undefined" && theme) ? theme.errorBackground : "#2a1518"
                         radius: 3
-                        border.color: "#7f1d1d"
+                        border.color: (typeof theme !== "undefined" && theme) ? theme.errorBorder : "#7f1d1d"
                         border.width: 1
                         implicitWidth: badgeRow.implicitWidth + 10
                         implicitHeight: Math.max(22, badgeRow.implicitHeight + 4)
@@ -119,7 +127,7 @@ Item {
 
                             Text {
                                 text: "⚠"
-                                color: "#ef4444"
+                                color: (typeof theme !== "undefined" && theme) ? theme.error : "#ef4444"
                                 font.pixelSize: Math.max(10, Math.round(11 * inlineFlowRoot.scaleFactor))
                                 anchors.verticalCenter: parent.verticalCenter
                             }
@@ -128,7 +136,7 @@ Item {
                                 id: formulaText
                                 text: modelData.mathTex || ""
                                 textFormat: Text.PlainText
-                                color: "#fca5a5"
+                                color: (typeof theme !== "undefined" && theme) ? theme.errorText : "#fca5a5"
                                 font.family: "Monospace"
                                 font.pixelSize: Math.round(12 * inlineFlowRoot.scaleFactor)
                                 anchors.verticalCenter: parent.verticalCenter
@@ -142,7 +150,7 @@ Item {
                             anchors.bottom: parent.bottom
                             anchors.bottomMargin: 1
                             height: 1
-                            color: "#ef4444"
+                            color: (typeof theme !== "undefined" && theme) ? theme.error : "#ef4444"
                             opacity: 0.8
                         }
 

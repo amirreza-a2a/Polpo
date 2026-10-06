@@ -32,6 +32,7 @@ try:
         QImage,
         QPainter,
         QPalette,
+        QPixmap,
         QStyleHints,
     )
     from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
@@ -67,6 +68,7 @@ except ImportError:
         QImage,
         QPainter,
         QPalette,
+        QPixmap,
         QStyleHints,
     )
     from PyQt6.QtQml import QQmlApplicationEngine, QQmlComponent
@@ -99,6 +101,7 @@ __all__ = [
     "QImage",
     "QPainter",
     "QPalette",
+    "QPixmap",
     "QStyleHints",
     "QTextDocument",
     "QTextCursor",

@@ -386,7 +386,7 @@ Item {
                 id: mathSuccessComponent
                 Image {
                     anchors.horizontalCenter: parent ? parent.horizontalCenter : undefined
-                    source: "image://math/" + (model.mathHash || "")
+                    source: model.mathHash ? ("image://math/" + ((typeof theme !== "undefined" && theme && theme.resolvedTheme) ? theme.resolvedTheme : "dark") + "/" + model.mathHash) : ""
                     fillMode: Image.PreserveAspectFit
                     sourceSize.width: Math.min(implicitWidth * delegateRoot.scaleFactor, parent ? parent.width - 40 : 760)
                 }
