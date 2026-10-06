@@ -584,3 +584,192 @@ def test_e2e_recovery_after_simulated_crash(tmp_path):
 
     # Verify Orphan Staging was cleaned up
     assert not orphan_staging.exists()
+
+
+DB_RECEIVER_KEYWORDS = {
+    "db",
+    "database",
+    "sqlite",
+    "sqlite3",
+    "pymysql",
+    "sqlalchemy",
+    "sql",
+    "sql_connection",
+    "connection",
+    "conn",
+    "cursor",
+    "cur",
+}
+
+
+def _is_db_token(tok: str) -> bool:
+    """Checks whether an identifier token corresponds to database-handle naming."""
+    clean = tok.strip("_").lower()
+    if clean in DB_RECEIVER_KEYWORDS:
+        return True
+    parts = clean.split("_")
+    return any(p in DB_RECEIVER_KEYWORDS for p in parts if p)
+
+
+def _has_db_receiver(receiver_node: ast.AST) -> bool:
+    """
+    Inspects receiver AST structure (names, attributes, and method call chains)
+    to detect database-handle terminology across arbitrarily nested chains.
+    """
+    for child in ast.walk(receiver_node):
+        if isinstance(child, ast.Name) and _is_db_token(child.id):
+            return True
+        elif isinstance(child, ast.Attribute) and _is_db_token(child.attr):
+            return True
+    return False
+
+
+def _check_ast_for_direct_db_operations(tree: ast.AST) -> list[str]:
+    """
+    AST analyzer detecting direct database operations in presentation controllers.
+    Covers:
+      - Direct driver module imports (sqlite3, pymysql, sqlalchemy).
+      - Executescript calls on any receiver.
+      - Calls to execute, executemany, cursor, connect on DB-like receiver chains
+        (e.g. cursor.execute, self.conn.execute, self.database.execute,
+        self.sql_connection.execute, self.db.cursor().execute, etc.).
+    Preserves legitimate non-DB calls (command.execute(), model.execute(),
+    self.viewer_service.execute(), self._executor.submit(), self.action.execute()).
+    """
+    violations = []
+    db_methods = {"execute", "executemany", "executescript", "cursor", "connect"}
+    db_driver_modules = {"sqlite3", "pymysql", "sqlalchemy"}
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                for db_mod in db_driver_modules:
+                    if alias.name == db_mod or alias.name.startswith(db_mod + "."):
+                        violations.append(f"Forbidden direct DB import '{alias.name}' at line {node.lineno}")
+        elif isinstance(node, ast.ImportFrom):
+            mod = node.module or ""
+            for db_mod in db_driver_modules:
+                if mod == db_mod or mod.startswith(db_mod + "."):
+                    violations.append(f"Forbidden direct DB from-import '{mod}' at line {node.lineno}")
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            method = node.func.attr
+            if method in db_methods:
+                if method == "executescript":
+                    violations.append(f"Direct database executescript() call at line {node.lineno}")
+                elif _has_db_receiver(node.func.value):
+                    violations.append(
+                        f"Direct database call '...{method}()' on DB-like receiver at line {node.lineno}"
+                    )
+
+    return violations
+
+
+def test_ast_direct_db_detection_catches_attribute_receivers():
+    """
+    Regression test validating that _check_ast_for_direct_db_operations detects
+    both Name and Attribute receiver patterns without false positives on non-DB methods.
+    """
+    detected_snippets = [
+        'cursor.execute("SELECT 1")',
+        'db.execute("SELECT 1")',
+        'self.conn.execute("SELECT 1")',
+        'self.db.execute("SELECT 1")',
+        'self.connection.executemany("INSERT INTO t VALUES (?)", [(1,)])',
+        'self.database.execute("SELECT 1")',
+        'self.sql_connection.execute("SELECT 1")',
+        'self._cursor.execute("SELECT 1")',
+        'self._connection.executemany("INSERT INTO t VALUES (?)", [(1,)])',
+        'self.database.cursor()',
+        'self.db.cursor().execute("SELECT 1")',
+        'self.database.connection.execute("SELECT 1")',
+        'sqlite3.connect("test.db")',
+        'pymysql.connect(host="localhost")',
+        'any_obj.executescript("CREATE TABLE t (id INT);")',
+    ]
+    for snippet in detected_snippets:
+        tree = ast.parse(snippet)
+        violations = _check_ast_for_direct_db_operations(tree)
+        assert len(violations) > 0, f"Expected detection for snippet: {snippet}"
+
+    clean_snippets = [
+        'command.execute()',
+        'model.execute()',
+        'self.viewer_service.execute()',
+        'self.action.execute()',
+        'self._executor.submit(task)',
+        'self.viewer_service.render_preview(1, text, 1)',
+    ]
+    for snippet in clean_snippets:
+        tree = ast.parse(snippet)
+        violations = _check_ast_for_direct_db_operations(tree)
+        assert len(violations) == 0, f"Unexpected false positive for clean snippet: {snippet}"
+
+
+def test_p08_architecture_boundaries_remain_clean():
+    """
+    Phase P08 architectural boundary verification:
+      1. application/services/markdown_viewer_service.py has ZERO Qt/PySide6/PyQt imports.
+      2. infrastructure/math/*.py has ZERO Qt/PySide6/PyQt imports.
+      3. interfaces/desktop/controllers/*.py has ZERO direct imports of infrastructure.math.
+      4. interfaces/desktop/controllers/*.py has ZERO direct database operations or driver imports.
+    """
+    app_service_file = REPO_ROOT / "application" / "services" / "markdown_viewer_service.py"
+    infra_math_dir = REPO_ROOT / "infrastructure" / "math"
+    controllers_dir = REPO_ROOT / "interfaces" / "desktop" / "controllers"
+
+    qt_frameworks = {"PySide6", "PyQt6", "PyQt5", "PySide2", "Qt"}
+
+    # 1. application/services/markdown_viewer_service.py must be 100% Qt-free
+    assert app_service_file.is_file(), f"File not found: {app_service_file}"
+    tree_service = ast.parse(app_service_file.read_text(encoding="utf-8"), filename=str(app_service_file))
+    for node in ast.walk(tree_service):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                for qt in qt_frameworks:
+                    assert not (alias.name == qt or alias.name.startswith(qt + ".")), (
+                        f"Forbidden Qt import '{alias.name}' in application service: {app_service_file}"
+                    )
+        elif isinstance(node, ast.ImportFrom):
+            mod = node.module or ""
+            for qt in qt_frameworks:
+                assert not (mod == qt or mod.startswith(qt + ".")), (
+                    f"Forbidden Qt from-import '{mod}' in application service: {app_service_file}"
+                )
+
+    # 2. infrastructure/math/*.py must be 100% Qt-free
+    assert infra_math_dir.is_dir(), f"Directory not found: {infra_math_dir}"
+    for py_file in infra_math_dir.glob("*.py"):
+        tree_math = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+        for node in ast.walk(tree_math):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    for qt in qt_frameworks:
+                        assert not (alias.name == qt or alias.name.startswith(qt + ".")), (
+                            f"Forbidden Qt import '{alias.name}' in math infrastructure: {py_file}"
+                        )
+            elif isinstance(node, ast.ImportFrom):
+                mod = node.module or ""
+                for qt in qt_frameworks:
+                    assert not (mod == qt or mod.startswith(qt + ".")), (
+                        f"Forbidden Qt from-import '{mod}' in math infrastructure: {py_file}"
+                    )
+
+    # 3. interfaces/desktop/controllers/*.py must NOT directly import infrastructure.math
+    assert controllers_dir.is_dir(), f"Directory not found: {controllers_dir}"
+    for py_file in controllers_dir.glob("*.py"):
+        tree_ctrl = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+        for node in ast.walk(tree_ctrl):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert not (alias.name == "infrastructure.math" or alias.name.startswith("infrastructure.math.")), (
+                        f"Forbidden direct import of 'infrastructure.math' in controller: {py_file}"
+                    )
+            elif isinstance(node, ast.ImportFrom):
+                mod = node.module or ""
+                assert not (mod == "infrastructure.math" or mod.startswith("infrastructure.math.")), (
+                    f"Forbidden direct from-import of 'infrastructure.math' in controller: {py_file}"
+                )
+
+        # 4. Check for direct database operations and driver imports
+        db_violations = _check_ast_for_direct_db_operations(tree_ctrl)
+        assert not db_violations, f"Direct database violations in {py_file}: {db_violations}"
