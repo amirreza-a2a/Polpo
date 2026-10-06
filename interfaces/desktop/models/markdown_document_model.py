@@ -55,6 +55,9 @@ class MarkdownDocumentModel(QAbstractListModel):
     MathHashRole = Qt.ItemDataRole.UserRole + 25
     SourceStartColRole = Qt.ItemDataRole.UserRole + 26
     SourceEndColRole = Qt.ItemDataRole.UserRole + 27
+    MathHasErrorRole = Qt.ItemDataRole.UserRole + 28
+    MathErrorCategoryRole = Qt.ItemDataRole.UserRole + 29
+    MathErrorMessageRole = Qt.ItemDataRole.UserRole + 30
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -95,6 +98,9 @@ class MarkdownDocumentModel(QAbstractListModel):
             self.MathHashRole: b"mathHash",
             self.SourceStartColRole: b"sourceStartCol",
             self.SourceEndColRole: b"sourceEndCol",
+            self.MathHasErrorRole: b"mathHasError",
+            self.MathErrorCategoryRole: b"mathErrorCategory",
+            self.MathErrorMessageRole: b"mathErrorMessage",
         }
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
@@ -161,20 +167,29 @@ class MarkdownDocumentModel(QAbstractListModel):
             return item.get("sourceStartCol")
         elif role == self.SourceEndColRole:
             return item.get("sourceEndCol")
+        elif role == self.MathHasErrorRole:
+            return bool(item.get("mathHasError", False))
+        elif role == self.MathErrorCategoryRole:
+            return str(item.get("mathErrorCategory", "") or "")
+        elif role == self.MathErrorMessageRole:
+            return str(item.get("mathErrorMessage", "") or "")
         return None
 
     def _node_dto_to_item(self, node: Any) -> Dict[str, Any]:
         """Converts a MarkdownNodeDTO into a dictionary for QML model roles."""
-        seg_dicts = []
-        for s in node.segments:
-            s_dict = {
+        def _convert_segment(s: Any) -> Dict[str, Any]:
+            return {
                 "segmentType": s.segment_type,
                 "textHtml": s.text_html,
                 "imageRef": self._ref_to_dict(s.image_ref) if s.image_ref else None,
                 "mathTex": getattr(s, "math_tex", "") or "",
                 "mathHash": getattr(s, "math_hash", "") or "",
+                "hasError": bool(getattr(s, "has_error", False)),
+                "errorCategory": str(getattr(s, "error_category", "") or ""),
+                "errorMessage": str(getattr(s, "error_message", "") or ""),
             }
-            seg_dicts.append(s_dict)
+
+        seg_dicts = [_convert_segment(s) for s in node.segments]
 
         reg_dicts = [self._ref_to_dict(r) for r in node.regions]
 
@@ -198,41 +213,20 @@ class MarkdownDocumentModel(QAbstractListModel):
 
         list_item_seg_dicts = []
         for item_segs in node.list_item_segments:
-            sub_dicts = [
-                {
-                    "segmentType": s.segment_type,
-                    "textHtml": s.text_html,
-                    "imageRef": self._ref_to_dict(s.image_ref) if s.image_ref else None,
-                }
-                for s in item_segs
-            ]
+            sub_dicts = [_convert_segment(s) for s in item_segs]
             list_item_seg_dicts.append(sub_dicts)
 
         table_cell_seg_dicts = []
         for row in node.table_cell_segments:
             row_dicts = []
             for col in row:
-                col_dicts = [
-                    {
-                        "segmentType": s.segment_type,
-                        "textHtml": s.text_html,
-                        "imageRef": self._ref_to_dict(s.image_ref) if s.image_ref else None,
-                    }
-                    for s in col
-                ]
+                col_dicts = [_convert_segment(s) for s in col]
                 row_dicts.append(col_dicts)
             table_cell_seg_dicts.append(row_dicts)
 
         quote_child_dicts = []
         for q_child in node.quote_children:
-            q_segs = [
-                {
-                    "segmentType": s.segment_type,
-                    "textHtml": s.text_html,
-                    "imageRef": self._ref_to_dict(s.image_ref) if s.image_ref else None,
-                }
-                for s in q_child.segments
-            ]
+            q_segs = [_convert_segment(s) for s in q_child.segments]
             quote_child_dicts.append({
                 "childType": q_child.child_type,
                 "content": q_child.content,
@@ -268,6 +262,9 @@ class MarkdownDocumentModel(QAbstractListModel):
             "sourceEndCol": getattr(node, "source_end_col", None),
             "mathTex": getattr(node, "math_tex", "") or "",
             "mathHash": getattr(node, "math_hash", "") or "",
+            "mathHasError": bool(getattr(node, "has_error", False)),
+            "mathErrorCategory": str(getattr(node, "error_category", "") or ""),
+            "mathErrorMessage": str(getattr(node, "error_message", "") or ""),
         }
 
     def set_document(self, document_dto: Optional[MarkdownDocumentDTO]) -> None:
@@ -380,6 +377,12 @@ class MarkdownDocumentModel(QAbstractListModel):
                     roles_changed.append(self.SourceStartLineRole)
                 if old_item_dict.get("sourceEndLine") != new_item_dict.get("sourceEndLine"):
                     roles_changed.append(self.SourceEndLineRole)
+                if old_item_dict.get("mathHasError") != new_item_dict.get("mathHasError"):
+                    roles_changed.append(self.MathHasErrorRole)
+                if old_item_dict.get("mathErrorCategory") != new_item_dict.get("mathErrorCategory"):
+                    roles_changed.append(self.MathErrorCategoryRole)
+                if old_item_dict.get("mathErrorMessage") != new_item_dict.get("mathErrorMessage"):
+                    roles_changed.append(self.MathErrorMessageRole)
 
                 if roles_changed:
                     self._items[old_ptr] = new_item_dict

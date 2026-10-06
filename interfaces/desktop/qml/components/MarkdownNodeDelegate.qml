@@ -367,22 +367,42 @@ Item {
     }
 
     // -----------------------------------------------------------------------
-    // Standalone Math Block Component (TICK-010)
-    // -----------------------------------------------------------------------
     Component {
         id: mathBlockComponent
         Item {
             id: mathBlockRoot
             width: parent.width
-            implicitHeight: mathImage.implicitHeight + 20
+            implicitHeight: (mathContentLoader.item ? mathContentLoader.item.implicitHeight : 0) + 20
 
-            Image {
-                id: mathImage
+            Loader {
+                id: mathContentLoader
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.verticalCenter: parent.verticalCenter
-                source: "image://math/" + (model.mathHash || "")
-                fillMode: Image.PreserveAspectFit
-                sourceSize.width: Math.min(implicitWidth * delegateRoot.scaleFactor, parent.width - 40)
+                width: parent.width
+                sourceComponent: model.mathHasError ? mathErrorComponent : mathSuccessComponent
+            }
+
+            Component {
+                id: mathSuccessComponent
+                Image {
+                    anchors.horizontalCenter: parent ? parent.horizontalCenter : undefined
+                    source: "image://math/" + (model.mathHash || "")
+                    fillMode: Image.PreserveAspectFit
+                    sourceSize.width: Math.min(implicitWidth * delegateRoot.scaleFactor, parent ? parent.width - 40 : 760)
+                }
+            }
+
+            Component {
+                id: mathErrorComponent
+                MathErrorCard {
+                    anchors.horizontalCenter: parent ? parent.horizontalCenter : undefined
+                    width: Math.min(parent ? parent.width - 40 : 680, 680)
+                    mathTex: model.mathTex || ""
+                    category: model.mathErrorCategory || ""
+                    errorMessage: model.mathErrorMessage || ""
+                    controller: delegateRoot.controller
+                    scaleFactor: delegateRoot.scaleFactor
+                }
             }
         }
     }
