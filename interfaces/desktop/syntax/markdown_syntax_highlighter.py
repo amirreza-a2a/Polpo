@@ -21,6 +21,58 @@ STATE_CODE_BLOCK = 1
 STATE_COMMENT_BLOCK = 2
 
 
+DARK_SYNTAX_PALETTE = {
+    "headings": [
+        "#60a5fa",  # H1: blue-400
+        "#93c5fd",  # H2: blue-300
+        "#bfdbfe",  # H3: blue-200
+        "#dbeafe",  # H4: blue-100
+        "#e0e7ff",  # H5: indigo-100
+        "#ede9fe",  # H6: violet-100
+    ],
+    "code_block_fg": "#c4b5fd",
+    "code_block_bg": "#1e1e28",
+    "code_span_fg": "#fcd34d",
+    "code_span_bg": "#1f2937",
+    "comment_fg": "#6b7280",
+    "region_fg": "#34d399",
+    "region_bg": "#064e3b",
+    "link_fg": "#38bdf8",
+    "bold_fg": "#f9fafb",
+    "italic_fg": "#f3f4f6",
+    "thematic_break_fg": "#4b5563",
+    "blockquote_fg": "#3b82f6",
+}
+
+LIGHT_SYNTAX_PALETTE = {
+    "headings": [
+        "#1d4ed8",  # H1: blue-700
+        "#1e40af",  # H2: blue-800
+        "#0369a1",  # H3: sky-700
+        "#0f766e",  # H4: teal-700
+        "#4338ca",  # H5: indigo-700
+        "#6d28d9",  # H6: purple-700
+    ],
+    "code_block_fg": "#5b21b6",
+    "code_block_bg": "#f6f8fa",
+    "code_span_fg": "#b45309",
+    "code_span_bg": "#f3f4f6",
+    "comment_fg": "#656d76",
+    "region_fg": "#047857",
+    "region_bg": "#d1fae5",
+    "link_fg": "#0969da",
+    "bold_fg": "#1f2328",
+    "italic_fg": "#32383f",
+    "thematic_break_fg": "#8c959f",
+    "blockquote_fg": "#0969da",
+}
+
+SYNTAX_PALETTES = {
+    "dark": DARK_SYNTAX_PALETTE,
+    "light": LIGHT_SYNTAX_PALETTE,
+}
+
+
 class MarkdownSyntaxHighlighter(QSyntaxHighlighter):
     """
     Presentation syntax highlighter for native Markdown editing.
@@ -51,24 +103,36 @@ class MarkdownSyntaxHighlighter(QSyntaxHighlighter):
         ("ITALIC", re.compile(r"(\*|_)(?!\s)([^*_\n]+?)(?<!\s)\1")),
     ]
 
-    def __init__(self, parent: Optional[QObject] = None):
+    def __init__(self, parent: Optional[QObject] = None, theme: str = "dark"):
         super().__init__(parent)
-        self._init_formats()
+        self._current_theme: str = "light" if theme == "light" else "dark"
+        self._init_formats(self._current_theme)
         if self.document() is not None:
             self.rehighlight()
 
-    def _init_formats(self) -> None:
-        """Initializes dark-theme character formats."""
+    @property
+    def current_theme(self) -> str:
+        return self._current_theme
+
+    def set_theme(self, resolved_theme: str) -> None:
+        """
+        Reconfigures formatting rules for the requested theme ('dark' or 'light')
+        and triggers immediate rehighlighting of the active document.
+        """
+        normalized = "light" if resolved_theme == "light" else "dark"
+        if normalized == self._current_theme:
+            return
+        self._current_theme = normalized
+        self._init_formats(normalized)
+        if self.document() is not None:
+            self.rehighlight()
+
+    def _init_formats(self, theme: str = "dark") -> None:
+        """Initializes character formats for the given theme ('dark' or 'light')."""
+        palette = SYNTAX_PALETTES.get(theme, DARK_SYNTAX_PALETTE)
         # Headings (H1 to H6)
         self.heading_formats = {}
-        heading_colors = [
-            "#60a5fa",  # H1: blue-400
-            "#93c5fd",  # H2: blue-300
-            "#bfdbfe",  # H3: blue-200
-            "#dbeafe",  # H4: blue-100
-            "#e0e7ff",  # H5: indigo-100
-            "#ede9fe",  # H6: violet-100
-        ]
+        heading_colors = palette["headings"]
         for level, color_hex in enumerate(heading_colors, start=1):
             fmt = QTextCharFormat()
             fmt.setForeground(QColor(color_hex))
@@ -77,50 +141,50 @@ class MarkdownSyntaxHighlighter(QSyntaxHighlighter):
 
         # Multi-line code block
         self.code_block_fmt = QTextCharFormat()
-        self.code_block_fmt.setForeground(QColor("#c4b5fd"))       # violet-300
-        self.code_block_fmt.setBackground(QColor("#1e1e28"))       # dark surface
-        self.code_block_fmt.setFontFamily("Monospace")
+        self.code_block_fmt.setForeground(QColor(palette["code_block_fg"]))
+        self.code_block_fmt.setBackground(QColor(palette["code_block_bg"]))
+        self.code_block_fmt.setFontFamilies(["Monospace"])
 
         # Inline code span
         self.code_span_fmt = QTextCharFormat()
-        self.code_span_fmt.setForeground(QColor("#fcd34d"))        # amber-300
-        self.code_span_fmt.setBackground(QColor("#1f2937"))        # gray-800
-        self.code_span_fmt.setFontFamily("Monospace")
+        self.code_span_fmt.setForeground(QColor(palette["code_span_fg"]))
+        self.code_span_fmt.setBackground(QColor(palette["code_span_bg"]))
+        self.code_span_fmt.setFontFamilies(["Monospace"])
 
         # HTML Comments
         self.comment_fmt = QTextCharFormat()
-        self.comment_fmt.setForeground(QColor("#6b7280"))          # gray-500
+        self.comment_fmt.setForeground(QColor(palette["comment_fg"]))
         self.comment_fmt.setFontItalic(True)
 
         # Visual Region Tokens: badge style
         self.region_fmt = QTextCharFormat()
-        self.region_fmt.setForeground(QColor("#34d399"))           # emerald-400
-        self.region_fmt.setBackground(QColor("#064e3b"))           # emerald-900
+        self.region_fmt.setForeground(QColor(palette["region_fg"]))
+        self.region_fmt.setBackground(QColor(palette["region_bg"]))
         self.region_fmt.setFontWeight(QFont.Weight.Bold)
 
         # Links
         self.link_fmt = QTextCharFormat()
-        self.link_fmt.setForeground(QColor("#38bdf8"))             # sky-400
+        self.link_fmt.setForeground(QColor(palette["link_fg"]))
         self.link_fmt.setFontUnderline(True)
 
         # Bold (Strong)
         self.bold_fmt = QTextCharFormat()
-        self.bold_fmt.setForeground(QColor("#f9fafb"))             # gray-50
+        self.bold_fmt.setForeground(QColor(palette["bold_fg"]))
         self.bold_fmt.setFontWeight(QFont.Weight.Bold)
 
         # Italic (Emphasis)
         self.italic_fmt = QTextCharFormat()
-        self.italic_fmt.setForeground(QColor("#f3f4f6"))           # gray-100
+        self.italic_fmt.setForeground(QColor(palette["italic_fg"]))
         self.italic_fmt.setFontItalic(True)
 
         # Thematic break (hr)
         self.thematic_break_fmt = QTextCharFormat()
-        self.thematic_break_fmt.setForeground(QColor("#4b5563"))   # gray-600
+        self.thematic_break_fmt.setForeground(QColor(palette["thematic_break_fg"]))
         self.thematic_break_fmt.setFontWeight(QFont.Weight.Bold)
 
         # Blockquote prefix
         self.blockquote_fmt = QTextCharFormat()
-        self.blockquote_fmt.setForeground(QColor("#3b82f6"))       # blue-500
+        self.blockquote_fmt.setForeground(QColor(palette["blockquote_fg"]))
         self.blockquote_fmt.setFontWeight(QFont.Weight.Bold)
 
     def highlightBlock(self, text: str) -> None:

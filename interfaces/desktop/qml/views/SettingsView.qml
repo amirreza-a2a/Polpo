@@ -25,7 +25,7 @@ Item {
 
             Text {
                 text: "Application Settings"
-                color: "#F9FAFB"
+                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
                 font.pixelSize: 20
                 font.bold: true
             }
@@ -34,7 +34,7 @@ Item {
 
             Text {
                 text: root.statusNotice
-                color: "#10B981"
+                color: (typeof theme !== "undefined" && theme) ? theme.successText : "green"
                 font.pixelSize: 13
                 visible: root.statusNotice !== ""
             }
@@ -54,7 +54,7 @@ Item {
                     spacing: 20
                     Text {
                         text: "UI Theme:"
-                        color: "#D1D5DB"
+                        color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                         font.pixelSize: 14
                         Layout.preferredWidth: 200
                     }
@@ -78,7 +78,7 @@ Item {
                     spacing: 20
                     Text {
                         text: "Max Concurrent Jobs:"
-                        color: "#D1D5DB"
+                        color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                         font.pixelSize: 14
                         Layout.preferredWidth: 200
                     }
@@ -96,7 +96,7 @@ Item {
                     spacing: 20
                     Text {
                         text: "Missed Schedule Policy:"
-                        color: "#D1D5DB"
+                        color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                         font.pixelSize: 14
                         Layout.preferredWidth: 200
                     }
@@ -120,7 +120,7 @@ Item {
                     spacing: 20
                     Text {
                         text: "Artifact Retention (Days):"
-                        color: "#D1D5DB"
+                        color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                         font.pixelSize: 14
                         Layout.preferredWidth: 200
                     }

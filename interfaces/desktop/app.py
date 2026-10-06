@@ -240,6 +240,9 @@ def create_app(
     )
     # Set auxiliary Qt application palette before QML engine load to eliminate in-process scene-graph flicker
     app.setPalette(create_qt_palette(theme_controller.current_palette))
+    theme_controller.resolvedThemeChanged.connect(
+        lambda _: app.setPalette(create_qt_palette(theme_controller.current_palette))
+    )
     quick_convert_controller = QuickConvertController(
         quick_convert_service=container.quick_convert_service,
     )
@@ -259,6 +262,10 @@ def create_app(
         editor_service=container.markdown_editor_service,
         merge_service=markdown_merge_service,
     )
+    theme_controller.resolvedThemeChanged.connect(
+        markdown_editor_controller.set_syntax_theme
+    )
+    markdown_editor_controller.set_syntax_theme(theme_controller.resolvedTheme)
     export_controller = ExportController(
         export_service=container.export_package_service,
         editor_controller=markdown_editor_controller,

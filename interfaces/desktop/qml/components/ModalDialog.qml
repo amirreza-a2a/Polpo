@@ -12,9 +12,9 @@ Popup {
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     background: Rectangle {
-        color: "#1F2937"
+        color: (typeof theme !== "undefined" && theme) ? theme.surfaceElevated : "transparent"
         radius: 8
-        border.color: "#4B5563"
+        border.color: (typeof theme !== "undefined" && theme) ? theme.border : "transparent"
         border.width: 1
     }
 }

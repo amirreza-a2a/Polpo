@@ -9,8 +9,27 @@ Rectangle {
 
     visible: visibleBanner
     implicitWidth: parent ? parent.width : 400
-    implicitHeight: 40
-    color: bannerType === "error" ? "#7F1D1D" : (bannerType === "warning" ? "#78350F" : "#1E3A8A")
+    color: {
+        var t = (typeof theme !== "undefined" && theme) ? theme : null;
+        if (bannerType === "error") {
+            return t ? t.errorBackground : "darkred";
+        } else if (bannerType === "warning") {
+            return t ? t.warningBackground : "darkgoldenrod";
+        } else {
+            return t ? t.infoBackground : "darkblue";
+        }
+    }
+    border.color: {
+        var t = (typeof theme !== "undefined" && theme) ? theme : null;
+        if (bannerType === "error") {
+            return t ? t.errorBorder : "red";
+        } else if (bannerType === "warning") {
+            return t ? t.warningBorder : "goldenrod";
+        } else {
+            return t ? t.infoBorder : "blue";
+        }
+    }
+    border.width: 1
 
     Row {
         anchors.centerIn: parent
@@ -18,7 +37,16 @@ Rectangle {
 
         Text {
             text: root.message
-            color: "#FFFFFF"
+            color: {
+                var t = (typeof theme !== "undefined" && theme) ? theme : null;
+                if (root.bannerType === "error") {
+                    return t ? t.errorText : "white";
+                } else if (root.bannerType === "warning") {
+                    return t ? t.warningText : "white";
+                } else {
+                    return t ? t.infoText : "white";
+                }
+            }
             font.pixelSize: 13
             anchors.verticalCenter: parent.verticalCenter
         }

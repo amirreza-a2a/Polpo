@@ -15,8 +15,8 @@ Rectangle {
 
     Layout.fillWidth: true
     implicitHeight: 24
-    color: "#18181f"
-    border.color: "#272732"
+    color: (typeof theme !== "undefined" && theme) ? theme.surface : "transparent"
+    border.color: (typeof theme !== "undefined" && theme) ? theme.border : "transparent"
     border.width: 1
 
     RowLayout {
@@ -34,7 +34,7 @@ Rectangle {
                 var col = controller ? controller.cursorColumn : 1;
                 return "Ln " + line + ", Col " + col;
             }
-            color: "#9ca3af"
+            color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
             font.pixelSize: 11
         }
 
@@ -47,7 +47,7 @@ Rectangle {
                 var chars = controller ? controller.characterCount : 0;
                 return words + " words • " + chars + " chars";
             }
-            color: "#9ca3af"
+            color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
             font.pixelSize: 11
         }
 
@@ -58,7 +58,7 @@ Rectangle {
             id: encodingModeLabel
             objectName: "editorEncodingModeLabel"
             text: "UTF-8  •  Markdown"
-            color: "#6b7280"
+            color: (typeof theme !== "undefined" && theme) ? theme.textMuted : "gray"
             font.pixelSize: 11
         }
     }

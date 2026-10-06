@@ -12,7 +12,7 @@ ApplicationWindow {
     minimumWidth: 800
     minimumHeight: 600
     title: "PolpoT — Desktop Document Intelligence"
-    color: "#0F172A"
+    color: (typeof theme !== "undefined" && theme) ? theme.background : "black"
 
     property string globalError: ""
     property string missedScheduleBanner: ""
@@ -159,14 +159,14 @@ ApplicationWindow {
 
             Text {
                 text: "Missed Scheduled Document"
-                color: "#F9FAFB"
+                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
                 font.pixelSize: 16
                 font.bold: true
             }
 
             Text {
                 text: "The scheduled time for '" + window.missedFileName + "' passed while the desktop application was closed. How would you like to proceed?"
-                color: "#D1D5DB"
+                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                 font.pixelSize: 13
                 wrapMode: Text.Wrap
                 width: parent.width
@@ -222,14 +222,14 @@ ApplicationWindow {
 
             Text {
                 text: "Unsaved Merge / Changes"
-                color: "#F9FAFB"
+                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
                 font.pixelSize: 16
                 font.bold: true
             }
 
             Text {
                 text: "You have uncommitted changes or an active conflict resolution session in the review editor. Switching jobs will discard these changes. Would you like to proceed?"
-                color: "#D1D5DB"
+                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                 font.pixelSize: 13
                 wrapMode: Text.Wrap
                 width: parent.width
@@ -282,14 +282,14 @@ ApplicationWindow {
 
             Text {
                 text: "Unsaved Changes on Exit"
-                color: "#F9FAFB"
+                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
                 font.pixelSize: 16
                 font.bold: true
             }
 
             Text {
                 text: "You have uncommitted changes or an active conflict resolution session. Exiting will discard these changes. Are you sure you want to exit?"
-                color: "#D1D5DB"
+                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                 font.pixelSize: 13
                 wrapMode: Text.Wrap
                 width: parent.width

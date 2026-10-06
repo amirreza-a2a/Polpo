@@ -25,8 +25,8 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 48
-            color: "#18181f"
-            border.color: "#272732"
+            color: (typeof theme !== "undefined" && theme) ? theme.surface : "transparent"
+            border.color: (typeof theme !== "undefined" && theme) ? theme.border : "transparent"
             border.width: 1
 
             RowLayout {
@@ -37,7 +37,7 @@ Item {
 
                 Text {
                     text: "Markdown Document"
-                    color: "#f3f4f6"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
                     font.pixelSize: 13
                     font.bold: true
                 }
@@ -48,13 +48,13 @@ Item {
                     height: 20
                     width: versionText.implicitWidth + 10
                     radius: 3
-                    color: "#374151"
+                    color: (typeof theme !== "undefined" && theme) ? theme.surfaceHover : "gray"
 
                     Text {
                         id: versionText
                         anchors.centerIn: parent
                         text: controller ? "v" + controller.activeVersion : "v1"
-                        color: "#93c5fd"
+                        color: (typeof theme !== "undefined" && theme) ? theme.accent : "blue"
                         font.pixelSize: 11
                         font.bold: true
                     }
@@ -73,7 +73,7 @@ Item {
 
                 Text {
                     text: controller ? Math.round(controller.scaleFactor * 100) + "%" : "100%"
-                    color: "#e0e0e0"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
                     font.pixelSize: 12
                     Layout.preferredWidth: 44
                     horizontalAlignment: Text.AlignHCenter
@@ -102,7 +102,7 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            color: "#0f0f13"
+            color: (typeof theme !== "undefined" && theme) ? theme.background : "black"
 
             // 1. Loading State
             ColumnLayout {
@@ -117,7 +117,7 @@ Item {
 
                 Text {
                     text: "Rendering Markdown AST..."
-                    color: "#9ca3af"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                     font.pixelSize: 13
                     Layout.alignment: Qt.AlignHCenter
                 }
@@ -137,7 +137,7 @@ Item {
 
                 Text {
                     text: "Failed to Load Markdown"
-                    color: "#f87171"
+                    color: (typeof theme !== "undefined" && theme) ? theme.error : "red"
                     font.pixelSize: 15
                     font.bold: true
                     Layout.alignment: Qt.AlignHCenter
@@ -145,7 +145,7 @@ Item {
 
                 Text {
                     text: controller ? controller.errorMessage : ""
-                    color: "#9ca3af"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                     font.pixelSize: 12
                     wrapMode: Text.WordWrap
                     Layout.maximumWidth: 480
@@ -168,7 +168,7 @@ Item {
 
                 Text {
                     text: "No Document Loaded"
-                    color: "#6b7280"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textMuted : "gray"
                     font.pixelSize: 14
                     font.bold: true
                     Layout.alignment: Qt.AlignHCenter
@@ -176,7 +176,7 @@ Item {
 
                 Text {
                     text: "Select a job to view its rendered Markdown document."
-                    color: "#4b5563"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSubtle : "gray"
                     font.pixelSize: 12
                     Layout.alignment: Qt.AlignHCenter
                 }
@@ -268,7 +268,7 @@ Item {
 
                     Text {
                         text: "⚠️ Preview Paused"
-                        color: "#f59e0b"
+                        color: (typeof theme !== "undefined" && theme) ? theme.warning : "goldenrod"
                         font.pixelSize: 18
                         font.bold: true
                         Layout.alignment: Qt.AlignHCenter
@@ -276,7 +276,7 @@ Item {
 
                     Text {
                         text: controller ? controller.previewPausedReason : ""
-                        color: "#9ca3af"
+                        color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                         font.pixelSize: 13
                         wrapMode: Text.WordWrap
                         Layout.maximumWidth: 440
