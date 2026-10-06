@@ -10,6 +10,7 @@ from application.services.markdown_viewer_service import MarkdownViewerService
 from interfaces.desktop.models.markdown_document_model import MarkdownDocumentModel
 from interfaces.desktop.qt_compat import (
     QDesktopServices,
+    QGuiApplication,
     QObject,
     QTimer,
     Property,
@@ -44,6 +45,7 @@ class MarkdownViewerController(QObject):
     previewErrorChanged = Signal()
     hasPreviewErrorChanged = Signal()
     previewPausedChanged = Signal()
+    isMathDegradedChanged = Signal()
 
     regionSelected = Signal(str, str)          # (region_id, occurrence_id)
     requestScrollToNode = Signal(int)          # (node_index)
@@ -56,7 +58,7 @@ class MarkdownViewerController(QObject):
     _internalDocError = Signal(int, str)       # (req_id, error_message)
     _internalReconcileLoaded = Signal(int, object)  # (req_id, MarkdownDocumentDTO)
     _internalReconcileError = Signal(int, str)       # (req_id, error_message)
-    _internalPreviewLoaded = Signal(int, int, object)  # (job_id, draft_revision, MarkdownDocumentDTO)
+    _internalPreviewLoaded = Signal(int, int, object, bool)  # (job_id, draft_revision, MarkdownDocumentDTO, is_degraded)
     _internalPreviewError = Signal(int, int, str)       # (job_id, draft_revision, error_message)
 
     def __init__(
@@ -98,10 +100,19 @@ class MarkdownViewerController(QObject):
         self._pending_preview_text: str = ""
         self._pending_preview_base_version: int = 1
 
+        # Live typing math degradation and quiescence state machine
+        self._is_math_degraded: bool = False
+        self._consecutive_math_timeouts: int = 0
+
         self._live_preview_timer = QTimer(self)
         self._live_preview_timer.setSingleShot(True)
         self._live_preview_timer.setInterval(250)
         self._live_preview_timer.timeout.connect(self._dispatch_pending_preview)
+
+        self._math_quiescence_timer = QTimer(self)
+        self._math_quiescence_timer.setSingleShot(True)
+        self._math_quiescence_timer.setInterval(2000)
+        self._math_quiescence_timer.timeout.connect(self._on_math_quiescence_timeout)
 
         self._internalDocLoaded.connect(self._on_internal_doc_loaded)
         self._internalDocError.connect(self._on_internal_doc_error)
@@ -168,6 +179,20 @@ class MarkdownViewerController(QObject):
         self.previewPausedChanged.emit()
 
     set_preview_paused = setPreviewPaused
+
+    def is_math_degraded(self) -> bool:
+        return self._is_math_degraded
+
+    isMathDegraded = Property(bool, is_math_degraded, notify=isMathDegradedChanged)
+
+    @Slot(str)
+    def copyToClipboard(self, text: str) -> None:
+        """Copies given text string to the system clipboard."""
+        cb = QGuiApplication.clipboard()
+        if cb is not None:
+            cb.setText(text)
+
+    copy_to_clipboard = copyToClipboard
 
     @property
     def has_active_draft(self) -> bool:
@@ -260,6 +285,11 @@ class MarkdownViewerController(QObject):
     # Document Loading & Lifecycle Slots
     # -----------------------------------------------------------------------
 
+    def _clear_negative_memo(self) -> None:
+        """Clears the session-scoped negative failure memo in the configured viewer service."""
+        if hasattr(self.viewer_service, "clear_math_negative_memo"):
+            self.viewer_service.clear_math_negative_memo()
+
     @Slot(int)
     def loadDocument(self, job_id: int) -> None:
         """Asynchronously loads and parses the active Markdown document for job_id."""
@@ -268,14 +298,22 @@ class MarkdownViewerController(QObject):
         req_id = self._request_id
 
         if job_id != self._active_job_id:
+            self._clear_negative_memo()
             if hasattr(self, "_live_preview_timer") and self._live_preview_timer.isActive():
                 self._live_preview_timer.stop()
+            if hasattr(self, "_math_quiescence_timer") and self._math_quiescence_timer.isActive():
+                self._math_quiescence_timer.stop()
+            was_degraded = self._is_math_degraded
+            self._is_math_degraded = False
+            self._consecutive_math_timeouts = 0
             self._has_active_draft = False
             self._draft_revision += 1
             self._has_preview_error = False
             self._preview_error_message = ""
             self.hasPreviewErrorChanged.emit()
             self.previewErrorChanged.emit()
+            if was_degraded:
+                self.isMathDegradedChanged.emit()
 
         self._is_loading = True
         self.loadingChanged.emit()
@@ -298,14 +336,22 @@ class MarkdownViewerController(QObject):
         req_id = self._request_id
 
         if job_id != self._active_job_id:
+            self._clear_negative_memo()
             if hasattr(self, "_live_preview_timer") and self._live_preview_timer.isActive():
                 self._live_preview_timer.stop()
+            if hasattr(self, "_math_quiescence_timer") and self._math_quiescence_timer.isActive():
+                self._math_quiescence_timer.stop()
+            was_degraded = self._is_math_degraded
+            self._is_math_degraded = False
+            self._consecutive_math_timeouts = 0
             self._has_active_draft = False
             self._draft_revision += 1
             self._has_preview_error = False
             self._preview_error_message = ""
             self.hasPreviewErrorChanged.emit()
             self.previewErrorChanged.emit()
+            if was_degraded:
+                self.isMathDegradedChanged.emit()
 
         try:
             dto = self.viewer_service.load_document(job_id)
@@ -317,6 +363,7 @@ class MarkdownViewerController(QObject):
     def reload(self) -> None:
         """Reloads the active document."""
         if self._active_job_id > 0:
+            self._clear_negative_memo()
             self.loadDocument(self._active_job_id)
 
     @Slot()
@@ -326,6 +373,12 @@ class MarkdownViewerController(QObject):
         self._draft_revision += 1
         if hasattr(self, "_live_preview_timer") and self._live_preview_timer.isActive():
             self._live_preview_timer.stop()
+        if hasattr(self, "_math_quiescence_timer") and self._math_quiescence_timer.isActive():
+            self._math_quiescence_timer.stop()
+        was_degraded = self._is_math_degraded
+        self._is_math_degraded = False
+        self._consecutive_math_timeouts = 0
+        self._clear_negative_memo()
         self._has_active_draft = False
         self._has_preview_error = False
         self._preview_error_message = ""
@@ -354,6 +407,8 @@ class MarkdownViewerController(QObject):
         self.highlightedRegionIdChanged.emit()
         self.highlightedOccurrenceIdChanged.emit()
         self.previewPausedChanged.emit()
+        if was_degraded:
+            self.isMathDegradedChanged.emit()
 
     @property
     def is_shutdown(self) -> bool:
@@ -373,6 +428,10 @@ class MarkdownViewerController(QObject):
         self._preview_paused_reason = ""
         if hasattr(self, "_live_preview_timer") and self._live_preview_timer.isActive():
             self._live_preview_timer.stop()
+        if hasattr(self, "_math_quiescence_timer") and self._math_quiescence_timer.isActive():
+            self._math_quiescence_timer.stop()
+        self._is_math_degraded = False
+        self._consecutive_math_timeouts = 0
         self._has_active_draft = False
         self._reconcile_in_flight = False
         self._request_id += 1
@@ -633,6 +692,8 @@ class MarkdownViewerController(QObject):
         self._pending_preview_text = raw_text
         self._pending_preview_base_version = base_version
         self._live_preview_timer.start(250)
+        if self._is_math_degraded:
+            self._math_quiescence_timer.start(2000)
 
     schedule_live_preview = scheduleLivePreview
 
@@ -658,11 +719,14 @@ class MarkdownViewerController(QObject):
         rev_id = self._draft_revision
         raw_text = self._pending_preview_text
         base_ver = self._pending_preview_base_version
+        degraded = self._is_math_degraded
 
         def _task():
             try:
-                dto = self.viewer_service.render_preview(job_id, raw_text, base_ver)
-                self._internalPreviewLoaded.emit(job_id, rev_id, dto)
+                dto = self.viewer_service.render_preview(
+                    job_id, raw_text, base_ver, degraded_math=degraded
+                )
+                self._internalPreviewLoaded.emit(job_id, rev_id, dto, degraded)
             except Exception as e:
                 self._internalPreviewError.emit(job_id, rev_id, str(e))
 
@@ -681,6 +745,8 @@ class MarkdownViewerController(QObject):
             return
         if hasattr(self, "_live_preview_timer") and self._live_preview_timer.isActive():
             self._live_preview_timer.stop()
+        if hasattr(self, "_math_quiescence_timer") and self._math_quiescence_timer.isActive():
+            self._math_quiescence_timer.stop()
         self._has_active_draft = False
         self._draft_revision += 1
         rev_id = self._draft_revision
@@ -688,7 +754,7 @@ class MarkdownViewerController(QObject):
         def _task():
             try:
                 dto = self.viewer_service.render_preview(job_id, raw_text, base_version)
-                self._internalPreviewLoaded.emit(job_id, rev_id, dto)
+                self._internalPreviewLoaded.emit(job_id, rev_id, dto, False)
             except Exception as e:
                 self._internalPreviewError.emit(job_id, rev_id, str(e))
 
@@ -704,15 +770,22 @@ class MarkdownViewerController(QObject):
         """
         if hasattr(self, "_live_preview_timer") and self._live_preview_timer.isActive():
             self._live_preview_timer.stop()
+        if hasattr(self, "_math_quiescence_timer") and self._math_quiescence_timer.isActive():
+            self._math_quiescence_timer.stop()
         self._has_active_draft = False
         self._draft_revision += 1
+        self._clear_negative_memo()
 
     reset_active_draft = resetActiveDraft
 
+    @Slot(int, int, object, bool)
     @Slot(int, int, object)
-
     def _on_internal_preview_loaded(
-        self, job_id: int, draft_revision: int, document_dto
+        self,
+        job_id: int,
+        draft_revision: int,
+        document_dto,
+        is_degraded: bool = False,
     ) -> None:
         """
         GUI-thread handler applying transient preview projection under Option B strict
@@ -738,9 +811,52 @@ class MarkdownViewerController(QObject):
         self._has_preview_error = False
         self._preview_error_message = ""
 
+        # Consecutive math timeout state machine
+        if getattr(document_dto, "had_math_timeout", False):
+            self._consecutive_math_timeouts += 1
+            if self._consecutive_math_timeouts >= 2 and not self._is_math_degraded:
+                self._is_math_degraded = True
+                if hasattr(self, "_math_quiescence_timer"):
+                    self._math_quiescence_timer.start(2000)
+                self.isMathDegradedChanged.emit()
+        else:
+            # Only a full/non-degraded preview can reset timeouts and clear degraded mode.
+            # Previews rendered with degraded_math=True (is_degraded=True) legitimately return
+            # had_math_timeout=False because cache misses project MathDegradedError;
+            # they must NEVER clear degraded mode or stop the quiescence timer.
+            if not is_degraded:
+                self._consecutive_math_timeouts = 0
+                if self._is_math_degraded:
+                    self._is_math_degraded = False
+                    if hasattr(self, "_math_quiescence_timer") and self._math_quiescence_timer.isActive():
+                        self._math_quiescence_timer.stop()
+                    self.isMathDegradedChanged.emit()
+
         self.hasPreviewErrorChanged.emit()
         self.previewErrorChanged.emit()
         self.documentChanged.emit()
+
+    @Slot()
+    def _on_math_quiescence_timeout(self) -> None:
+        """
+        Handler invoked when the 2.0s quiescence timer expires after typing has ceased.
+        Clears degraded math mode and dispatches an immediate full preview render
+        with degraded_math=False to restore rich math rendering.
+        """
+        if self._is_shutdown:
+            return
+        if not self._is_math_degraded:
+            return
+
+        self._is_math_degraded = False
+        self._consecutive_math_timeouts = 0
+        self.isMathDegradedChanged.emit()
+
+        # Trigger immediate full preview render (degraded_math=False) to seamlessly restore formulas
+        if self._has_active_draft and self._pending_preview_job_id > 0:
+            if hasattr(self, "_live_preview_timer") and self._live_preview_timer.isActive():
+                self._live_preview_timer.stop()
+            self._dispatch_pending_preview()
 
     @Slot(int, int, str)
     def _on_internal_preview_error(
