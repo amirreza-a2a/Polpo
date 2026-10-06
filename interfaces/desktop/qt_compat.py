@@ -31,6 +31,8 @@ try:
         QFont,
         QImage,
         QPainter,
+        QPalette,
+        QStyleHints,
     )
     from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
     from PySide6.QtQuick import QQuickItem, QQuickImageProvider
@@ -64,6 +66,8 @@ except ImportError:
         QFont,
         QImage,
         QPainter,
+        QPalette,
+        QStyleHints,
     )
     from PyQt6.QtQml import QQmlApplicationEngine, QQmlComponent
     from PyQt6.QtQuick import QQuickItem, QQuickImageProvider
@@ -94,6 +98,8 @@ __all__ = [
     "QSvgRenderer",
     "QImage",
     "QPainter",
+    "QPalette",
+    "QStyleHints",
     "QTextDocument",
     "QTextCursor",
     "QSyntaxHighlighter",
