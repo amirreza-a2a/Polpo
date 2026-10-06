@@ -7,7 +7,7 @@ Rectangle {
     signal tabSelected(int index)
 
     width: 220
-    color: "#111827"
+    color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "transparent"
 
     Column {
         anchors.fill: parent
@@ -16,7 +16,7 @@ Rectangle {
 
         Text {
             text: "PolpoT Desktop"
-            color: "#F9FAFB"
+            color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
             font.pixelSize: 18
             font.bold: true
             bottomPadding: 16
@@ -37,14 +37,14 @@ Rectangle {
                 width: parent.width
                 height: 40
                 radius: 6
-                color: root.currentTab === index ? "#374151" : "transparent"
+                color: root.currentTab === index ? ((typeof theme !== "undefined" && theme) ? theme.surfaceHover : "gray") : "transparent"
 
                 Text {
                     anchors.left: parent.left
                     anchors.leftMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
                     text: modelData.name
-                    color: root.currentTab === index ? "#60A5FA" : "#9CA3AF"
+                    color: root.currentTab === index ? ((typeof theme !== "undefined" && theme) ? theme.accent : "blue") : ((typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray")
                     font.pixelSize: 14
                     font.bold: root.currentTab === index
                 }

@@ -84,8 +84,8 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 48
-            color: "#18181f"
-            border.color: "#272732"
+            color: (typeof theme !== "undefined" && theme) ? theme.surface : "transparent"
+            border.color: (typeof theme !== "undefined" && theme) ? theme.border : "transparent"
             border.width: 1
 
             RowLayout {
@@ -96,7 +96,7 @@ Item {
 
                 Text {
                     text: "Markdown Source Editor"
-                    color: "#f3f4f6"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
                     font.pixelSize: 13
                     font.bold: true
                 }
@@ -107,13 +107,13 @@ Item {
                     height: 20
                     width: versionText.implicitWidth + 10
                     radius: 3
-                    color: "#374151"
+                    color: (typeof theme !== "undefined" && theme) ? theme.surfaceHover : "gray"
 
                     Text {
                         id: versionText
                         anchors.centerIn: parent
                         text: controller ? "v" + controller.activeVersion : "v0"
-                        color: "#93c5fd"
+                        color: (typeof theme !== "undefined" && theme) ? theme.accent : "blue"
                         font.pixelSize: 11
                         font.bold: true
                     }
@@ -129,13 +129,13 @@ Item {
                         width: 8
                         height: 8
                         radius: 4
-                        color: "#f59e0b"
+                        color: (typeof theme !== "undefined" && theme) ? theme.warning : "goldenrod"
                         anchors.verticalCenter: parent.verticalCenter
                     }
 
                     Text {
                         text: "Modified"
-                        color: "#f59e0b"
+                        color: (typeof theme !== "undefined" && theme) ? theme.warning : "goldenrod"
                         font.pixelSize: 11
                         font.bold: true
                         anchors.verticalCenter: parent.verticalCenter
@@ -198,8 +198,8 @@ Item {
             Layout.fillWidth: true
             Layout.preferredHeight: 44
             visible: controller ? (controller.hasConflict && !controller.mergeSessionActive) : false
-            color: "#451a03"
-            border.color: "#b45309"
+            color: (typeof theme !== "undefined" && theme) ? theme.warningBackground : "darkgoldenrod"
+            border.color: (typeof theme !== "undefined" && theme) ? theme.warningBorder : "goldenrod"
             border.width: 1
 
             RowLayout {
@@ -216,7 +216,7 @@ Item {
                 Text {
                     Layout.fillWidth: true
                     text: controller ? controller.conflictMessage : "Document modified externally."
-                    color: "#fef3c7"
+                    color: (typeof theme !== "undefined" && theme) ? theme.warningText : "white"
                     font.pixelSize: 12
                     font.bold: true
                     elide: Text.ElideRight
@@ -254,8 +254,8 @@ Item {
             Layout.preferredHeight: 36
             property bool dismissed: false
             visible: (controller ? controller.autoMergeNotification !== "" : false) && !dismissed
-            color: "#064e3b"
-            border.color: "#059669"
+            color: (typeof theme !== "undefined" && theme) ? theme.successBackground : "darkgreen"
+            border.color: (typeof theme !== "undefined" && theme) ? theme.successBorder : "green"
             border.width: 1
 
             Connections {
@@ -273,7 +273,7 @@ Item {
 
                 Text {
                     text: "✓"
-                    color: "#a7f3d0"
+                    color: (typeof theme !== "undefined" && theme) ? theme.success : "green"
                     font.pixelSize: 13
                     font.bold: true
                 }
@@ -283,7 +283,7 @@ Item {
                     objectName: "editorAutoMergeText"
                     Layout.fillWidth: true
                     text: controller ? controller.autoMergeNotification : ""
-                    color: "#ecfdf5"
+                    color: (typeof theme !== "undefined" && theme) ? theme.successText : "white"
                     font.pixelSize: 12
                     elide: Text.ElideRight
                 }
@@ -307,8 +307,8 @@ Item {
             Layout.fillWidth: true
             Layout.preferredHeight: 40
             visible: controller && controller.errorMessage !== "" && !controller.hasConflict
-            color: "#450a0a"
-            border.color: "#b91c1c"
+            color: (typeof theme !== "undefined" && theme) ? theme.errorBackground : "darkred"
+            border.color: (typeof theme !== "undefined" && theme) ? theme.errorBorder : "red"
             border.width: 1
 
             RowLayout {
@@ -320,7 +320,7 @@ Item {
                 Text {
                     Layout.fillWidth: true
                     text: controller ? controller.errorMessage : ""
-                    color: "#fecaca"
+                    color: (typeof theme !== "undefined" && theme) ? theme.errorText : "white"
                     font.pixelSize: 12
                     elide: Text.ElideRight
                 }
@@ -344,7 +344,7 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            color: "#0f0f13"
+            color: (typeof theme !== "undefined" && theme) ? theme.background : "black"
 
             ScrollView {
                 id: editorScrollView
@@ -357,7 +357,7 @@ Item {
                     textFormat: TextEdit.PlainText
                     wrapMode: TextEdit.Wrap
                     selectByMouse: true
-                    color: "#e5e7eb"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
                     font.family: "Monospace"
                     font.pixelSize: 13
                     padding: 16
@@ -439,7 +439,7 @@ Item {
 
                 Text {
                     text: controller && controller.isSaving ? "Saving canonical Markdown..." : "Loading source..."
-                    color: "#9ca3af"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                     font.pixelSize: 13
                 }
             }

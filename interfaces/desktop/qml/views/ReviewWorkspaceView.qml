@@ -90,7 +90,7 @@ Item {
 
         handle: Rectangle {
             implicitWidth: 4
-            color: SplitHandle.pressed ? "#3b82f6" : (SplitHandle.hovered ? "#60a5fa" : "#2a2a35")
+            color: SplitHandle.pressed ? ((typeof theme !== "undefined" && theme) ? theme.accentActive : "blue") : (SplitHandle.hovered ? ((typeof theme !== "undefined" && theme) ? theme.accentHover : "lightblue") : ((typeof theme !== "undefined" && theme) ? theme.border : "gray"))
         }
 
         // Left Pane: Document (PDF Page) Viewer
@@ -113,7 +113,7 @@ Item {
             SplitView.minimumWidth: 260
             SplitView.preferredWidth: 500
             SplitView.fillWidth: true
-            color: "#0f0f13"
+            color: (typeof theme !== "undefined" && theme) ? theme.background : "black"
 
             property int currentTab: 0  // 0 = Preview, 1 = Editor, 2 = Dual Pane
 
@@ -151,8 +151,8 @@ Item {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 36
-                    color: "#13131a"
-                    border.color: "#272732"
+                    color: (typeof theme !== "undefined" && theme) ? theme.surface : "transparent"
+                    border.color: (typeof theme !== "undefined" && theme) ? theme.border : "transparent"
                     border.width: 1
 
                     RowLayout {
@@ -229,8 +229,8 @@ Item {
                     objectName: "previewErrorBanner"
                     Layout.fillWidth: true
                     implicitHeight: 28
-                    color: "#3b1c1c"
-                    border.color: "#ef4444"
+                    color: (typeof theme !== "undefined" && theme) ? theme.errorBackground : "darkred"
+                    border.color: (typeof theme !== "undefined" && theme) ? theme.errorBorder : "red"
                     border.width: 1
                     visible: (typeof markdownViewerController !== "undefined" && markdownViewerController && markdownViewerController.hasPreviewError) ? true : false
 
@@ -243,7 +243,7 @@ Item {
                             id: previewErrorText
                             objectName: "previewErrorText"
                             text: "⚠️ Live preview error: " + (typeof markdownViewerController !== "undefined" && markdownViewerController ? markdownViewerController.previewErrorMessage : "")
-                            color: "#fca5a5"
+                            color: (typeof theme !== "undefined" && theme) ? theme.errorText : "white"
                             font.pixelSize: 11
                             elide: Text.ElideRight
                             Layout.fillWidth: true
@@ -325,7 +325,7 @@ Item {
                         objectName: "rightSplitHandle"
                         implicitWidth: 4
                         visible: rightPane.currentTab === 2
-                        color: SplitHandle.pressed ? "#3b82f6" : (SplitHandle.hovered ? "#60a5fa" : "#2a2a35")
+                        color: SplitHandle.pressed ? ((typeof theme !== "undefined" && theme) ? theme.accentActive : "blue") : (SplitHandle.hovered ? ((typeof theme !== "undefined" && theme) ? theme.accentHover : "lightblue") : ((typeof theme !== "undefined" && theme) ? theme.border : "gray"))
                     }
 
                     MarkdownEditorPane {
@@ -397,14 +397,14 @@ Item {
 
             Text {
                 text: "Unsaved Changes"
-                color: "#F9FAFB"
+                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
                 font.pixelSize: 16
                 font.bold: true
             }
 
             Text {
                 text: "This document has unsaved changes in the editor. Would you like to save your changes before exporting?"
-                color: "#D1D5DB"
+                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                 font.pixelSize: 13
                 wrapMode: Text.Wrap
                 width: parent.width
@@ -457,14 +457,14 @@ Item {
 
             Text {
                 text: "File Already Exists"
-                color: "#F9FAFB"
+                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
                 font.pixelSize: 16
                 font.bold: true
             }
 
             Text {
                 text: "The destination file already exists:\n" + overwriteConfirmModal.destinationPath + "\n\nWould you like to replace it?"
-                color: "#D1D5DB"
+                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                 font.pixelSize: 13
                 wrapMode: Text.Wrap
                 width: parent.width

@@ -94,6 +94,7 @@ class MarkdownEditorController(QObject):
         self._text_document: Optional[QTextDocument] = None
         self._quick_text_doc: Optional[QObject] = None
         self._highlighter: Optional[MarkdownSyntaxHighlighter] = None
+        self._syntax_theme: str = "dark"
         self._headless_doc: Optional[QTextDocument] = None
 
         self._search_query: str = ""
@@ -694,7 +695,20 @@ class MarkdownEditorController(QObject):
             self._quick_text_doc = quick_text_doc
             doc = quick_text_doc.textDocument()
             self._text_document = doc
-            self._highlighter = MarkdownSyntaxHighlighter(doc)
+            self._highlighter = MarkdownSyntaxHighlighter(doc, theme=self._syntax_theme)
+
+    @Slot(str)
+    def set_syntax_theme(self, resolved_theme: str) -> None:
+        """
+        Updates syntax highlighter formatting when desktop theme changes.
+        Retains the current theme to apply when a document is subsequently attached.
+        """
+        self._syntax_theme = resolved_theme
+        if self._highlighter is not None:
+            try:
+                self._highlighter.set_theme(resolved_theme)
+            except RuntimeError:
+                pass
 
     # -----------------------------------------------------------------------
     # Search and Replace Operations (Qt UTF-16 Coordinate Space)
