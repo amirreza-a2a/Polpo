@@ -20,7 +20,9 @@ from interfaces.desktop.controllers import (
     MarkdownViewerController,
     MarkdownEditorController,
     ExportController,
+    ThemeController,
 )
+from interfaces.desktop.theme import create_qt_palette
 from interfaces.desktop.models import (
     JobQueueModel,
     JobHistoryModel,
@@ -231,6 +233,13 @@ def create_app(
         settings_service=container.settings_service,
         artifact_service=container.artifact_service,
     )
+    initial_theme_pref = container.settings_service.get_settings().theme
+    theme_controller = ThemeController(initial_preference=initial_theme_pref)
+    settings_controller.settings_changed.connect(
+        lambda: theme_controller.set_theme_preference(settings_controller.theme)
+    )
+    # Set auxiliary Qt application palette before QML engine load to eliminate in-process scene-graph flicker
+    app.setPalette(create_qt_palette(theme_controller.current_palette))
     quick_convert_controller = QuickConvertController(
         quick_convert_service=container.quick_convert_service,
     )
@@ -287,6 +296,7 @@ def create_app(
     container.api_key_controller = api_key_controller
     container.prompt_controller = prompt_controller
     container.settings_controller = settings_controller
+    container.theme_controller = theme_controller
     container.quick_convert_controller = quick_convert_controller
     container.document_viewer_controller = document_viewer_controller
     container.markdown_viewer_controller = markdown_viewer_controller
@@ -305,6 +315,7 @@ def create_app(
     container.math_image_provider = math_image_provider
 
     ctx = engine.rootContext()
+    ctx.setContextProperty("theme", theme_controller)
     ctx.setContextProperty("jobController", job_controller)
     ctx.setContextProperty("apiKeyController", api_key_controller)
     ctx.setContextProperty("promptController", prompt_controller)
