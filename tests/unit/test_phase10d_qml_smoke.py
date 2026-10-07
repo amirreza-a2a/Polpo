@@ -105,7 +105,11 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
             dpi=150,
         )
 
-        self.controller = DocumentViewerController(viewer_service=self.mock_service)
+        self.mock_pub_service = MagicMock()
+        self.controller = DocumentViewerController(
+            viewer_service=self.mock_service,
+            region_publication_service=self.mock_pub_service,
+        )
         self.controller.loadPageSync(1, 1)
 
         self.engine = QQmlApplicationEngine()
@@ -379,3 +383,373 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
         self.assertIsNotNone(pan_zoom_area)
         self.assertTrue(pan_zoom_area.property("enabled"))
         self.assertEqual(self.controller.editorState, "selected")
+
+    def test_color_decoupling_preserves_semantic_colors_under_selection(self):
+        """
+        7. Verifies that selecting any region does NOT overwrite its semantic status color with cyan.
+           - Accepted region: stays #2a9d8f (green)
+           - AI unreviewed: stays #00b4d8 (cyan)
+           - User modified: stays #f77f00 (amber)
+           - User manual: stays #9d4edd (purple)
+           - Outer selectionManipulator (#00f0ff) and 8 resize handles provide the selection affordance.
+           - Badge text color stays #ffffff for high contrast.
+        """
+        def _to_hex(val) -> str:
+            if hasattr(val, "name"):
+                return val.name().lower()
+            return str(val).lower()
+
+        r_accepted = VisualRegionDTO(
+            id=10,
+            region_id="reg-accepted",
+            job_id=1,
+            page_number=1,
+            display_order=1,
+            origin=RegionOrigin.AI_DETECTED.value,
+            review_status=ReviewStatus.ACCEPTED.value,
+            sync_status="synchronized",
+            effective_bbox=BoundingBox(50, 50, 150, 150),
+            detected_bbox=BoundingBox(50, 50, 150, 150),
+            reviewed_bbox=BoundingBox(50, 50, 150, 150),
+            active_artifact_version=1,
+            active_artifact_uri="art/p1_r1.png",
+            is_modified=False,
+            is_deleted=False,
+            created_at=None,
+            updated_at=None,
+        )
+        r_unreviewed = VisualRegionDTO(
+            id=11,
+            region_id="reg-unreviewed",
+            job_id=1,
+            page_number=1,
+            display_order=2,
+            origin=RegionOrigin.AI_DETECTED.value,
+            review_status=ReviewStatus.UNREVIEWED.value,
+            sync_status="synchronized",
+            effective_bbox=BoundingBox(200, 200, 300, 300),
+            detected_bbox=BoundingBox(200, 200, 300, 300),
+            reviewed_bbox=None,
+            active_artifact_version=1,
+            active_artifact_uri="art/p1_r2.png",
+            is_modified=False,
+            is_deleted=False,
+            created_at=None,
+            updated_at=None,
+        )
+        r_modified = VisualRegionDTO(
+            id=12,
+            region_id="reg-modified",
+            job_id=1,
+            page_number=1,
+            display_order=3,
+            origin=RegionOrigin.AI_DETECTED.value,
+            review_status=ReviewStatus.MODIFIED.value,
+            sync_status="synchronized",
+            effective_bbox=BoundingBox(350, 350, 450, 450),
+            detected_bbox=BoundingBox(350, 350, 400, 400),
+            reviewed_bbox=BoundingBox(350, 350, 450, 450),
+            active_artifact_version=1,
+            active_artifact_uri="art/p1_r3.png",
+            is_modified=True,
+            is_deleted=False,
+            created_at=None,
+            updated_at=None,
+        )
+        r_manual = VisualRegionDTO(
+            id=13,
+            region_id="reg-manual",
+            job_id=1,
+            page_number=1,
+            display_order=4,
+            origin=RegionOrigin.USER_MANUAL.value,
+            review_status=ReviewStatus.UNREVIEWED.value,
+            sync_status="synchronized",
+            effective_bbox=BoundingBox(500, 500, 600, 600),
+            detected_bbox=None,
+            reviewed_bbox=BoundingBox(500, 500, 600, 600),
+            active_artifact_version=1,
+            active_artifact_uri="art/p1_r4.png",
+            is_modified=False,
+            is_deleted=False,
+            created_at=None,
+            updated_at=None,
+        )
+
+        self.mock_service.get_active_page_regions.return_value = [
+            r_accepted, r_unreviewed, r_modified, r_manual
+        ]
+        self.controller.loadPageSync(1, 1)
+        self.app.processEvents()
+
+        # Check all unselected colors
+        box_acc = find_quick_item(self.view_root, "boxRect_reg-accepted")
+        box_unrev = find_quick_item(self.view_root, "boxRect_reg-unreviewed")
+        box_mod = find_quick_item(self.view_root, "boxRect_reg-modified")
+        box_man = find_quick_item(self.view_root, "boxRect_reg-manual")
+
+        self.assertIsNotNone(box_acc)
+        self.assertIsNotNone(box_unrev)
+        self.assertIsNotNone(box_mod)
+        self.assertIsNotNone(box_man)
+
+        self.assertEqual(_to_hex(box_acc.property("boxColor")), "#2a9d8f")
+        self.assertEqual(_to_hex(box_unrev.property("boxColor")), "#00b4d8")
+        self.assertEqual(_to_hex(box_mod.property("boxColor")), "#f77f00")
+        self.assertEqual(_to_hex(box_man.property("boxColor")), "#9d4edd")
+
+        # Now select the accepted region: must retain #2a9d8f, NOT turn #00f0ff
+        self.controller.selectRegion("reg-accepted")
+        self.app.processEvents()
+
+        manipulator = find_quick_item(self.view_root, "selectionManipulator")
+        self.assertIsNotNone(manipulator)
+        self.assertTrue(manipulator.property("visible"))
+        self.assertEqual(_to_hex(box_acc.property("boxColor")), "#2a9d8f", "Accepted region must stay green when selected")
+
+        # Select unreviewed AI region: must retain #00b4d8
+        self.controller.selectRegion("reg-unreviewed")
+        self.app.processEvents()
+        self.assertEqual(_to_hex(box_unrev.property("boxColor")), "#00b4d8", "Unreviewed region must stay cyan default when selected")
+
+        # Select modified region: must retain #f77f00
+        self.controller.selectRegion("reg-modified")
+        self.app.processEvents()
+        self.assertEqual(_to_hex(box_mod.property("boxColor")), "#f77f00", "Modified region must stay amber when selected")
+
+        # Select manual region: must retain #9d4edd
+        self.controller.selectRegion("reg-manual")
+        self.app.processEvents()
+        self.assertEqual(_to_hex(box_man.property("boxColor")), "#9d4edd", "Manual region must stay purple when selected")
+
+    def test_accept_region_button_binding_and_click(self):
+        """
+        8. Verifies acceptRegionButton toolbar binding and click behavior:
+           - Enabled only when controller.canAcceptSelected is True (unreviewed AI region selected).
+           - Disabled when no selection, or when accepted/modified/manual region is selected.
+           - Clicking triggers controller.acceptSelectedRegion().
+        """
+        r_unrev = VisualRegionDTO(
+            id=20,
+            region_id="reg-to-accept",
+            job_id=1,
+            page_number=1,
+            display_order=1,
+            origin=RegionOrigin.AI_DETECTED.value,
+            review_status=ReviewStatus.UNREVIEWED.value,
+            sync_status="synchronized",
+            effective_bbox=BoundingBox(100, 100, 200, 200),
+            detected_bbox=BoundingBox(100, 100, 200, 200),
+            reviewed_bbox=None,
+            active_artifact_version=1,
+            active_artifact_uri="art/p1_r1.png",
+            is_modified=False,
+            is_deleted=False,
+            created_at=None,
+            updated_at=None,
+        )
+        r_accepted_res = VisualRegionDTO(
+            id=20,
+            region_id="reg-to-accept",
+            job_id=1,
+            page_number=1,
+            display_order=1,
+            origin=RegionOrigin.AI_DETECTED.value,
+            review_status=ReviewStatus.ACCEPTED.value,
+            sync_status="synchronized",
+            effective_bbox=BoundingBox(100, 100, 200, 200),
+            detected_bbox=BoundingBox(100, 100, 200, 200),
+            reviewed_bbox=BoundingBox(100, 100, 200, 200),
+            active_artifact_version=1,
+            active_artifact_uri="art/p1_r1.png",
+            is_modified=False,
+            is_deleted=False,
+            created_at=None,
+            updated_at=None,
+        )
+
+        self.mock_service.get_active_page_regions.return_value = [r_unrev]
+        self.controller.loadPageSync(1, 1)
+        self.app.processEvents()
+
+        accept_btn = self.view_root.findChild(object, "acceptRegionButton")
+        self.assertIsNotNone(accept_btn, "acceptRegionButton must exist in DocumentViewerView")
+        self.assertFalse(accept_btn.property("enabled"), "Initially disabled without selection")
+
+        # Select unreviewed AI region -> button becomes enabled
+        self.controller.selectRegion("reg-to-accept")
+        self.app.processEvents()
+        self.assertTrue(self.controller.canAcceptSelected)
+        self.assertTrue(accept_btn.property("enabled"), "Enabled when unreviewed AI region is selected")
+
+        # Clicking acceptRegionButton triggers accept
+        self.mock_service.accept_region.return_value = r_accepted_res
+        self.mock_service.get_active_page_regions.return_value = [r_accepted_res]
+
+        accept_btn.clicked.emit()
+        self.app.processEvents()
+
+        self.mock_service.accept_region.assert_called_with("reg-to-accept")
+        self.assertFalse(self.controller.canAcceptSelected, "Once accepted, canAcceptSelected must be False")
+        self.assertFalse(accept_btn.property("enabled"), "acceptRegionButton must be disabled after acceptance")
+
+    def test_undo_delete_button_binding_and_click(self):
+        """
+        9. Verifies undoDeleteButton toolbar binding and click behavior:
+           - Enabled only when controller.canUndoDelete is True.
+           - Clicking invokes controller.undoDelete(), which restores the deleted region.
+        """
+        r_del = VisualRegionDTO(
+            id=30,
+            region_id="reg-to-delete",
+            job_id=1,
+            page_number=1,
+            display_order=1,
+            origin=RegionOrigin.AI_DETECTED.value,
+            review_status=ReviewStatus.UNREVIEWED.value,
+            sync_status="synchronized",
+            effective_bbox=BoundingBox(100, 100, 200, 200),
+            detected_bbox=BoundingBox(100, 100, 200, 200),
+            reviewed_bbox=None,
+            active_artifact_version=1,
+            active_artifact_uri="art/p1_r1.png",
+            is_modified=False,
+            is_deleted=False,
+            created_at=None,
+            updated_at=None,
+        )
+        self.mock_service.get_active_page_regions.return_value = [r_del]
+        self.controller.loadPageSync(1, 1)
+        self.app.processEvents()
+
+        undo_btn = self.view_root.findChild(object, "undoDeleteButton")
+        del_btn = self.view_root.findChild(object, "deleteRegionButton")
+        self.assertIsNotNone(undo_btn, "undoDeleteButton must exist in DocumentViewerView")
+        self.assertIsNotNone(del_btn, "deleteRegionButton must exist in DocumentViewerView")
+
+        # Initially no deleted regions -> undoDeleteButton disabled
+        self.assertFalse(undo_btn.property("enabled"))
+        self.assertFalse(self.controller.canUndoDelete)
+
+        # Select region and click delete
+        self.controller.selectRegion("reg-to-delete")
+        self.app.processEvents()
+        self.assertTrue(del_btn.property("enabled"))
+
+        self.mock_service.get_active_page_regions.return_value = []
+        del_btn.clicked.emit()
+        self.app.processEvents()
+
+        self.mock_service.reject_region.assert_called_with("reg-to-delete")
+        self.assertTrue(self.controller.canUndoDelete)
+        self.assertTrue(undo_btn.property("enabled"), "undoDeleteButton must be enabled after deleting a region")
+
+        # Click undo delete
+        self.mock_service.get_active_page_regions.return_value = [r_del]
+        undo_btn.clicked.emit()
+        self.app.processEvents()
+
+        self.mock_service.restore_region.assert_called_with("reg-to-delete")
+        self.assertFalse(self.controller.canUndoDelete)
+        self.assertFalse(undo_btn.property("enabled"), "undoDeleteButton must be disabled once undone")
+
+    def test_sync_error_badge_visibility_and_retry_click(self):
+        """
+        10. Verifies sync error feedback and retry affordance:
+           - Visible on bounding box canvas delegate when sync_status === "sync_failed".
+           - Hidden when sync_status === "synchronized".
+           - Clicking syncErrorMouseArea invokes controller.retryRegionSync(region_id).
+           - Selection manipulator displays selectionRetryAffordance (z: 20) when selectedRegion.sync_status === "sync_failed".
+           - Clicking selectionRetryMouseArea invokes controller.retryRegionSync.
+        """
+        r_failed = VisualRegionDTO(
+            id=40,
+            region_id="reg-sync-fail",
+            job_id=1,
+            page_number=1,
+            display_order=1,
+            origin=RegionOrigin.AI_DETECTED.value,
+            review_status=ReviewStatus.UNREVIEWED.value,
+            sync_status="sync_failed",
+            effective_bbox=BoundingBox(100, 100, 200, 200),
+            detected_bbox=BoundingBox(100, 100, 200, 200),
+            reviewed_bbox=None,
+            active_artifact_version=0,
+            active_artifact_uri=None,
+            is_modified=False,
+            is_deleted=False,
+            created_at=None,
+            updated_at=None,
+        )
+        r_synced = VisualRegionDTO(
+            id=41,
+            region_id="reg-sync-ok",
+            job_id=1,
+            page_number=1,
+            display_order=2,
+            origin=RegionOrigin.AI_DETECTED.value,
+            review_status=ReviewStatus.UNREVIEWED.value,
+            sync_status="synchronized",
+            effective_bbox=BoundingBox(300, 300, 400, 400),
+            detected_bbox=BoundingBox(300, 300, 400, 400),
+            reviewed_bbox=None,
+            active_artifact_version=1,
+            active_artifact_uri="art/p1_r2.png",
+            is_modified=False,
+            is_deleted=False,
+            created_at=None,
+            updated_at=None,
+        )
+
+        self.mock_service.get_active_page_regions.return_value = [r_failed, r_synced]
+        self.controller.loadPageSync(1, 1)
+        self.app.processEvents()
+
+        # Canvas delegates
+        badge_failed = find_quick_item(self.view_root, "syncErrorBadge_reg-sync-fail")
+        badge_synced = find_quick_item(self.view_root, "syncErrorBadge_reg-sync-ok")
+
+        self.assertIsNotNone(badge_failed, "syncErrorBadge must exist for failed region")
+        self.assertIsNotNone(badge_synced, "syncErrorBadge must exist for synced region")
+
+        self.assertTrue(badge_failed.property("visible"), "syncErrorBadge must be visible when sync_status == 'sync_failed'")
+        self.assertFalse(badge_synced.property("visible"), "syncErrorBadge must be hidden when sync_status == 'synchronized'")
+
+        # Click retry on unselected failed badge via retryRequested signal
+        mouse_area_failed = find_quick_item(self.view_root, "syncErrorMouseArea_reg-sync-fail")
+        self.assertIsNotNone(mouse_area_failed)
+
+        mock_apply_res = MagicMock()
+        mock_apply_res.success = True
+        mock_apply_res.artifact_version = 1
+        mock_apply_res.artifact_uri = "art/p1_r1.png"
+        self.mock_pub_service.publish_region_review.return_value = mock_apply_res
+        self.mock_pub_service.publish_region_review.reset_mock()
+
+        badge_failed.retryRequested.emit()
+        self.controller.wait_for_apply()
+        self.app.processEvents()
+        self.mock_pub_service.publish_region_review.assert_called_with(job_id=1, region_id="reg-sync-fail")
+
+        # Now select failed region: selectionManipulator must show selectionRetryAffordance with z=20
+        self.controller.selectRegion("reg-sync-fail")
+        self.app.processEvents()
+
+        sel_retry = find_quick_item(self.view_root, "selectionRetryAffordance")
+        self.assertIsNotNone(sel_retry, "selectionRetryAffordance must exist on selectionManipulator")
+        self.assertTrue(sel_retry.property("visible"))
+        self.assertEqual(sel_retry.property("z"), 20, "selectionRetryAffordance must have z=20 (above drag area and handles)")
+
+        sel_retry_mouse = find_quick_item(self.view_root, "selectionRetryMouseArea")
+        self.assertIsNotNone(sel_retry_mouse)
+
+        self.mock_pub_service.publish_region_review.reset_mock()
+        sel_retry.retryRequested.emit()
+        self.controller.wait_for_apply()
+        self.app.processEvents()
+        self.mock_pub_service.publish_region_review.assert_called_with(job_id=1, region_id="reg-sync-fail")
+
+        # Select synced region: selectionRetryAffordance must be hidden
+        self.controller.selectRegion("reg-sync-ok")
+        self.app.processEvents()
+        self.assertFalse(sel_retry.property("visible"), "selectionRetryAffordance must be hidden for synced region")
