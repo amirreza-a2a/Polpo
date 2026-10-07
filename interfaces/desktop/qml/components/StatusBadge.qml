@@ -7,21 +7,53 @@ Rectangle {
     implicitWidth: label.implicitWidth + 16
     implicitHeight: 24
     radius: 12
+    border.width: 1
 
     color: {
+        var t = (typeof theme !== "undefined" && theme) ? theme : null;
+        if (!t) return "gray";
         switch (status.toLowerCase()) {
-            case "processing": return "#1E40AF";
-            case "done": return "#065F46";
-            case "failed": return "#991B1B";
-            case "cancelled": return "#4B5563";
-            case "cancelling": return "#7F1D1D";
-            case "paused": return "#92400E";
-            case "pausing": return "#D97706";
-            case "retrying": return "#B45309";
-            case "resuming": return "#1D4ED8";
-            case "saving": return "#047857";
-            case "running_now": return "#059669";
-            default: return "#374151";
+            case "processing":
+            case "resuming":
+                return t.infoBackground;
+            case "done":
+            case "saving":
+            case "running_now":
+                return t.successBackground;
+            case "failed":
+            case "cancelling":
+                return t.errorBackground;
+            case "paused":
+            case "pausing":
+            case "retrying":
+                return t.warningBackground;
+            case "cancelled":
+                return t.surfaceSunken;
+            default:
+                return t.surfaceElevated;
+        }
+    }
+
+    border.color: {
+        var t = (typeof theme !== "undefined" && theme) ? theme : null;
+        if (!t) return "transparent";
+        switch (status.toLowerCase()) {
+            case "processing":
+            case "resuming":
+                return t.infoBorder;
+            case "done":
+            case "saving":
+            case "running_now":
+                return t.successBorder;
+            case "failed":
+            case "cancelling":
+                return t.errorBorder;
+            case "paused":
+            case "pausing":
+            case "retrying":
+                return t.warningBorder;
+            default:
+                return t.border;
         }
     }
 
@@ -39,7 +71,30 @@ Rectangle {
                 default: return root.status.toUpperCase();
             }
         }
-        color: "#F9FAFB"
+        color: {
+            var t = (typeof theme !== "undefined" && theme) ? theme : null;
+            if (!t) return "white";
+            switch (root.status.toLowerCase()) {
+                case "processing":
+                case "resuming":
+                    return t.infoText;
+                case "done":
+                case "saving":
+                case "running_now":
+                    return t.successText;
+                case "failed":
+                case "cancelling":
+                    return t.errorText;
+                case "paused":
+                case "pausing":
+                case "retrying":
+                    return t.warningText;
+                case "cancelled":
+                    return t.textMuted;
+                default:
+                    return t.textPrimary;
+            }
+        }
         font.pixelSize: 11
         font.bold: true
     }

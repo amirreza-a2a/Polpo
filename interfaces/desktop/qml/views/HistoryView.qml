@@ -17,7 +17,7 @@ Item {
 
             Text {
                 text: "Conversion History"
-                color: "#F9FAFB"
+                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
                 font.pixelSize: 20
                 font.bold: true
             }
@@ -26,7 +26,7 @@ Item {
 
             Text {
                 text: "Total: " + (typeof jobHistoryModel !== "undefined" && jobHistoryModel ? jobHistoryModel.totalJobs : 0) + " jobs"
-                color: "#9CA3AF"
+                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                 font.pixelSize: 13
             }
         }
@@ -57,7 +57,7 @@ Item {
                             spacing: 10
                             Text {
                                 text: model.fileName
-                                color: "#F9FAFB"
+                                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
                                 font.pixelSize: 14
                                 font.bold: true
                                 elide: Text.ElideRight
@@ -69,7 +69,7 @@ Item {
                         }
                         Text {
                             text: model.createdAt + " • " + model.totalPages + " pages"
-                            color: "#9CA3AF"
+                            color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                             font.pixelSize: 11
                         }
                     }
@@ -100,7 +100,7 @@ Item {
             Text {
                 anchors.centerIn: parent
                 text: "No historical conversions found."
-                color: "#6B7280"
+                color: (typeof theme !== "undefined" && theme) ? theme.textMuted : "gray"
                 font.pixelSize: 14
                 visible: historyList.count === 0
             }
@@ -120,7 +120,7 @@ Item {
 
             Text {
                 text: "Page " + (typeof jobHistoryModel !== "undefined" && jobHistoryModel ? jobHistoryModel.currentPage : 1) + " of " + (typeof jobHistoryModel !== "undefined" && jobHistoryModel ? jobHistoryModel.totalPages : 1)
-                color: "#D1D5DB"
+                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                 font.pixelSize: 13
             }
 

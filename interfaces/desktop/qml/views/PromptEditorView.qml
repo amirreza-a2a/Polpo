@@ -19,7 +19,7 @@ Item {
 
             Text {
                 text: "System Prompts"
-                color: "#F9FAFB"
+                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
                 font.pixelSize: 20
                 font.bold: true
             }
@@ -92,14 +92,14 @@ Item {
                             spacing: 8
                             Text {
                                 text: model.name
-                                color: "#F9FAFB"
+                                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
                                 font.pixelSize: 15
                                 font.bold: true
                                 elide: Text.ElideRight
                                 Layout.maximumWidth: 260
                             }
                             Rectangle {
-                                color: "#1E3A8A"
+                                color: (typeof theme !== "undefined" && theme) ? theme.infoBackground : "darkblue"
                                 radius: 4
                                 implicitWidth: typeText.implicitWidth + 12
                                 implicitHeight: 18
@@ -107,14 +107,14 @@ Item {
                                     id: typeText
                                     anchors.centerIn: parent
                                     text: model.promptType.toUpperCase()
-                                    color: "#93C5FD"
+                                    color: (typeof theme !== "undefined" && theme) ? theme.infoText : "lightblue"
                                     font.pixelSize: 10
                                     font.bold: true
                                 }
                             }
                             Text {
                                 text: model.isDefault ? "★ DEFAULT" : ""
-                                color: "#34D399"
+                                color: (typeof theme !== "undefined" && theme) ? theme.successText : "lightgreen"
                                 font.pixelSize: 11
                                 font.bold: true
                             }
@@ -128,7 +128,7 @@ Item {
                             Text {
                                 anchors.fill: parent
                                 text: model.text
-                                color: "#9CA3AF"
+                                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                                 font.pixelSize: 12
                                 wrapMode: Text.Wrap
                                 maximumLineCount: 2
@@ -170,7 +170,7 @@ Item {
             Text {
                 anchors.centerIn: parent
                 text: "No prompt templates found. Click '+ New Prompt' to create one."
-                color: "#6B7280"
+                color: (typeof theme !== "undefined" && theme) ? theme.textMuted : "gray"
                 font.pixelSize: 14
                 visible: promptList.count === 0
             }
@@ -191,7 +191,7 @@ Item {
 
             Text {
                 text: "Create New Prompt Template"
-                color: "#F9FAFB"
+                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
                 font.pixelSize: 17
                 font.bold: true
             }
@@ -201,7 +201,7 @@ Item {
                 spacing: 12
                 Text {
                     text: "Prompt Name:"
-                    color: "#D1D5DB"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                     font.pixelSize: 13
                     Layout.preferredWidth: 110
                 }
@@ -217,7 +217,7 @@ Item {
                 spacing: 12
                 Text {
                     text: "Pipeline Type:"
-                    color: "#D1D5DB"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                     font.pixelSize: 13
                     Layout.preferredWidth: 110
                 }
@@ -230,7 +230,7 @@ Item {
 
             Text {
                 text: "Prompt Instructions (Supports Persian / English & Multiline):"
-                color: "#D1D5DB"
+                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                 font.pixelSize: 13
             }
 
@@ -247,11 +247,11 @@ Item {
                     textFormat: Text.PlainText
                     selectByMouse: true
                     placeholderText: "Enter complete AI system instructions (e.g. OCR extraction guidelines, formatting rules, LaTeX handling)..."
-                    color: "#F3F4F6"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
                     font.pixelSize: 13
                     background: Rectangle {
-                        color: "#111827"
-                        border.color: "#374151"
+                        color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "black"
+                        border.color: (typeof theme !== "undefined" && theme) ? theme.border : "gray"
                         radius: 6
                     }
                 }
@@ -308,7 +308,7 @@ Item {
 
             Text {
                 text: "Edit Prompt Template #" + root.editingPromptId
-                color: "#F9FAFB"
+                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
                 font.pixelSize: 17
                 font.bold: true
             }
@@ -318,7 +318,7 @@ Item {
                 spacing: 12
                 Text {
                     text: "Prompt Name:"
-                    color: "#D1D5DB"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                     font.pixelSize: 13
                     Layout.preferredWidth: 110
                 }
@@ -330,7 +330,7 @@ Item {
 
             Text {
                 text: "Prompt Instructions (Supports Persian / English & Multiline):"
-                color: "#D1D5DB"
+                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                 font.pixelSize: 13
             }
 
@@ -346,11 +346,11 @@ Item {
                     wrapMode: TextArea.Wrap
                     textFormat: Text.PlainText
                     selectByMouse: true
-                    color: "#F3F4F6"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
                     font.pixelSize: 13
                     background: Rectangle {
-                        color: "#111827"
-                        border.color: "#374151"
+                        color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "black"
+                        border.color: (typeof theme !== "undefined" && theme) ? theme.border : "gray"
                         radius: 6
                     }
                 }
