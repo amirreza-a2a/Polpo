@@ -87,8 +87,8 @@ class MarkdownSyntaxHighlighter(QSyntaxHighlighter):
     """
 
     # Pre-compiled block patterns
-    RE_CODE_FENCE_START = re.compile(r"^```[\w-]*\s*$")
-    RE_CODE_FENCE_END = re.compile(r"^```\s*$")
+    RE_CODE_FENCE_START = re.compile(r"^[ \t]{0,3}(?:`{3,}|~{3,})[\w-]*\s*$")
+    RE_CODE_FENCE_END = re.compile(r"^[ \t]{0,3}(?:`{3,}|~{3,})\s*$")
     RE_HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
     RE_THEMATIC_BREAK = re.compile(r"^(---|\*\*\*|___)\s*$")
     RE_BLOCKQUOTE = re.compile(r"^(>\s*)")
@@ -97,7 +97,13 @@ class MarkdownSyntaxHighlighter(QSyntaxHighlighter):
     INLINE_PATTERNS = [
         ("COMMENT", re.compile(r"<!--.*?-->")),
         ("CODE_SPAN", re.compile(r"`[^`\n]+`")),
-        ("REGION_TOKEN", re.compile(r"!\[\[.*?\]\]")),
+        (
+            "REGION_TOKEN",
+            re.compile(
+                r"!\[(?:(?!!\[).)*?(?<!\\)(?:\\\\)*\]\((?:<[^>\n]+>|\S+?)\s+(?P<q>[\"'])polpo:region\s*=\s*[^;\"\n\'\s]+;\s*occ\s*=\s*[^;\"\n\'\s]+(?P=q)\)"
+            ),
+        ),
+        ("LEGACY_REGION_TOKEN", re.compile(r"!\[\[.*?\]\]")),
         ("LINK", re.compile(r"!?\[([^\]\n]*)\]\(([^)\n]+)\)")),
         ("BOLD", re.compile(r"(\*\*|__)(?!\s)(.+?)(?<!\s)\1")),
         ("ITALIC", re.compile(r"(\*|_)(?!\s)([^*_\n]+?)(?<!\s)\1")),
@@ -283,6 +289,7 @@ class MarkdownSyntaxHighlighter(QSyntaxHighlighter):
             "COMMENT": self.comment_fmt,
             "CODE_SPAN": self.code_span_fmt,
             "REGION_TOKEN": self.region_fmt,
+            "LEGACY_REGION_TOKEN": self.region_fmt,
             "LINK": self.link_fmt,
             "BOLD": self.bold_fmt,
             "ITALIC": self.italic_fmt,
