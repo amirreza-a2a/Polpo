@@ -133,7 +133,7 @@ def wire_review_workspace_sync(
             markdown_editor_controller.notifyCanonicalDocumentAdvance(active_ver)
 
         def _on_canonical_document_published(job_id: int, document_version: int):
-            if markdown_editor_controller.activeJobId == job_id:
+            if markdown_editor_controller.activeJobId > 0 and markdown_editor_controller.activeJobId == job_id:
                 markdown_editor_controller.notifyCanonicalDocumentAdvance(document_version)
 
         def _on_conflict_or_merge_state_changed():

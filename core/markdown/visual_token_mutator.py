@@ -25,7 +25,9 @@ from core.exceptions.domain_exceptions import AmbiguousVisualTokenError
 
 __all__ = [
     "AmbiguousVisualTokenError",
+    "find_canonical_token_spans",
     "find_canonical_tokens",
+    "normalize_uuid",
     "upsert_visual_token",
     "remove_visual_token",
     "find_opaque_spans",
@@ -72,6 +74,9 @@ def _normalize_uuid(val: Union[str, UUID], name: str = "UUID") -> UUID:
     # Strictly validate against canonical lowercase hyphenated UUIDv4 representation
     validate_token_uuid(str(parsed))
     return parsed
+
+
+normalize_uuid = _normalize_uuid
 
 
 def _find_opaque_spans(text: str) -> List[Tuple[int, int]]:
@@ -249,6 +254,51 @@ def _find_matching_tokens(
     return matches
 
 
+def find_canonical_token_spans(
+    text: str,
+    region_id: Union[str, UUID],
+) -> List[Tuple[VisualOccurrenceToken, int, int]]:
+    """Finds all canonical visual occurrence tokens matching region_id with source character spans.
+
+    Args:
+        text: Raw Markdown document text.
+        region_id: Region UUID string (36-char hyphenated or 32-char hex) or UUID object.
+
+    Returns:
+        List of tuples (token, start_char, end_char) outside opaque spans in document order.
+
+    Raises:
+        ValueError: If region_id is not a valid UUIDv4.
+        TypeError: If region_id is neither str nor UUID.
+    """
+    target_uuid = _normalize_uuid(region_id, "region_id")
+    opaque_spans = _find_opaque_spans(text)
+    spans: List[Tuple[VisualOccurrenceToken, int, int]] = []
+
+    for match in _MD_IMAGE_RE.finditer(text):
+        m_start, m_end = match.start(), match.end()
+        if _is_opaque(m_start, m_end, opaque_spans):
+            continue
+
+        title = match.group("title")
+        diag, r_id, occ_id = classify_token_metadata(title)
+        if diag == TokenDiagnosticType.CANONICAL and r_id == target_uuid:
+            raw_uri = match.group("uri")
+            clean_uri = raw_uri[1:-1] if (raw_uri.startswith("<") and raw_uri.endswith(">")) else raw_uri
+            raw_alt = match.group("alt") or ""
+            semantic_alt = unescape_alt_text(raw_alt)
+            assert occ_id is not None
+            token = VisualOccurrenceToken(
+                region_id=r_id,
+                occurrence_id=occ_id,
+                uri=clean_uri,
+                alt_text=semantic_alt,
+            )
+            spans.append((token, m_start, m_end))
+
+    return spans
+
+
 def find_canonical_tokens(
     text: str,
     region_id: Union[str, UUID],
@@ -267,33 +317,7 @@ def find_canonical_tokens(
         ValueError: If region_id is not a valid UUIDv4.
         TypeError: If region_id is neither str nor UUID.
     """
-    target_uuid = _normalize_uuid(region_id, "region_id")
-    opaque_spans = _find_opaque_spans(text)
-    tokens: List[VisualOccurrenceToken] = []
-
-    for match in _MD_IMAGE_RE.finditer(text):
-        m_start, m_end = match.start(), match.end()
-        if _is_opaque(m_start, m_end, opaque_spans):
-            continue
-
-        title = match.group("title")
-        diag, r_id, occ_id = classify_token_metadata(title)
-        if diag == TokenDiagnosticType.CANONICAL and r_id == target_uuid:
-            raw_uri = match.group("uri")
-            clean_uri = raw_uri[1:-1] if (raw_uri.startswith("<") and raw_uri.endswith(">")) else raw_uri
-            raw_alt = match.group("alt") or ""
-            semantic_alt = unescape_alt_text(raw_alt)
-            assert occ_id is not None
-            tokens.append(
-                VisualOccurrenceToken(
-                    region_id=r_id,
-                    occurrence_id=occ_id,
-                    uri=clean_uri,
-                    alt_text=semantic_alt,
-                )
-            )
-
-    return tokens
+    return [token for token, _, _ in find_canonical_token_spans(text, region_id)]
 
 
 def upsert_visual_token(

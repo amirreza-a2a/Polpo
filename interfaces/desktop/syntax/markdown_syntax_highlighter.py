@@ -87,7 +87,7 @@ class MarkdownSyntaxHighlighter(QSyntaxHighlighter):
     """
 
     # Pre-compiled block patterns
-    RE_CODE_FENCE_START = re.compile(r"^[ \t]{0,3}(?:`{3,}|~{3,})[\w-]*\s*$")
+    RE_CODE_FENCE_START = re.compile(r"^[ \t]{0,3}(?:`{3,}[^`\r\n]*|~{3,}[^~\r\n]*)$")
     RE_CODE_FENCE_END = re.compile(r"^[ \t]{0,3}(?:`{3,}|~{3,})\s*$")
     RE_HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
     RE_THEMATIC_BREAK = re.compile(r"^(---|\*\*\*|___)\s*$")
@@ -100,7 +100,7 @@ class MarkdownSyntaxHighlighter(QSyntaxHighlighter):
         (
             "REGION_TOKEN",
             re.compile(
-                r"!\[(?:(?!!\[).)*?(?<!\\)(?:\\\\)*\]\((?:<[^>\n]+>|\S+?)\s+(?P<q>[\"'])polpo:region\s*=\s*[^;\"\n\'\s]+;\s*occ\s*=\s*[^;\"\n\'\s]+(?P=q)\)"
+                r"!\[(?:(?!!\[).)*?(?<!\\)(?:\\\\)*\]\((?:<[^>\n]+>|\S+?)\s+(?P<q>[\"'])polpo:region\s*=\s*[^;\"\n\'\s]+;\s*occ\s*=\s*[^;\"\n\'\s]+(?P=q)\s*\)"
             ),
         ),
         ("LEGACY_REGION_TOKEN", re.compile(r"!\[\[.*?\]\]")),

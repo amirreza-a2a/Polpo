@@ -111,3 +111,12 @@ class TestReviewWorkspaceSyncWiring(unittest.TestCase):
         self.assertIsNone(coord)
         # Emitting signal should not raise
         self.doc_viewer.canonicalDocumentPublished.emit(42, 3)
+
+    def test_canonical_advance_ignores_unloaded_editor_when_active_job_id_is_zero(self):
+        """
+        When editor activeJobId is 0 (no job loaded), canonicalDocumentPublished
+        for job 0 or any other job must NEVER trigger notifyCanonicalDocumentAdvance.
+        """
+        self.md_editor.activeJobId = 0
+        self.doc_viewer.canonicalDocumentPublished.emit(0, 5)
+        self.md_editor.notifyCanonicalDocumentAdvance.assert_not_called()

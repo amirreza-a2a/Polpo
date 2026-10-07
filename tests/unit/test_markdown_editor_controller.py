@@ -418,8 +418,10 @@ def test_insert_visual_region_token_preconditions_rejections(qapp, mock_editor_s
         assert ctrl.sourceText == original_text
         assert ctrl.isDirty is False
 
-        # 8. Invalid job ID
+        # 8. Invalid job ID (string or non-positive integer)
         assert ctrl.insertVisualRegionToken("bad-job-id", valid_uuid.hex, "Alt") is False
+        assert ctrl.insertVisualRegionToken(0, valid_uuid.hex, "Alt") is False
+        assert ctrl.insertVisualRegionToken(-5, valid_uuid.hex, "Alt") is False
         assert ctrl.sourceText == original_text
         assert ctrl.isDirty is False
 
@@ -436,6 +438,16 @@ def test_insert_visual_region_token_preconditions_rejections(qapp, mock_editor_s
         assert ctrl.isDirty is False
     finally:
         ctrl.shutdown()
+
+    # 11. Controller with no active job loaded (active_job_id == 0) must reject insertion
+    unloaded_ctrl = MarkdownEditorController(editor_service=mock_editor_service)
+    try:
+        assert unloaded_ctrl.activeJobId == 0
+        assert unloaded_ctrl.insertVisualRegionToken(42, valid_uuid.hex, "Alt") is False
+        assert unloaded_ctrl.sourceText == ""
+        assert unloaded_ctrl.isDirty is False
+    finally:
+        unloaded_ctrl.shutdown()
 
 
 def test_insert_visual_region_token_duplicate_guard(qapp, mock_editor_service):
@@ -586,3 +598,19 @@ def test_insert_visual_region_token_metaobject_slot_overloads(qapp, mock_editor_
         assert success is True
     finally:
         ctrl.shutdown()
+
+
+def test_insert_visual_region_token_clean_ast_imports():
+    """Verifies that markdown_editor_controller does not import private symbols from visual_token_mutator."""
+    import ast
+    from pathlib import Path
+
+    ctrl_path = Path(__file__).parent.parent.parent / "interfaces" / "desktop" / "controllers" / "markdown_editor_controller.py"
+    tree = ast.parse(ctrl_path.read_text(encoding="utf-8"))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "core.markdown.visual_token_mutator":
+            imported_names = [alias.name for alias in node.names]
+            assert "_MD_IMAGE_RE" not in imported_names
+            assert "_normalize_uuid" not in imported_names
+            assert "find_canonical_token_spans" in imported_names

@@ -21,11 +21,8 @@ from core.domain.visual_token import (
 from core.entities.visual_region import ReviewStatus, SyncStatus
 from core.exceptions.domain_exceptions import StaleDocumentVersionError
 from core.markdown.visual_token_mutator import (
-    _MD_IMAGE_RE,
-    _normalize_uuid,
-    find_canonical_tokens,
-    find_opaque_spans,
-    is_opaque_span,
+    find_canonical_token_spans,
+    normalize_uuid,
 )
 from interfaces.desktop.models.conflict_session import ConflictSession
 from interfaces.desktop.qt_compat import (
@@ -1088,11 +1085,11 @@ class MarkdownEditorController(QObject):
         except (ValueError, TypeError):
             return False
 
-        if self._active_job_id > 0 and numeric_job_id != self._active_job_id:
+        if numeric_job_id <= 0 or self._active_job_id <= 0 or numeric_job_id != self._active_job_id:
             return False
 
         try:
-            target_region_uuid = _normalize_uuid(region_id, "region_id")
+            target_region_uuid = normalize_uuid(region_id, "region_id")
         except (ValueError, TypeError):
             return False
 
@@ -1143,22 +1140,11 @@ class MarkdownEditorController(QObject):
             return False
 
         # Duplicate Token Guard
-        existing_tokens = find_canonical_tokens(self._source_text, target_region_uuid)
-        if existing_tokens:
-            token_pos = -1
-            opaque_spans = find_opaque_spans(self._source_text)
-            for match in _MD_IMAGE_RE.finditer(self._source_text):
-                if is_opaque_span(match.start(), match.end(), opaque_spans):
-                    continue
-                title = match.group("title")
-                diag, r_id, _ = classify_token_metadata(title)
-                if diag == TokenDiagnosticType.CANONICAL and r_id == target_region_uuid:
-                    token_pos = match.start()
-                    break
-
-            if token_pos >= 0:
-                self.updateCursorPosition(token_pos)
-                self.requestNavigateToPosition.emit(token_pos)
+        existing_matches = find_canonical_token_spans(self._source_text, target_region_uuid)
+        if existing_matches:
+            _, token_pos, _ = existing_matches[0]
+            self.updateCursorPosition(token_pos)
+            self.requestNavigateToPosition.emit(token_pos)
             return False
 
         # Construct canonical visual occurrence token

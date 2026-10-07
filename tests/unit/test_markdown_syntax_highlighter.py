@@ -337,13 +337,14 @@ def test_highlighter_canonical_visual_region_tokens(qapp):
 
 
 def test_highlighter_canonical_token_variations(qapp):
-    """Tests angle bracket destination, single quote title, empty alt, and escaped brackets."""
+    """Tests angle bracket destination, single quote title, empty alt, escaped brackets, and trailing whitespace before )."""
     doc = QTextDocument()
     tokens = [
         '![Angle](<crops/with space.png> "polpo:region=r1;occ=o1")',
         "![Single](crop.png 'polpo:region=r2;occ=o2')",
         '![](crop.png "polpo:region=r3;occ=o3")',
         '![Escaped [1\\]](crop.png "polpo:region=r4;occ=o4")',
+        '![Trailing Space](crop.png "polpo:region=r5;occ=o5" )',
     ]
     text = "\n".join(tokens)
     doc.setPlainText(text)
@@ -379,24 +380,30 @@ def test_highlighter_multiple_canonical_tokens_on_same_line(qapp):
 
 
 def test_highlighter_code_fences_suppress_canonical_tokens(qapp):
-    """Verifies that canonical tokens inside backtick or tilde code fences are NOT styled as badges."""
+    """Verifies that canonical tokens inside backtick or tilde code fences (including c++, c#, and info strings) are NOT styled as badges."""
     canonical_token = '![Chart](crop.jpg "polpo:region=r;occ=o")'
-    text = f"```\n{canonical_token}\n```\n~~~\n{canonical_token}\n~~~"
+    text = f"```c++\n{canonical_token}\n```\n~~~c#\n{canonical_token}\n~~~\n```python {{1-3}}\n{canonical_token}\n```"
     doc = QTextDocument()
     doc.setPlainText(text)
     hl = MarkdownSyntaxHighlighter(doc, theme="dark")
 
-    # Line 1: inside ``` fence
+    # Line 1: inside ```c++ fence
     b1 = doc.findBlockByNumber(1)
     assert b1.userState() == STATE_CODE_BLOCK
     assert len(b1.layout().formats()) == 1
     assert b1.layout().formats()[0].format.foreground().color().name() == "#c4b5fd"
 
-    # Line 4: inside ~~~ fence
+    # Line 4: inside ~~~c# fence
     b4 = doc.findBlockByNumber(4)
     assert b4.userState() == STATE_CODE_BLOCK
     assert len(b4.layout().formats()) == 1
     assert b4.layout().formats()[0].format.foreground().color().name() == "#c4b5fd"
+
+    # Line 7: inside ```python {1-3} fence
+    b7 = doc.findBlockByNumber(7)
+    assert b7.userState() == STATE_CODE_BLOCK
+    assert len(b7.layout().formats()) == 1
+    assert b7.layout().formats()[0].format.foreground().color().name() == "#c4b5fd"
 
 
 def test_highlighter_inline_code_and_comments_suppress_tokens(qapp):
