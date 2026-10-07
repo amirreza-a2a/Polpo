@@ -201,3 +201,17 @@ def test_editor_controller_applies_theme_to_newly_attached_document(qapp):
 
     b0 = doc.findBlockByNumber(0)
     assert b0.layout().formats()[0].format.foreground().color().name() == LIGHT_SYNTAX_PALETTE["headings"][0]
+
+
+def test_syntax_highlighter_case_insensitive_theme_normalization(qapp):
+    """Highlighter normalizes mixed case and whitespace-padded theme strings."""
+    doc = QTextDocument()
+    doc.setPlainText("# Heading 1")
+    hl = MarkdownSyntaxHighlighter(doc, theme=" LIGHT ")
+    assert hl.current_theme == "light"
+
+    hl.set_theme(" DARK ")
+    assert hl.current_theme == "dark"
+
+    hl.set_theme("Light")
+    assert hl.current_theme == "light"

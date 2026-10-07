@@ -54,13 +54,21 @@ def parse_math_image_url(url_id: str) -> tuple[str, str]:
 
 def inject_svg_color(svg_xml: str, color_hex: str) -> str:
     """
-    Injects a 'color' attribute into the root <svg> element so that glyphs
+    Injects or updates the 'color' attribute on the root <svg> element so that glyphs
     referencing 'currentColor' resolve to the theme foreground.
     Does not mutate the input string or cached SVG content.
     """
     if not svg_xml:
         return ""
-    return re.sub(r"<svg(\s|>)", rf'<svg color="{color_hex}"\1', svg_xml, count=1)
+    match = re.search(r"<svg(\s[^>]*?)?>", svg_xml)
+    if not match:
+        return svg_xml
+    svg_tag = match.group(0)
+    if re.search(r'\bcolor=["\'][^"\']*["\']', svg_tag):
+        new_tag = re.sub(r'\bcolor=["\'][^"\']*["\']', f'color="{color_hex}"', svg_tag, count=1)
+    else:
+        new_tag = re.sub(r"<svg(\s|>)", rf'<svg color="{color_hex}"\1', svg_tag, count=1)
+    return svg_xml[:match.start()] + new_tag + svg_xml[match.end():]
 
 
 class MathImageProvider(QQuickImageProvider):

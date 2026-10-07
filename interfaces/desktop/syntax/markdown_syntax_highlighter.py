@@ -105,7 +105,9 @@ class MarkdownSyntaxHighlighter(QSyntaxHighlighter):
 
     def __init__(self, parent: Optional[QObject] = None, theme: str = "dark"):
         super().__init__(parent)
-        self._current_theme: str = "light" if theme == "light" else "dark"
+        self._current_theme: str = (
+            "light" if isinstance(theme, str) and theme.strip().lower() == "light" else "dark"
+        )
         self._init_formats(self._current_theme)
         if self.document() is not None:
             self.rehighlight()
@@ -119,7 +121,11 @@ class MarkdownSyntaxHighlighter(QSyntaxHighlighter):
         Reconfigures formatting rules for the requested theme ('dark' or 'light')
         and triggers immediate rehighlighting of the active document.
         """
-        normalized = "light" if resolved_theme == "light" else "dark"
+        normalized = (
+            "light"
+            if isinstance(resolved_theme, str) and resolved_theme.strip().lower() == "light"
+            else "dark"
+        )
         if normalized == self._current_theme:
             return
         self._current_theme = normalized

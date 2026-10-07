@@ -231,4 +231,9 @@ def create_qt_palette(palette: ThemePalette) -> QPalette:
     qt_palette.setColor(QPalette.ColorRole.Dark, QColor(palette.borderStrong))
     qt_palette.setColor(QPalette.ColorRole.Light, QColor(palette.surfaceElevated))
 
+    # Disabled state for standard Qt dialogs and controls
+    qt_palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor(palette.textMuted))
+    qt_palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(palette.textMuted))
+    qt_palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, QColor(palette.textMuted))
+
     return qt_palette
