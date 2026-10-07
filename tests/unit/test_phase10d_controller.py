@@ -11,12 +11,21 @@ from core.entities.visual_region import RegionOrigin, ReviewStatus
 from core.geometry.coordinates import FitMode
 from application.dto.document_viewer_dto import PageRasterDTO, VisualRegionOverlayItemDTO
 from application.dto.visual_region_dto import VisualRegionDTO
+from application.dto.visual_region_publication_dto import RegionPublicationResultDTO
 from application.services.document_viewer_service import DocumentViewerService
+from application.services.visual_region_publication_service import VisualRegionPublicationService
 from interfaces.desktop.controllers.document_viewer_controller import DocumentViewerController
+from interfaces.desktop.qt_compat import QGuiApplication
 
 
 class TestPhase10DDocumentViewerController(unittest.TestCase):
     """Verifies DocumentViewerController selection, drag, resize, manual creation, and deletion lifecycles."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QGuiApplication.instance()
+        if cls.app is None:
+            cls.app = QGuiApplication(["-platform", "offscreen"])
 
     def setUp(self):
         self.mock_service = MagicMock(spec=DocumentViewerService)
@@ -277,3 +286,123 @@ class TestPhase10DDocumentViewerController(unittest.TestCase):
         self.assertEqual(rect_stretch["y"], 0.0)
         self.assertEqual(rect_stretch["width"], 1000.0)
         self.assertEqual(rect_stretch["height"], 800.0)
+
+    def tearDown(self):
+        self.controller.shutdown()
+
+    def test_canonical_document_advance_emitted_on_async_apply(self):
+        """Async apply publishes canonical document version via canonicalDocumentPublished signal."""
+        mock_pub = MagicMock(spec=VisualRegionPublicationService)
+        mock_pub.publish_region_review.return_value = RegionPublicationResultDTO(
+            job_id=42,
+            region_id="uuid-region-1",
+            success=True,
+            document_version=4,
+            artifact_version=2,
+            artifact_uri="crops/crop_1.jpg",
+        )
+        self.controller.region_publication_service = mock_pub
+
+        canonical_events = []
+        artifact_events = []
+        self.controller.canonicalDocumentPublished.connect(lambda j, v: canonical_events.append((j, v)))
+        self.controller.regionArtifactCommitted.connect(lambda j, r, v, u: artifact_events.append((j, r, v, u)))
+
+        self.controller._trigger_async_apply(42, "uuid-region-1")
+        self.controller.wait_for_apply(timeout=3.0)
+        QGuiApplication.processEvents()
+
+        self.assertEqual(len(canonical_events), 1)
+        self.assertEqual(canonical_events[0], (42, 4))
+        self.assertEqual(len(artifact_events), 1)
+        self.assertEqual(artifact_events[0], (42, "uuid-region-1", 2, "crops/crop_1.jpg"))
+
+    def test_canonical_document_advance_emitted_on_sync_apply(self):
+        """Sync apply publishes canonical document version via canonicalDocumentPublished signal."""
+        mock_pub = MagicMock(spec=VisualRegionPublicationService)
+        mock_pub.publish_region_review.return_value = RegionPublicationResultDTO(
+            job_id=42,
+            region_id="uuid-region-1",
+            success=True,
+            document_version=5,
+            artifact_version=3,
+            artifact_uri="crops/crop_2.jpg",
+        )
+        self.controller.region_publication_service = mock_pub
+
+        canonical_events = []
+        self.controller.canonicalDocumentPublished.connect(lambda j, v: canonical_events.append((j, v)))
+
+        res = self.controller.apply_region_sync(42, "uuid-region-1")
+        self.assertIsNotNone(res)
+        self.assertTrue(res.success)
+        self.assertEqual(len(canonical_events), 1)
+        self.assertEqual(canonical_events[0], (42, 5))
+
+    def test_artifact_and_document_versions_remain_strictly_distinct(self):
+        """Artifact version and document version are never swapped or conflated."""
+        mock_pub = MagicMock(spec=VisualRegionPublicationService)
+        # artifact_version is 10, document_version is 99
+        mock_pub.publish_region_review.return_value = RegionPublicationResultDTO(
+            job_id=42,
+            region_id="uuid-region-1",
+            success=True,
+            document_version=99,
+            artifact_version=10,
+            artifact_uri="crops/crop_distinct.jpg",
+        )
+        self.controller.region_publication_service = mock_pub
+
+        canonical_events = []
+        artifact_events = []
+        self.controller.canonicalDocumentPublished.connect(lambda j, v: canonical_events.append((j, v)))
+        self.controller.regionArtifactCommitted.connect(lambda j, r, v, u: artifact_events.append((j, r, v, u)))
+
+        self.controller.apply_region_sync(42, "uuid-region-1")
+
+        self.assertEqual(canonical_events[0], (42, 99))
+        self.assertEqual(artifact_events[0][2], 10)  # artifact version is 10, not 99
+
+    def test_missing_document_version_fails_and_never_emits_fake_zero(self):
+        """Absence of document_version is an invariant violation and never emits version 0."""
+        mock_pub = MagicMock(spec=VisualRegionPublicationService)
+        mock_pub.publish_region_review.return_value = RegionPublicationResultDTO(
+            job_id=42,
+            region_id="uuid-region-1",
+            success=True,
+            document_version=None,  # Missing version!
+            artifact_version=1,
+            artifact_uri="crops/crop.jpg",
+        )
+        self.controller.region_publication_service = mock_pub
+
+        canonical_events = []
+        failed_events = []
+        self.controller.canonicalDocumentPublished.connect(lambda j, v: canonical_events.append((j, v)))
+        self.controller.applyFailed.connect(lambda j, r, err: failed_events.append((j, r, err)))
+
+        res = self.controller.apply_region_sync(42, "uuid-region-1")
+        self.assertEqual(len(canonical_events), 0)
+        self.assertEqual(len(failed_events), 1)
+        self.assertIn("missing canonical document version", failed_events[0][2])
+
+    def test_publication_failure_does_not_emit_canonical_signal(self):
+        """When publication fails (success=False), canonicalDocumentPublished is never emitted."""
+        mock_pub = MagicMock(spec=VisualRegionPublicationService)
+        mock_pub.publish_region_review.return_value = RegionPublicationResultDTO(
+            job_id=42,
+            region_id="uuid-region-1",
+            success=False,
+            document_version=5,
+            status_message="OCC retry exhausted",
+        )
+        self.controller.region_publication_service = mock_pub
+
+        canonical_events = []
+        failed_events = []
+        self.controller.canonicalDocumentPublished.connect(lambda j, v: canonical_events.append((j, v)))
+        self.controller.applyFailed.connect(lambda j, r, err: failed_events.append((j, r, err)))
+
+        self.controller.apply_region_sync(42, "uuid-region-1")
+        self.assertEqual(len(canonical_events), 0)
+        self.assertEqual(len(failed_events), 1)

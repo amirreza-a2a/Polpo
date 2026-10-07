@@ -79,9 +79,11 @@ def test_controller_emits_applied_signal_on_success(qapp):
 
     applied_events = []
     committed_events = []
+    canonical_events = []
 
     controller.regionApplied.connect(lambda j, r, v, u: applied_events.append((j, r, v, u)))
     controller.regionArtifactCommitted.connect(lambda j, r, v, u: committed_events.append((j, r, v, u)))
+    controller.canonicalDocumentPublished.connect(lambda j, v: canonical_events.append((j, v)))
 
     try:
         controller._trigger_async_apply(job_id=10, region_id="reg-xyz")
@@ -93,6 +95,9 @@ def test_controller_emits_applied_signal_on_success(qapp):
 
         assert len(committed_events) == 1
         assert committed_events[0] == (10, "reg-xyz", 2, "crops/job_10/crop_reg-xyz.jpg")
+
+        assert len(canonical_events) == 1
+        assert canonical_events[0] == (10, 3)
     finally:
         controller.shutdown()
 
@@ -118,9 +123,11 @@ def test_controller_handles_publication_failure_gracefully(qapp):
 
     applied_events = []
     failed_events = []
+    canonical_events = []
 
     controller.regionApplied.connect(lambda j, r, v, u: applied_events.append((j, r, v, u)))
     controller.applyFailed.connect(lambda j, r, err: failed_events.append((j, r, err)))
+    controller.canonicalDocumentPublished.connect(lambda j, v: canonical_events.append((j, v)))
 
     try:
         # Failure case 1: DTO returns success=False
@@ -130,6 +137,7 @@ def test_controller_handles_publication_failure_gracefully(qapp):
 
         assert len(applied_events) == 0
         assert len(failed_events) == 1
+        assert len(canonical_events) == 0
         assert failed_events[0] == (7, "reg-fail", "Document version conflict")
         assert "Document version conflict" in controller.errorMessage
 
@@ -143,6 +151,7 @@ def test_controller_handles_publication_failure_gracefully(qapp):
 
         assert len(applied_events) == 0
         assert len(failed_events) == 1
+        assert len(canonical_events) == 0
         assert failed_events[0] == (7, "reg-fail", "Disk IO failure")
         assert "Disk IO failure" in controller.errorMessage
     finally:
