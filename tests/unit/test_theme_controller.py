@@ -132,6 +132,10 @@ class TestThemeController:
         tc._on_color_scheme_changed(Qt.ColorScheme.Unknown)
         assert tc.resolvedTheme == "dark"
 
+        # Simulate scheme=None (signal emitted without args); re-queries style hints
+        tc._on_color_scheme_changed(None)
+        assert tc.resolvedTheme in ("dark", "light")
+
     def test_fixed_preference_ignores_os_appearance_change(self, qapp):
         tc = ThemeController("dark")
         resolved_signals = []

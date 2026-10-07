@@ -79,7 +79,12 @@ class TestThemeTokens:
         assert dark_qp.color(QPalette.ColorRole.Button).name().lower() == DARK_PALETTE.surface.lower()
         assert dark_qp.color(QPalette.ColorRole.ButtonText).name().lower() == DARK_PALETTE.textPrimary.lower()
 
+        # Disabled roles
+        assert dark_qp.color(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text).name().lower() == DARK_PALETTE.textMuted.lower()
+        assert dark_qp.color(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText).name().lower() == DARK_PALETTE.textMuted.lower()
+
         # Light palette mapping
         light_qp = create_qt_palette(LIGHT_PALETTE)
         assert light_qp.color(QPalette.ColorRole.Window).name().lower() == LIGHT_PALETTE.background.lower()
         assert light_qp.color(QPalette.ColorRole.WindowText).name().lower() == LIGHT_PALETTE.textPrimary.lower()
+        assert light_qp.color(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text).name().lower() == LIGHT_PALETTE.textMuted.lower()

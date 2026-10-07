@@ -80,7 +80,9 @@ class ThemeController(QObject):
     def _on_color_scheme_changed(self, scheme=None) -> None:
         if self._theme_preference != "system":
             return
-        if scheme == Qt.ColorScheme.Light:
+        if scheme is None:
+            new_resolved = self._resolve_theme(self._theme_preference)
+        elif scheme == Qt.ColorScheme.Light:
             new_resolved = "light"
         else:
             new_resolved = "dark"

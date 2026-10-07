@@ -81,6 +81,24 @@ class TestMathImageProviderTheming:
         assert original != injected
         assert 'color=' not in original
 
+    def test_inject_svg_color_replaces_existing_color_without_duplicates(self):
+        svg_with_color = (
+            '<svg xmlns="http://www.w3.org/2000/svg" color="#000000" width="10ex" height="4ex">'
+            '<circle cx="50" cy="20" r="15" fill="currentColor"/>'
+            '</svg>'
+        )
+        injected = inject_svg_color(svg_with_color, "#e6edf3")
+        assert 'color="#e6edf3"' in injected
+        assert 'color="#000000"' not in injected
+        # Must have exactly one color attribute
+        assert injected.count('color=') == 1
+
+        # Must produce valid SVG renderer instance
+        from PySide6.QtSvg import QSvgRenderer
+        from PySide6.QtCore import QByteArray
+        renderer = QSvgRenderer(QByteArray(injected.encode("utf-8")))
+        assert renderer.isValid()
+
     def test_dark_and_light_render_distinct_glyph_colors(self, qapp, provider, cache):
         formula_hash = "color_test_hash"
         cache.put(

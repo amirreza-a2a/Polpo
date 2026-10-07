@@ -15,6 +15,8 @@ Rectangle {
             return t ? t.errorBackground : "darkred";
         } else if (bannerType === "warning") {
             return t ? t.warningBackground : "darkgoldenrod";
+        } else if (bannerType === "success") {
+            return t ? t.successBackground : "darkgreen";
         } else {
             return t ? t.infoBackground : "darkblue";
         }
@@ -25,6 +27,8 @@ Rectangle {
             return t ? t.errorBorder : "red";
         } else if (bannerType === "warning") {
             return t ? t.warningBorder : "goldenrod";
+        } else if (bannerType === "success") {
+            return t ? t.successBorder : "green";
         } else {
             return t ? t.infoBorder : "blue";
         }
@@ -43,6 +47,8 @@ Rectangle {
                     return t ? t.errorText : "white";
                 } else if (root.bannerType === "warning") {
                     return t ? t.warningText : "white";
+                } else if (root.bannerType === "success") {
+                    return t ? t.successText : "white";
                 } else {
                     return t ? t.infoText : "white";
                 }
