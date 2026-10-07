@@ -219,7 +219,7 @@ Item {
                         id: deleteRegionBtn
                         objectName: "deleteRegionButton"
                         text: "Delete Region"
-                        enabled: controller && controller.hasSelection && !controller.isLoading
+                        enabled: controller && controller.canDeleteSelected && !controller.isLoading
                         ToolTip.visible: hovered
                         ToolTip.delay: 400
                         ToolTip.text: "Delete selected visual region"
