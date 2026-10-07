@@ -381,3 +381,62 @@ def test_commit_source_text_failure_cleans_up_and_allows_retry(editor_env):
         latest_after = uow.document_versions.get_latest(job.id)
         assert latest_after.version == 2
         assert f"output_{job.id}_v2.md" in j_after.output_path
+
+
+def test_get_visual_region_success_and_lookups(editor_env):
+    import uuid
+    from core.entities.bounding_box import BoundingBox
+    from core.entities.visual_region import VisualRegion, ReviewStatus, SyncStatus
+
+    uow_factory = editor_env["uow_factory"]
+    storage = editor_env["storage"]
+    prompt_id = editor_env["prompt_id"]
+
+    reg_uuid = uuid.uuid4()
+    with uow_factory.create() as uow:
+        job = uow.jobs.save(
+            Job(
+                id=None,
+                file_name="doc.pdf",
+                file_path="file:///doc.pdf",
+                total_pages=1,
+                prompt_id=prompt_id,
+                status=JobStatus.DONE,
+            )
+        )
+        region = uow.visual_regions.save(
+            VisualRegion.create_ai_detected(
+                job_id=job.id,
+                page_number=1,
+                display_order=1,
+                detected_bbox=BoundingBox(100, 100, 500, 500),
+                region_id=reg_uuid.hex,
+            )
+        )
+        region.review_status = ReviewStatus.ACCEPTED
+        region.sync_status = SyncStatus.SYNCED
+        region.active_artifact_uri = "artifacts/crop_1.png"
+        uow.visual_regions.save(region)
+        uow.commit()
+
+    service = MarkdownEditorService(uow_factory=uow_factory, storage=storage)
+
+    # 1. Lookup by hex string
+    dto_hex = service.get_visual_region(job.id, reg_uuid.hex)
+    assert dto_hex is not None
+    assert dto_hex.region_id == reg_uuid.hex
+    assert dto_hex.job_id == job.id
+    assert dto_hex.active_artifact_uri == "artifacts/crop_1.png"
+    assert dto_hex.review_status == ReviewStatus.ACCEPTED.value
+    assert dto_hex.sync_status == SyncStatus.SYNCED.value
+
+    # 2. Lookup by hyphenated UUID string
+    dto_hyphen = service.get_visual_region(job.id, str(reg_uuid))
+    assert dto_hyphen is not None
+    assert dto_hyphen.region_id == reg_uuid.hex
+
+    # 3. Nonexistent region returns None
+    assert service.get_visual_region(job.id, uuid.uuid4().hex) is None
+
+    # 4. Mismatched job_id returns None
+    assert service.get_visual_region(job.id + 99, reg_uuid.hex) is None
