@@ -34,3 +34,5 @@ class VisualRegionOverlayItemDTO:
     y: float
     width: float
     height: float
+    sync_status: str = "pending_initial_crop"
+    active_artifact_uri: Optional[str] = None
