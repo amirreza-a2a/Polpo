@@ -4,13 +4,29 @@
 # ============================================================
 
 import re
+import uuid
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple, Union
 
 from application.dto.merge_dto import MergeAnalysisResultDTO
 from application.services.markdown_editor_service import MarkdownEditorService
 from application.services.markdown_merge_service import MarkdownMergeService
+from core.domain.visual_token import (
+    TokenDiagnosticType,
+    VisualOccurrenceToken,
+    classify_token_metadata,
+    serialize_canonical_token,
+    validate_token_uuid,
+)
+from core.entities.visual_region import ReviewStatus, SyncStatus
 from core.exceptions.domain_exceptions import StaleDocumentVersionError
+from core.markdown.visual_token_mutator import (
+    _MD_IMAGE_RE,
+    _normalize_uuid,
+    find_canonical_tokens,
+    find_opaque_spans,
+    is_opaque_span,
+)
 from interfaces.desktop.models.conflict_session import ConflictSession
 from interfaces.desktop.qt_compat import (
     QObject,
@@ -70,11 +86,13 @@ class MarkdownEditorController(QObject):
         self,
         editor_service: MarkdownEditorService,
         merge_service: Optional[MarkdownMergeService] = None,
+        region_service: Optional[Any] = None,
         parent: Optional[QObject] = None,
     ):
         super().__init__(parent)
         self.editor_service = editor_service
         self.merge_service = merge_service
+        self.region_service = region_service
 
         self._source_text: str = ""
         self._saved_source_text: str = ""
@@ -107,6 +125,7 @@ class MarkdownEditorController(QObject):
         self._is_replace_open: bool = False
         self._matches: List[Tuple[int, int]] = []
 
+        self._cursor_position: int = 0
         self._cursor_line: int = 1
         self._cursor_column: int = 1
         self._character_count: int = 0
@@ -237,6 +256,11 @@ class MarkdownEditorController(QObject):
         return self._is_replace_open
 
     isReplaceOpen = Property(bool, is_replace_open, notify=searchVisibilityChanged)
+
+    def cursor_position(self) -> int:
+        return self._cursor_position
+
+    cursorPosition = Property(int, cursor_position, notify=cursorMetricsChanged)
 
     def cursor_line(self) -> int:
         return self._cursor_line
@@ -647,6 +671,7 @@ class MarkdownEditorController(QObject):
         self._active_version = 0
         self._has_conflict = False
         self._conflict_message = ""
+        self._cursor_position = 0
         self._cursor_line = 1
         self._cursor_column = 1
         self._character_count = 0
@@ -972,10 +997,12 @@ class MarkdownEditorController(QObject):
         cursor = QTextCursor(doc)
         doc_len = max(0, doc.characterCount() - 1)
         clamped_pos = max(0, min(pos, doc_len))
+        pos_changed = (self._cursor_position != clamped_pos)
+        self._cursor_position = clamped_pos
         cursor.setPosition(clamped_pos)
         new_line = cursor.blockNumber() + 1
         new_col = cursor.positionInBlock() + 1
-        if self._cursor_line != new_line or self._cursor_column != new_col:
+        if self._cursor_line != new_line or self._cursor_column != new_col or pos_changed:
             self._cursor_line = new_line
             self._cursor_column = new_col
             self.cursorMetricsChanged.emit()
@@ -1013,6 +1040,154 @@ class MarkdownEditorController(QObject):
         pos = self.characterPositionOfLine(line)
         self.requestNavigateToPosition.emit(pos)
 
+    @Slot()
+    def undo(self) -> None:
+        """Undoes the last operation on the underlying document and syncs source text."""
+        doc = self._get_document()
+        if doc.isUndoAvailable():
+            doc.undo()
+            self.set_source_text(doc.toPlainText())
+
+    @Slot()
+    def redo(self) -> None:
+        """Redoes the last operation on the underlying document and syncs source text."""
+        doc = self._get_document()
+        if doc.isRedoAvailable():
+            doc.redo()
+            self.set_source_text(doc.toPlainText())
+
+    # -----------------------------------------------------------------------
+    # Visual Region Token Operations (TICK-P13C / P04 Predecessor)
+    # -----------------------------------------------------------------------
+
+    @Slot(int, str, str, result=bool)
+    @Slot(str, str, str, result=bool)
+    @Slot(int, str, result=bool)
+    @Slot(str, str, result=bool)
+    def insertVisualRegionToken(
+        self,
+        job_id: Union[int, str],
+        region_id: str,
+        alt_text: str = "",
+    ) -> bool:
+        """
+        Inserts a canonical visual-region token into the editor buffer at the current cursor position.
+        Strictly buffer-only mutation: marks buffer dirty without publishing to disk or DB.
+        Guards against duplicate insertion of existing canonical region tokens.
+
+        Args:
+            job_id: Target job identifier (must match active job if active job is loaded).
+            region_id: Region UUID string (36-char hyphenated or 32-char hex).
+            alt_text: Optional alt/caption text for CommonMark image token.
+
+        Returns:
+            bool: True if token was inserted, False if prerequisites failed or duplicate exists.
+        """
+        try:
+            numeric_job_id = int(job_id)
+        except (ValueError, TypeError):
+            return False
+
+        if self._active_job_id > 0 and numeric_job_id != self._active_job_id:
+            return False
+
+        try:
+            target_region_uuid = _normalize_uuid(region_id, "region_id")
+        except (ValueError, TypeError):
+            return False
+
+        # Retrieve visual region from region_service or editor_service
+        region = None
+        if self.region_service is not None:
+            if hasattr(self.region_service, "get_visual_region"):
+                region = self.region_service.get_visual_region(numeric_job_id, str(target_region_uuid))
+                if region is None:
+                    region = self.region_service.get_visual_region(numeric_job_id, target_region_uuid.hex)
+            elif hasattr(self.region_service, "get_region"):
+                region = self.region_service.get_region(numeric_job_id, str(target_region_uuid))
+                if region is None:
+                    region = self.region_service.get_region(numeric_job_id, target_region_uuid.hex)
+        elif self.editor_service is not None and hasattr(self.editor_service, "get_visual_region"):
+            region = self.editor_service.get_visual_region(numeric_job_id, str(target_region_uuid))
+            if region is None:
+                region = self.editor_service.get_visual_region(numeric_job_id, target_region_uuid.hex)
+
+        if region is None:
+            return False
+
+        if getattr(region, "job_id", None) is not None and region.job_id != numeric_job_id:
+            return False
+
+        if getattr(region, "is_active", True) is False:
+            return False
+
+        if getattr(region, "is_deleted", False):
+            return False
+
+        review_status = getattr(region, "review_status", None)
+        if review_status is not None:
+            rev_str = review_status.value if hasattr(review_status, "value") else str(review_status).lower()
+            if rev_str in ("rejected", ReviewStatus.REJECTED.value):
+                return False
+
+        sync_status = getattr(region, "sync_status", None)
+        if sync_status is not None:
+            sync_str = sync_status.value if hasattr(sync_status, "value") else str(sync_status).lower()
+            if sync_str not in ("synced", "synchronized", SyncStatus.SYNCED.value):
+                return False
+        else:
+            return False
+
+        artifact_uri = getattr(region, "active_artifact_uri", None)
+        if not artifact_uri or not str(artifact_uri).strip():
+            return False
+
+        # Duplicate Token Guard
+        existing_tokens = find_canonical_tokens(self._source_text, target_region_uuid)
+        if existing_tokens:
+            token_pos = -1
+            opaque_spans = find_opaque_spans(self._source_text)
+            for match in _MD_IMAGE_RE.finditer(self._source_text):
+                if is_opaque_span(match.start(), match.end(), opaque_spans):
+                    continue
+                title = match.group("title")
+                diag, r_id, _ = classify_token_metadata(title)
+                if diag == TokenDiagnosticType.CANONICAL and r_id == target_region_uuid:
+                    token_pos = match.start()
+                    break
+
+            if token_pos >= 0:
+                self.updateCursorPosition(token_pos)
+                self.requestNavigateToPosition.emit(token_pos)
+            return False
+
+        # Construct canonical visual occurrence token
+        fresh_occ_uuid = uuid.uuid4()
+        token = VisualOccurrenceToken(
+            region_id=target_region_uuid,
+            occurrence_id=fresh_occ_uuid,
+            uri=str(artifact_uri).strip(),
+            alt_text=alt_text or "",
+        )
+        token_str = serialize_canonical_token(token)
+
+        doc = self._get_document()
+        cursor = QTextCursor(doc)
+        doc_len = max(0, doc.characterCount() - 1)
+        insert_pos = max(0, min(self._cursor_position, doc_len))
+        cursor.setPosition(insert_pos)
+        cursor.beginEditBlock()
+        try:
+            cursor.insertText(token_str)
+        finally:
+            cursor.endEditBlock()
+
+        self.set_source_text(doc.toPlainText())
+        new_cursor_pos = insert_pos + len(token_str)
+        self.updateCursorPosition(new_cursor_pos)
+        self.requestNavigateToPosition.emit(new_cursor_pos)
+        return True
+
     def shutdown(self) -> None:
         """Shuts down background thread executor and detaches syntax highlighter."""
         self._is_shutdown = True
@@ -1043,6 +1218,7 @@ class MarkdownEditorController(QObject):
         self._error_message = ""
         self._has_conflict = False
         self._conflict_message = ""
+        self._cursor_position = 0
         self._cursor_line = 1
         self._cursor_column = 1
         self._character_count = len(self._source_text)

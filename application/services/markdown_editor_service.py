@@ -5,10 +5,12 @@
 
 import os
 from typing import Optional, Tuple
+import uuid
 
 from application.ports.storage import IArtifactStorage
 from application.ports.unit_of_work import IUnitOfWorkFactory
 from application.services.document_publication_service import DocumentPublicationService
+from application.dto.visual_region_dto import VisualRegionDTO
 from core.entities.artifact import ArtifactHandle, ArtifactType, StorageBackendType
 from core.exceptions.domain_exceptions import (
     ArtifactNotFoundError,
@@ -138,3 +140,39 @@ class MarkdownEditorService:
             published_by="MARKDOWN_EDITOR",
         )
         return record.version
+
+    def get_visual_region(self, job_id: int, region_id: str) -> Optional[VisualRegionDTO]:
+        """
+        Retrieves visual region DTO by job_id and region_id for editor token operations.
+        Returns None if not found or if job_id does not match.
+        """
+        with self.uow_factory.create() as uow:
+            region = uow.visual_regions.get_by_region_id(region_id)
+            if not region:
+                try:
+                    u = uuid.UUID(region_id)
+                    alt_id = u.hex if "-" in region_id else str(u)
+                    region = uow.visual_regions.get_by_region_id(alt_id)
+                except Exception:
+                    pass
+            if not region or region.job_id != job_id:
+                return None
+            return VisualRegionDTO(
+                id=region.id,
+                region_id=region.region_id,
+                job_id=region.job_id,
+                page_number=region.page_number,
+                display_order=region.display_order,
+                origin=region.origin.value if hasattr(region.origin, "value") else str(region.origin),
+                review_status=region.review_status.value if hasattr(region.review_status, "value") else str(region.review_status),
+                sync_status=region.sync_status.value if hasattr(region.sync_status, "value") else str(region.sync_status),
+                effective_bbox=region.effective_bbox,
+                detected_bbox=region.detected_bbox,
+                reviewed_bbox=region.reviewed_bbox,
+                active_artifact_version=region.active_artifact_version,
+                active_artifact_uri=region.active_artifact_uri,
+                is_modified=region.is_modified,
+                is_deleted=region.is_deleted,
+                created_at=region.created_at.isoformat() if region.created_at else None,
+                updated_at=region.updated_at.isoformat() if region.updated_at else None,
+            )
