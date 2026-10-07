@@ -223,11 +223,13 @@ class VisualRegion:
         """
         if self.review_status == ReviewStatus.ACCEPTED:
             return
-        if self.origin == RegionOrigin.USER_MANUAL or self.review_status == ReviewStatus.MANUAL:
+        if self.review_status == ReviewStatus.MANUAL:
             return
         if self.review_status != ReviewStatus.UNREVIEWED:
             raise DomainError(
                 f"Cannot accept region '{self.region_id}' with review_status '{self.review_status}'."
             )
+        if self.origin == RegionOrigin.USER_MANUAL:
+            return
         self.review_status = ReviewStatus.ACCEPTED
         self.updated_at = datetime.now(timezone.utc)

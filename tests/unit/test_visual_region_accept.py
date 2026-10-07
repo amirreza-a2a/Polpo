@@ -101,6 +101,20 @@ class TestVisualRegionAcceptDomain(unittest.TestCase):
         with self.assertRaises(DomainError):
             region.accept()
 
+    def test_accept_rejected_manual_raises_domain_error(self):
+        bbox = BoundingBox(ymin=50, xmin=50, ymax=200, xmax=200)
+        region = VisualRegion.create_user_manual(
+            job_id=1,
+            page_number=1,
+            display_order=1,
+            reviewed_bbox=bbox,
+        )
+        region.reject()
+        self.assertEqual(region.review_status, ReviewStatus.REJECTED)
+
+        with self.assertRaises(DomainError):
+            region.accept()
+
     def test_accept_modified_raises_domain_error(self):
         bbox = BoundingBox(ymin=100, xmin=100, ymax=300, xmax=400)
         region = VisualRegion.create_ai_detected(
@@ -411,3 +425,58 @@ class TestDocumentViewerControllerSlotsAndCapabilities(unittest.TestCase):
         self.controller.loadPageSync(42, 2)
 
         self.assertFalse(self.controller.canUndoDelete)
+
+    def test_slot_retry_region_sync_without_args_uses_selected_region(self):
+        self.controller.selectRegion("uuid-manual-2")
+        with patch.object(self.controller, "_trigger_async_apply") as mock_apply:
+            self.controller.retryRegionSync()
+            mock_apply.assert_called_once_with(42, "uuid-manual-2")
+
+    def test_slot_restore_region_without_args_uses_last_deleted_region(self):
+        self.controller.selectRegion("uuid-ai-1")
+        with patch.object(self.controller, "_trigger_async_apply"):
+            self.controller.deleteSelectedRegion()
+
+        self.mock_service.restore_region.return_value = self.r_ai
+        with patch.object(self.controller, "_trigger_async_apply") as mock_apply:
+            self.controller.restoreRegion()
+            self.mock_service.restore_region.assert_called_once_with("uuid-ai-1")
+            mock_apply.assert_called_once_with(42, "uuid-ai-1")
+            self.assertFalse(self.controller.canUndoDelete)
+
+    def test_page_load_error_clears_undo_target(self):
+        self.controller.selectRegion("uuid-ai-1")
+        with patch.object(self.controller, "_trigger_async_apply"):
+            self.controller.deleteSelectedRegion()
+
+        self.assertTrue(self.controller.canUndoDelete)
+
+        # Trigger internal page error
+        self.controller._on_internal_page_error(self.controller._request_id, "Corrupt PDF")
+        self.assertFalse(self.controller.canUndoDelete)
+
+    def test_internal_apply_error_reloads_regions_and_updates_sync_status(self):
+        self.controller.selectRegion("uuid-ai-1")
+        r_ai_failed = VisualRegionDTO(
+            id=1,
+            region_id="uuid-ai-1",
+            job_id=42,
+            page_number=1,
+            display_order=1,
+            origin=RegionOrigin.AI_DETECTED.value,
+            review_status=ReviewStatus.UNREVIEWED.value,
+            sync_status="sync_failed",
+            effective_bbox=BoundingBox(100, 100, 300, 400),
+            detected_bbox=BoundingBox(100, 100, 300, 400),
+            reviewed_bbox=None,
+            active_artifact_version=1,
+            active_artifact_uri=None,
+            is_modified=False,
+            is_deleted=False,
+        )
+        self.mock_service.get_active_page_regions.return_value = [r_ai_failed, self.r_manual]
+
+        self.assertFalse(self.controller.canRetrySelectedSync)
+        # Apply fails
+        self.controller._on_internal_apply_error(42, "uuid-ai-1", "Crop error")
+        self.assertTrue(self.controller.canRetrySelectedSync)

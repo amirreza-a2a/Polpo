@@ -539,6 +539,11 @@ class DocumentViewerController(QObject):
         """
         self._error_message = f"Failed to apply review for region {region_id}: {error_msg}"
         self.errorChanged.emit()
+        if job_id == self._current_job_id:
+            self._reload_page_regions()
+            self.regionsChanged.emit()
+            if self._selected_region_id:
+                self.selectionChanged.emit()
         self.applyFailed.emit(job_id, region_id, error_msg)
 
     @Slot()
@@ -1387,10 +1392,12 @@ class DocumentViewerController(QObject):
             self.errorChanged.emit()
             return False
 
+    @Slot()
     @Slot(str)
-    def restoreRegion(self, region_id: str) -> None:
+    def restoreRegion(self, region_id: str = "") -> None:
         """Restores a rejected region back into active document review state."""
-        self._do_restore_region(region_id)
+        target_id = region_id or self._last_deleted_region_id
+        self._do_restore_region(target_id)
 
     @Slot()
     def undoDelete(self) -> None:
@@ -1400,12 +1407,14 @@ class DocumentViewerController(QObject):
         target_id = self._last_deleted_region_id
         self._do_restore_region(target_id)
 
+    @Slot()
     @Slot(str)
-    def retryRegionSync(self, region_id: str) -> None:
+    def retryRegionSync(self, region_id: str = "") -> None:
         """Dispatches asynchronous publication/cropping for a failed or dirty region."""
-        if not region_id:
+        target_id = region_id or self._selected_region_id
+        if not target_id:
             return
-        self._trigger_async_apply(self._current_job_id, region_id)
+        self._trigger_async_apply(self._current_job_id, target_id)
 
     @Slot()
     def resetSelectedRegionToAi(self) -> None:
@@ -1506,6 +1515,7 @@ class DocumentViewerController(QObject):
         self._is_loading = False
         self._error_message = error_msg
         self._active_regions = []
+        self._reset_undo_delete()
         self.clearSelection()
 
         self.loadingChanged.emit()
