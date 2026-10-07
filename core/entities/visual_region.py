@@ -212,3 +212,22 @@ class VisualRegion:
             self.review_status = ReviewStatus.MANUAL
         self.sync_status = SyncStatus.DIRTY_RECROP_REQUIRED
         self.updated_at = datetime.now(timezone.utc)
+
+    def accept(self) -> None:
+        """
+        Explicitly accepts an AI-detected visual region.
+        Valid for AI_DETECTED regions with review_status == UNREVIEWED.
+        Idempotent if already ACCEPTED.
+        Manual regions remain MANUAL and are not modified.
+        Does not mutate geometry, sync_status, or trigger re-crop.
+        """
+        if self.review_status == ReviewStatus.ACCEPTED:
+            return
+        if self.origin == RegionOrigin.USER_MANUAL or self.review_status == ReviewStatus.MANUAL:
+            return
+        if self.review_status != ReviewStatus.UNREVIEWED:
+            raise DomainError(
+                f"Cannot accept region '{self.region_id}' with review_status '{self.review_status}'."
+            )
+        self.review_status = ReviewStatus.ACCEPTED
+        self.updated_at = datetime.now(timezone.utc)

@@ -61,6 +61,7 @@ class DocumentViewerController(QObject):
     regionUpdated = Signal(str)
     regionCreated = Signal(str)
     regionDeleted = Signal(str)
+    canUndoDeleteChanged = Signal()
 
     # Public signals for review apply and artifact regeneration (Visual Region Publication Pipeline)
     regionArtifactCommitted = Signal(int, str, int, str)  # (job_id, region_id, new_version, new_artifact_uri)
@@ -99,6 +100,7 @@ class DocumentViewerController(QObject):
         self._is_loading: bool = False
         self._error_message: str = ""
         self._active_regions: List[Dict[str, Any]] = []
+        self._last_deleted_region_id: str = ""
 
         # Interactive Bounding Box Editor State (Phase 10D / 10E Hardening)
         self._interaction_mode: str = "pan_select"  # "pan_select", "create_region"
@@ -233,6 +235,37 @@ class DocumentViewerController(QObject):
             return False
         return sel.get("origin") == "ai_detected" and sel.get("is_modified", False)
 
+    @Property(bool, notify=canUndoDeleteChanged)
+    def canUndoDelete(self) -> bool:
+        return bool(self._last_deleted_region_id)
+
+    @Property(bool, notify=selectionChanged)
+    def canAcceptSelected(self) -> bool:
+        sel = self.selectedRegion
+        return bool(
+            sel
+            and sel.get("origin") == "ai_detected"
+            and sel.get("review_status") == "unreviewed"
+        )
+
+    @Property(bool, notify=selectionChanged)
+    def canDeleteSelected(self) -> bool:
+        return self.hasSelection
+
+    @Property(bool, notify=selectionChanged)
+    def canRetrySelectedSync(self) -> bool:
+        sel = self.selectedRegion
+        return bool(sel and sel.get("sync_status") == "sync_failed")
+
+    @Property(bool, notify=selectionChanged)
+    def canCopySelectedToken(self) -> bool:
+        sel = self.selectedRegion
+        return bool(
+            sel
+            and sel.get("sync_status") == "synced"
+            and sel.get("active_artifact_uri")
+        )
+
     @Property(str, notify=editorStateChanged)
     def editorState(self) -> str:
         return self._editor_state
@@ -313,6 +346,12 @@ class DocumentViewerController(QObject):
     # QML Slots: Navigation & Loading
     # =========================================================================
 
+    def _reset_undo_delete(self) -> None:
+        """Resets session-scoped undo delete target when page or document context changes."""
+        if self._last_deleted_region_id:
+            self._last_deleted_region_id = ""
+            self.canUndoDeleteChanged.emit()
+
     @Slot(int, int)
     @Slot(int, int, int)
     def loadPage(self, job_id: int, page_number: int, dpi: int = 150) -> None:
@@ -323,6 +362,7 @@ class DocumentViewerController(QObject):
         if job_id <= 0 or page_number <= 0:
             return
 
+        self._reset_undo_delete()
         self._request_id += 1
         req_id = self._request_id
 
@@ -360,6 +400,7 @@ class DocumentViewerController(QObject):
         if job_id <= 0 or page_number <= 0:
             return
 
+        self._reset_undo_delete()
         self._request_id += 1
         req_id = self._request_id
 
@@ -930,6 +971,8 @@ class DocumentViewerController(QObject):
                 "display_order": r.display_order,
                 "origin": r.origin,
                 "review_status": r.review_status,
+                "sync_status": r.sync_status,
+                "active_artifact_uri": r.active_artifact_uri,
                 "is_modified": r.is_modified,
                 "effective_ymin": r.effective_bbox.ymin,
                 "effective_xmin": r.effective_bbox.xmin,
@@ -1298,6 +1341,8 @@ class DocumentViewerController(QObject):
         target_id = self._selected_region_id
         try:
             self.viewer_service.reject_region(target_id)
+            self._last_deleted_region_id = target_id
+            self.canUndoDeleteChanged.emit()
             self.clearSelection()
             self._reload_page_regions()
             self.regionDeleted.emit(target_id)
@@ -1306,6 +1351,61 @@ class DocumentViewerController(QObject):
         except Exception as e:
             self._error_message = f"Failed to delete region: {str(e)}"
             self.errorChanged.emit()
+
+    @Slot()
+    def acceptSelectedRegion(self) -> None:
+        """Explicitly accepts the currently selected AI-detected visual region."""
+        if not self._selected_region_id:
+            return
+        target_id = self._selected_region_id
+        try:
+            self.viewer_service.accept_region(target_id)
+            self._reload_page_regions()
+            self.regionUpdated.emit(target_id)
+            self.selectionChanged.emit()
+            self.regionsChanged.emit()
+        except Exception as e:
+            self._error_message = f"Failed to accept region: {str(e)}"
+            self.errorChanged.emit()
+
+    def _do_restore_region(self, region_id: str) -> bool:
+        """Restores a rejected region back into active document review state."""
+        if not region_id:
+            return False
+        try:
+            self.viewer_service.restore_region(region_id)
+            if self._last_deleted_region_id == region_id:
+                self._last_deleted_region_id = ""
+                self.canUndoDeleteChanged.emit()
+            self._reload_page_regions()
+            self.regionUpdated.emit(region_id)
+            self.regionsChanged.emit()
+            self._trigger_async_apply(self._current_job_id, region_id)
+            return True
+        except Exception as e:
+            self._error_message = f"Failed to restore region: {str(e)}"
+            self.errorChanged.emit()
+            return False
+
+    @Slot(str)
+    def restoreRegion(self, region_id: str) -> None:
+        """Restores a rejected region back into active document review state."""
+        self._do_restore_region(region_id)
+
+    @Slot()
+    def undoDelete(self) -> None:
+        """Restores the most recently deleted region in this session."""
+        if not self._last_deleted_region_id:
+            return
+        target_id = self._last_deleted_region_id
+        self._do_restore_region(target_id)
+
+    @Slot(str)
+    def retryRegionSync(self, region_id: str) -> None:
+        """Dispatches asynchronous publication/cropping for a failed or dirty region."""
+        if not region_id:
+            return
+        self._trigger_async_apply(self._current_job_id, region_id)
 
     @Slot()
     def resetSelectedRegionToAi(self) -> None:
@@ -1378,6 +1478,8 @@ class DocumentViewerController(QObject):
                 "display_order": r.display_order,
                 "origin": r.origin,
                 "review_status": r.review_status,
+                "sync_status": r.sync_status,
+                "active_artifact_uri": r.active_artifact_uri,
                 "is_modified": r.is_modified,
                 "effective_ymin": r.effective_bbox.ymin,
                 "effective_xmin": r.effective_bbox.xmin,
@@ -1387,6 +1489,7 @@ class DocumentViewerController(QObject):
             for r in regions_dto
         ]
 
+        self._reset_undo_delete()
         self.clearSelection()
         self.loadingChanged.emit()
         self.errorChanged.emit()

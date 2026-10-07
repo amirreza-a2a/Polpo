@@ -179,15 +179,33 @@ class DocumentViewerService:
                     display_order=r.display_order,
                     origin=r.origin,
                     review_status=r.review_status,
+                    sync_status=r.sync_status,
                     effective_bbox=r.effective_bbox,
                     x=item_rect.x,
                     y=item_rect.y,
                     width=item_rect.width,
                     height=item_rect.height,
+                    active_artifact_uri=r.active_artifact_uri,
                 )
             )
 
         return overlay_items
+
+    def accept_region(self, region_id: str) -> VisualRegionDTO:
+        """
+        Explicitly accepts an AI-detected visual region.
+        Transitions review_status to ACCEPTED without modifying geometry or triggering re-crop.
+        """
+        with self.uow_factory.create() as uow:
+            region = uow.visual_regions.get_by_region_id(region_id)
+            if not region:
+                raise EntityNotFoundError("VisualRegion", region_id)
+
+            region.accept()
+            saved = uow.visual_regions.save(region)
+            uow.commit()
+
+        return self._to_dto(saved)
 
     def update_region_geometry(self, region_id: str, new_bbox: BoundingBox) -> VisualRegionDTO:
         """
