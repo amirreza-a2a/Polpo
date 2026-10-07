@@ -180,7 +180,6 @@ Item {
 
             // Color coding based on origin and review status
             property color boxColor: {
-                if (isSelected) return "#00f0ff";
                 if (modelData.review_status === "accepted") return "#2a9d8f";
                 if (modelData.is_modified || modelData.review_status === "modified") return "#f77f00";
                 if (modelData.origin === "user_manual") return "#9d4edd";
@@ -207,7 +206,78 @@ Item {
                     id: badgeText
                     anchors.centerIn: parent
                     text: "#" + modelData.display_order
-                    color: boxRect.isSelected ? "#000000" : "#ffffff"
+                    color: "#ffffff"
+                    font.pixelSize: 10
+                    font.bold: true
+                }
+            }
+
+            // Sync Error Badge & Retry Affordance
+            Rectangle {
+                id: syncErrorBadge
+                objectName: "syncErrorBadge_" + modelData.region_id
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 2
+                height: 16
+                width: Math.max(16, syncErrorText.implicitWidth + 8)
+                radius: 3
+                visible: modelData.sync_status === "sync_failed"
+                color: (typeof theme !== "undefined" && theme) ? theme.error : "#f77f00"
+                border.color: (typeof theme !== "undefined" && theme) ? theme.errorBorder : "#ffffff"
+                border.width: 1
+                z: 2
+
+                signal retryRequested()
+                onRetryRequested: {
+                    if (controller) {
+                        controller.retryRegionSync(modelData.region_id);
+                    }
+                }
+
+                Text {
+                    id: syncErrorText
+                    anchors.centerIn: parent
+                    text: "Sync Error ↻"
+                    color: (typeof theme !== "undefined" && theme) ? theme.errorText : "#ffffff"
+                    font.pixelSize: 10
+                    font.bold: true
+                }
+
+                MouseArea {
+                    id: syncErrorMouseArea
+                    objectName: "syncErrorMouseArea_" + modelData.region_id
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    acceptedButtons: Qt.LeftButton
+                    ToolTip.visible: containsMouse
+                    ToolTip.delay: 300
+                    ToolTip.text: "Crop sync failed. Click to retry synchronization."
+                    onClicked: syncErrorBadge.retryRequested()
+                }
+            }
+
+            // In-flight Sync Indicator
+            Rectangle {
+                id: syncPendingBadge
+                objectName: "syncPendingBadge_" + modelData.region_id
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 2
+                height: 16
+                width: Math.max(16, syncPendingText.implicitWidth + 8)
+                radius: 3
+                visible: modelData.sync_status === "pending_initial_crop" || modelData.sync_status === "dirty_recrop_required"
+                color: (typeof theme !== "undefined" && theme) ? theme.warning : "#f77f00"
+                border.color: (typeof theme !== "undefined" && theme) ? theme.warningBorder : "#ffffff"
+                border.width: 1
+                z: 2
+
+                Text {
+                    id: syncPendingText
+                    anchors.centerIn: parent
+                    text: "Syncing..."
+                    color: (typeof theme !== "undefined" && theme) ? theme.warningText : "#ffffff"
                     font.pixelSize: 10
                     font.bold: true
                 }
@@ -761,6 +831,77 @@ Item {
                         controller.cancelResize();
                     }
                 }
+            }
+        }
+
+        // Retry Affordance for Selected Region with Sync Failure
+        Rectangle {
+            id: selectionRetryAffordance
+            objectName: "selectionRetryAffordance"
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: 2
+            height: 16
+            width: Math.max(16, selectionRetryText.implicitWidth + 8)
+            radius: 3
+            z: 20
+            visible: Boolean(controller && controller.selectedRegion && controller.selectedRegion.sync_status === "sync_failed")
+            color: (typeof theme !== "undefined" && theme) ? theme.error : "#f77f00"
+            border.color: (typeof theme !== "undefined" && theme) ? theme.errorBorder : "#ffffff"
+            border.width: 1
+
+            signal retryRequested()
+            onRetryRequested: {
+                if (controller && controller.selectedRegion) {
+                    controller.retryRegionSync(controller.selectedRegion.region_id);
+                }
+            }
+
+            Text {
+                id: selectionRetryText
+                anchors.centerIn: parent
+                text: "Sync Error ↻"
+                color: (typeof theme !== "undefined" && theme) ? theme.errorText : "#ffffff"
+                font.pixelSize: 10
+                font.bold: true
+            }
+
+            MouseArea {
+                id: selectionRetryMouseArea
+                objectName: "selectionRetryMouseArea"
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                acceptedButtons: Qt.LeftButton
+                ToolTip.visible: containsMouse
+                ToolTip.delay: 300
+                ToolTip.text: "Crop sync failed. Click to retry synchronization."
+                onClicked: selectionRetryAffordance.retryRequested()
+            }
+        }
+
+        // In-flight Sync Affordance for Selected Region
+        Rectangle {
+            id: selectionPendingAffordance
+            objectName: "selectionPendingAffordance"
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: 2
+            height: 16
+            width: Math.max(16, selectionPendingText.implicitWidth + 8)
+            radius: 3
+            z: 20
+            visible: Boolean(controller && controller.selectedRegion && (controller.selectedRegion.sync_status === "pending_initial_crop" || controller.selectedRegion.sync_status === "dirty_recrop_required"))
+            color: (typeof theme !== "undefined" && theme) ? theme.warning : "#f77f00"
+            border.color: (typeof theme !== "undefined" && theme) ? theme.warningBorder : "#ffffff"
+            border.width: 1
+
+            Text {
+                id: selectionPendingText
+                anchors.centerIn: parent
+                text: "Syncing..."
+                color: (typeof theme !== "undefined" && theme) ? theme.warningText : "#ffffff"
+                font.pixelSize: 10
+                font.bold: true
             }
         }
     }

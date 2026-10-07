@@ -203,6 +203,19 @@ Item {
                     }
 
                     Button {
+                        id: acceptRegionBtn
+                        objectName: "acceptRegionButton"
+                        text: "Accept Region"
+                        enabled: controller && controller.canAcceptSelected && !controller.isLoading
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 400
+                        ToolTip.text: "Approve selected AI-detected visual region"
+                        onClicked: {
+                            if (controller) controller.acceptSelectedRegion();
+                        }
+                    }
+
+                    Button {
                         id: deleteRegionBtn
                         objectName: "deleteRegionButton"
                         text: "Delete Region"
@@ -210,7 +223,22 @@ Item {
                         ToolTip.visible: hovered
                         ToolTip.delay: 400
                         ToolTip.text: "Delete selected visual region"
-                        onClicked: controller.deleteSelectedRegion()
+                        onClicked: {
+                            if (controller) controller.deleteSelectedRegion();
+                        }
+                    }
+
+                    Button {
+                        id: undoDeleteBtn
+                        objectName: "undoDeleteButton"
+                        text: "Undo Delete"
+                        enabled: controller && controller.canUndoDelete && !controller.isLoading
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 400
+                        ToolTip.text: "Restore the last deleted visual region"
+                        onClicked: {
+                            if (controller) controller.undoDelete();
+                        }
                     }
 
                     Button {
