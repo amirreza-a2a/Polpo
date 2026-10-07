@@ -66,12 +66,13 @@ class DocumentViewerController(QObject):
     # Public signals for review apply and artifact regeneration (Visual Region Publication Pipeline)
     regionArtifactCommitted = Signal(int, str, int, str)  # (job_id, region_id, new_version, new_artifact_uri)
     regionApplied = Signal(int, str, int, str)            # Alias for regionArtifactCommitted
+    canonicalDocumentPublished = Signal(int, int)         # (job_id, document_version)
     applyFailed = Signal(int, str, str)                    # (job_id, region_id, error_message)
 
     # Internal Qt Signals for thread-safe worker-to-GUI dispatch
     _internalPageLoaded = Signal(int, object)
     _internalPageError = Signal(int, str)
-    _internalApplyFinished = Signal(int, str, int, str)   # (job_id, region_id, new_version, new_artifact_uri)
+    _internalApplyFinished = Signal(int, str, int, str, int)   # (job_id, region_id, new_version, new_artifact_uri, document_version)
     _internalApplyError = Signal(int, str, str)           # (job_id, region_id, error_message)
 
     def __init__(
@@ -465,9 +466,16 @@ class DocumentViewerController(QObject):
                         resolved_job_id, region_id, res.status_message or "Visual region publication failed"
                     )
                     return
+                if res.document_version is None or res.document_version <= 0:
+                    self._internalApplyError.emit(
+                        resolved_job_id,
+                        region_id,
+                        f"Visual region publication succeeded but missing canonical document version (got {res.document_version}).",
+                    )
+                    return
                 new_ver = res.artifact_version if res.artifact_version is not None else 0
                 new_uri = res.artifact_uri or ""
-                self._internalApplyFinished.emit(resolved_job_id, region_id, new_ver, new_uri)
+                self._internalApplyFinished.emit(resolved_job_id, region_id, new_ver, new_uri, res.document_version)
             except Exception as e:
                 self._internalApplyError.emit(resolved_job_id, region_id, str(e))
 
@@ -507,20 +515,33 @@ class DocumentViewerController(QObject):
                     resolved_job_id, region_id, res.status_message or "Visual region publication failed"
                 )
                 return res
+            if res.document_version is None or res.document_version <= 0:
+                self._on_internal_apply_error(
+                    resolved_job_id,
+                    region_id,
+                    f"Visual region publication succeeded but missing canonical document version (got {res.document_version}).",
+                )
+                return res
             new_ver = res.artifact_version if res.artifact_version is not None else 0
             new_uri = res.artifact_uri or ""
-            self._on_internal_apply_finished(resolved_job_id, region_id, new_ver, new_uri)
+            self._on_internal_apply_finished(resolved_job_id, region_id, new_ver, new_uri, res.document_version)
             return res
         except Exception as e:
             self._on_internal_apply_error(resolved_job_id, region_id, str(e))
             raise
 
     def _on_internal_apply_finished(
-        self, job_id: int, region_id: str, new_version: int, new_artifact_uri: str
+        self,
+        job_id: int,
+        region_id: str,
+        new_version: int,
+        new_artifact_uri: str,
+        document_version: int,
     ) -> None:
         """
         GUI-thread slot called when background apply completes successfully.
-        Emits regionArtifactCommitted and regionApplied public signals and reloads page regions if matching current page.
+        Emits regionArtifactCommitted, regionApplied, and canonicalDocumentPublished public signals
+        and reloads page regions if matching current page.
         """
         if job_id == self._current_job_id:
             self._reload_page_regions()
@@ -529,6 +550,8 @@ class DocumentViewerController(QObject):
                 self.selectionChanged.emit()
         self.regionArtifactCommitted.emit(job_id, region_id, new_version, new_artifact_uri)
         self.regionApplied.emit(job_id, region_id, new_version, new_artifact_uri)
+        if document_version is not None and document_version > 0:
+            self.canonicalDocumentPublished.emit(job_id, document_version)
 
     def _on_internal_apply_error(
         self, job_id: int, region_id: str, error_msg: str

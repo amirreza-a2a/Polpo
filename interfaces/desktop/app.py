@@ -132,6 +132,10 @@ def wire_review_workspace_sync(
             active_ver = markdown_viewer_controller.activeVersion
             markdown_editor_controller.notifyCanonicalDocumentAdvance(active_ver)
 
+        def _on_canonical_document_published(job_id: int, document_version: int):
+            if markdown_editor_controller.activeJobId == job_id:
+                markdown_editor_controller.notifyCanonicalDocumentAdvance(document_version)
+
         def _on_conflict_or_merge_state_changed():
             if markdown_editor_controller.hasUnresolvedConflict:
                 markdown_viewer_controller.setPreviewPaused(
@@ -159,6 +163,7 @@ def wire_review_workspace_sync(
         markdown_editor_controller.conflictChanged.connect(_on_conflict_or_merge_state_changed)
         markdown_editor_controller.mergeSessionStateChanged.connect(_on_conflict_or_merge_state_changed)
         markdown_viewer_controller.activeVersionChanged.connect(_on_viewer_version_changed)
+        document_viewer_controller.canonicalDocumentPublished.connect(_on_canonical_document_published)
 
         return ReviewWorkspaceSyncCoordinator(
             editor_controller=markdown_editor_controller,
