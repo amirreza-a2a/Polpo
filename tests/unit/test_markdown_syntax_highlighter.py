@@ -309,3 +309,171 @@ def test_controller_safe_detachment_when_cpp_object_deleted(qapp):
 
     ctrl.shutdown()
     assert ctrl._is_shutdown is True
+
+
+def test_highlighter_canonical_visual_region_tokens(qapp):
+    """Verifies that canonical CommonMark visual region tokens are styled as emerald badges."""
+    doc = QTextDocument()
+    token = '![Chart](crops/chart_p1.jpg "polpo:region=123e4567-e89b-12d3-a456-426614174000;occ=223e4567-e89b-12d3-a456-426614174000")'
+    text = f"Before {token} after."
+    doc.setPlainText(text)
+    hl = MarkdownSyntaxHighlighter(doc, theme="dark")
+
+    b0 = doc.findBlockByNumber(0)
+    formats = b0.layout().formats()
+    assert len(formats) > 0
+
+    region_fmt = None
+    for f in formats:
+        if f.format.foreground().color().name() == "#34d399":
+            region_fmt = f
+            break
+
+    assert region_fmt is not None
+    assert region_fmt.format.background().color().name() == "#064e3b"
+    assert region_fmt.format.fontWeight() == QFont.Weight.Bold
+    assert region_fmt.start == text.find("![Chart")
+    assert region_fmt.length == len(token)
+
+
+def test_highlighter_canonical_token_variations(qapp):
+    """Tests angle bracket destination, single quote title, empty alt, and escaped brackets."""
+    doc = QTextDocument()
+    tokens = [
+        '![Angle](<crops/with space.png> "polpo:region=r1;occ=o1")',
+        "![Single](crop.png 'polpo:region=r2;occ=o2')",
+        '![](crop.png "polpo:region=r3;occ=o3")',
+        '![Escaped [1\\]](crop.png "polpo:region=r4;occ=o4")',
+    ]
+    text = "\n".join(tokens)
+    doc.setPlainText(text)
+    hl = MarkdownSyntaxHighlighter(doc, theme="dark")
+
+    for i, tok in enumerate(tokens):
+        block = doc.findBlockByNumber(i)
+        formats = block.layout().formats()
+        assert len(formats) == 1, f"Failed for token variation: {tok}"
+        f = formats[0]
+        assert f.start == 0
+        assert f.length == len(tok)
+        assert f.format.foreground().color().name() == "#34d399"
+        assert f.format.background().color().name() == "#064e3b"
+
+
+def test_highlighter_multiple_canonical_tokens_on_same_line(qapp):
+    """Verifies that multiple canonical tokens on the same line are highlighted independently."""
+    tok1 = '![First](crop1.jpg "polpo:region=r1;occ=o1")'
+    tok2 = '![Second](crop2.jpg "polpo:region=r2;occ=o2")'
+    text = f"Lead {tok1} middle {tok2} tail"
+    doc = QTextDocument()
+    doc.setPlainText(text)
+    hl = MarkdownSyntaxHighlighter(doc, theme="dark")
+
+    b0 = doc.findBlockByNumber(0)
+    formats = [f for f in b0.layout().formats() if f.format.foreground().color().name() == "#34d399"]
+    assert len(formats) == 2
+    assert formats[0].start == text.find(tok1)
+    assert formats[0].length == len(tok1)
+    assert formats[1].start == text.find(tok2)
+    assert formats[1].length == len(tok2)
+
+
+def test_highlighter_code_fences_suppress_canonical_tokens(qapp):
+    """Verifies that canonical tokens inside backtick or tilde code fences are NOT styled as badges."""
+    canonical_token = '![Chart](crop.jpg "polpo:region=r;occ=o")'
+    text = f"```\n{canonical_token}\n```\n~~~\n{canonical_token}\n~~~"
+    doc = QTextDocument()
+    doc.setPlainText(text)
+    hl = MarkdownSyntaxHighlighter(doc, theme="dark")
+
+    # Line 1: inside ``` fence
+    b1 = doc.findBlockByNumber(1)
+    assert b1.userState() == STATE_CODE_BLOCK
+    assert len(b1.layout().formats()) == 1
+    assert b1.layout().formats()[0].format.foreground().color().name() == "#c4b5fd"
+
+    # Line 4: inside ~~~ fence
+    b4 = doc.findBlockByNumber(4)
+    assert b4.userState() == STATE_CODE_BLOCK
+    assert len(b4.layout().formats()) == 1
+    assert b4.layout().formats()[0].format.foreground().color().name() == "#c4b5fd"
+
+
+def test_highlighter_inline_code_and_comments_suppress_tokens(qapp):
+    """Inline code span and HTML comments suppress inner visual region formatting."""
+    token = '![Chart](crop.jpg "polpo:region=r;occ=o")'
+    text = f"`{token}` and <!-- {token} -->"
+    doc = QTextDocument()
+    doc.setPlainText(text)
+    hl = MarkdownSyntaxHighlighter(doc, theme="dark")
+
+    b0 = doc.findBlockByNumber(0)
+    formats = b0.layout().formats()
+    # Should only contain code span format and comment format, zero region badges (#34d399)
+    badge_formats = [f for f in formats if f.format.foreground().color().name() == "#34d399"]
+    assert len(badge_formats) == 0
+
+
+def test_highlighter_negative_matching_cases(qapp):
+    """Standard images and malformed polpo tokens must NOT be styled as visual region badges."""
+    cases = [
+        "![Alt](photo.jpg)",                     # Standard image
+        '![Alt](photo.jpg "Regular Title")',     # Image with regular title
+        '![Alt](photo.jpg "polpo:unknown")',     # Missing region and occ
+        '![Alt](photo.jpg "polpo:region=r\')',   # Mismatched quotes
+    ]
+    doc = QTextDocument()
+    doc.setPlainText("\n".join(cases))
+    hl = MarkdownSyntaxHighlighter(doc, theme="dark")
+
+    for i, line in enumerate(cases):
+        block = doc.findBlockByNumber(i)
+        badge_formats = [f for f in block.layout().formats() if f.format.foreground().color().name() == "#34d399"]
+        assert len(badge_formats) == 0, f"False positive badge on: {line}"
+
+
+def test_highlighter_theme_switching(qapp):
+    """Verifies that dark and light themes apply correct semantic palette badge styling."""
+    doc = QTextDocument()
+    token = '![Badge](crop.jpg "polpo:region=r;occ=o")'
+    doc.setPlainText(token)
+    hl = MarkdownSyntaxHighlighter(doc, theme="dark")
+
+    b0 = doc.findBlockByNumber(0)
+    formats_dark = b0.layout().formats()
+    assert formats_dark[0].format.foreground().color().name() == "#34d399"
+    assert formats_dark[0].format.background().color().name() == "#064e3b"
+
+    # Switch to light theme
+    hl.set_theme("light")
+    b0_light = doc.findBlockByNumber(0)
+    formats_light = b0_light.layout().formats()
+    assert formats_light[0].format.foreground().color().name() == "#047857"
+    assert formats_light[0].format.background().color().name() == "#d1fae5"
+
+
+def test_highlighter_undo_redo_and_text_stability(qapp):
+    """
+    Verifies that formatting never mutates document text or breaks native undo/redo.
+    """
+    doc = QTextDocument()
+    token = '![Badge](crop.jpg "polpo:region=r;occ=o")'
+    cursor = QTextCursor(doc)
+
+    cursor.beginEditBlock()
+    cursor.insertText("Initial text ")
+    cursor.endEditBlock()
+
+    hl = MarkdownSyntaxHighlighter(doc)
+
+    cursor.beginEditBlock()
+    cursor.insertText(token)
+    cursor.endEditBlock()
+
+    assert doc.toPlainText() == f"Initial text {token}"
+
+    doc.undo()
+    assert doc.toPlainText() == "Initial text "
+
+    doc.redo()
+    assert doc.toPlainText() == f"Initial text {token}"
