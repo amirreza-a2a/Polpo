@@ -182,7 +182,7 @@ Item {
             property color boxColor: {
                 if (modelData.review_status === "accepted") return "#2a9d8f";
                 if (modelData.is_modified || modelData.review_status === "modified") return "#f77f00";
-                if (modelData.origin === "user_manual") return "#9d4edd";
+                if (modelData.origin === "user_manual" || modelData.review_status === "manual") return "#9d4edd";
                 return "#00b4d8"; // AI detected default
             }
 
@@ -230,16 +230,17 @@ Item {
 
                 signal retryRequested()
                 onRetryRequested: {
-                    if (controller) {
+                    if (controller && modelData && modelData.region_id) {
                         controller.retryRegionSync(modelData.region_id);
                     }
                 }
 
                 Text {
                     id: syncErrorText
+                    objectName: "syncErrorText_" + modelData.region_id
                     anchors.centerIn: parent
-                    text: "Sync Error ↻"
-                    color: (typeof theme !== "undefined" && theme) ? theme.errorText : "#ffffff"
+                    text: (syncErrorBadge.parent && syncErrorBadge.parent.width >= 80) ? "Sync Error ↻" : "↻"
+                    color: "#ffffff"
                     font.pixelSize: 10
                     font.bold: true
                 }
@@ -275,9 +276,10 @@ Item {
 
                 Text {
                     id: syncPendingText
+                    objectName: "syncPendingText_" + modelData.region_id
                     anchors.centerIn: parent
-                    text: "Syncing..."
-                    color: (typeof theme !== "undefined" && theme) ? theme.warningText : "#ffffff"
+                    text: (syncPendingBadge.parent && syncPendingBadge.parent.width >= 80) ? "Syncing..." : "..."
+                    color: "#ffffff"
                     font.pixelSize: 10
                     font.bold: true
                 }
@@ -852,16 +854,20 @@ Item {
 
             signal retryRequested()
             onRetryRequested: {
-                if (controller && controller.selectedRegion) {
-                    controller.retryRegionSync(controller.selectedRegion.region_id);
+                if (controller) {
+                    var targetId = (controller.selectedRegion && controller.selectedRegion.region_id) || controller.selectedRegionId || "";
+                    if (targetId) {
+                        controller.retryRegionSync(targetId);
+                    }
                 }
             }
 
             Text {
                 id: selectionRetryText
+                objectName: "selectionRetryText"
                 anchors.centerIn: parent
-                text: "Sync Error ↻"
-                color: (typeof theme !== "undefined" && theme) ? theme.errorText : "#ffffff"
+                text: (selectionRetryAffordance.parent && selectionRetryAffordance.parent.width >= 80) ? "Sync Error ↻" : "↻"
+                color: "#ffffff"
                 font.pixelSize: 10
                 font.bold: true
             }
@@ -897,9 +903,10 @@ Item {
 
             Text {
                 id: selectionPendingText
+                objectName: "selectionPendingText"
                 anchors.centerIn: parent
-                text: "Syncing..."
-                color: (typeof theme !== "undefined" && theme) ? theme.warningText : "#ffffff"
+                text: (selectionPendingAffordance.parent && selectionPendingAffordance.parent.width >= 80) ? "Syncing..." : "..."
+                color: "#ffffff"
                 font.pixelSize: 10
                 font.bold: true
             }

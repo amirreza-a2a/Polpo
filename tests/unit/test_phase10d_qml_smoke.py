@@ -13,7 +13,7 @@ try:
 except ImportError:
     from PyQt6.QtCore import QPointF
 from core.entities.bounding_box import BoundingBox
-from core.entities.visual_region import RegionOrigin, ReviewStatus
+from core.entities.visual_region import RegionOrigin, ReviewStatus, SyncStatus
 from application.dto.document_viewer_dto import PageRasterDTO
 from application.dto.visual_region_dto import VisualRegionDTO
 from application.services.document_viewer_service import DocumentViewerService
@@ -407,7 +407,7 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
             display_order=1,
             origin=RegionOrigin.AI_DETECTED.value,
             review_status=ReviewStatus.ACCEPTED.value,
-            sync_status="synchronized",
+            sync_status=SyncStatus.SYNCED.value,
             effective_bbox=BoundingBox(50, 50, 150, 150),
             detected_bbox=BoundingBox(50, 50, 150, 150),
             reviewed_bbox=BoundingBox(50, 50, 150, 150),
@@ -426,7 +426,7 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
             display_order=2,
             origin=RegionOrigin.AI_DETECTED.value,
             review_status=ReviewStatus.UNREVIEWED.value,
-            sync_status="synchronized",
+            sync_status=SyncStatus.SYNCED.value,
             effective_bbox=BoundingBox(200, 200, 300, 300),
             detected_bbox=BoundingBox(200, 200, 300, 300),
             reviewed_bbox=None,
@@ -445,7 +445,7 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
             display_order=3,
             origin=RegionOrigin.AI_DETECTED.value,
             review_status=ReviewStatus.MODIFIED.value,
-            sync_status="synchronized",
+            sync_status=SyncStatus.SYNCED.value,
             effective_bbox=BoundingBox(350, 350, 450, 450),
             detected_bbox=BoundingBox(350, 350, 400, 400),
             reviewed_bbox=BoundingBox(350, 350, 450, 450),
@@ -463,8 +463,8 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
             page_number=1,
             display_order=4,
             origin=RegionOrigin.USER_MANUAL.value,
-            review_status=ReviewStatus.UNREVIEWED.value,
-            sync_status="synchronized",
+            review_status=ReviewStatus.MANUAL.value,
+            sync_status=SyncStatus.SYNCED.value,
             effective_bbox=BoundingBox(500, 500, 600, 600),
             detected_bbox=None,
             reviewed_bbox=BoundingBox(500, 500, 600, 600),
@@ -498,6 +498,10 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
         self.assertEqual(_to_hex(box_mod.property("boxColor")), "#f77f00")
         self.assertEqual(_to_hex(box_man.property("boxColor")), "#9d4edd")
 
+        # Unselected fill alpha must be 0.15
+        color_unsel = box_acc.property("color")
+        self.assertAlmostEqual(color_unsel.alphaF(), 0.15, delta=0.03, msg="Unselected fill alpha must be 0.15")
+
         # Now select the accepted region: must retain #2a9d8f, NOT turn #00f0ff
         self.controller.selectRegion("reg-accepted")
         self.app.processEvents()
@@ -506,6 +510,10 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
         self.assertIsNotNone(manipulator)
         self.assertTrue(manipulator.property("visible"))
         self.assertEqual(_to_hex(box_acc.property("boxColor")), "#2a9d8f", "Accepted region must stay green when selected")
+
+        # Selected fill alpha must be 0.25
+        color_sel = box_acc.property("color")
+        self.assertAlmostEqual(color_sel.alphaF(), 0.25, delta=0.03, msg="Selected fill alpha must be 0.25")
 
         # Select unreviewed AI region: must retain #00b4d8
         self.controller.selectRegion("reg-unreviewed")
@@ -607,7 +615,7 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
             display_order=1,
             origin=RegionOrigin.AI_DETECTED.value,
             review_status=ReviewStatus.UNREVIEWED.value,
-            sync_status="synchronized",
+            sync_status=SyncStatus.SYNCED.value,
             effective_bbox=BoundingBox(100, 100, 200, 200),
             detected_bbox=BoundingBox(100, 100, 200, 200),
             reviewed_bbox=None,
@@ -630,11 +638,14 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
         # Initially no deleted regions -> undoDeleteButton disabled
         self.assertFalse(undo_btn.property("enabled"))
         self.assertFalse(self.controller.canUndoDelete)
+        self.assertFalse(del_btn.property("enabled"))
+        self.assertFalse(self.controller.canDeleteSelected)
 
         # Select region and click delete
         self.controller.selectRegion("reg-to-delete")
         self.app.processEvents()
-        self.assertTrue(del_btn.property("enabled"))
+        self.assertTrue(self.controller.canDeleteSelected)
+        self.assertTrue(del_btn.property("enabled"), "deleteRegionButton must be enabled when region is selected")
 
         self.mock_service.get_active_page_regions.return_value = []
         del_btn.clicked.emit()
@@ -643,6 +654,8 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
         self.mock_service.reject_region.assert_called_with("reg-to-delete")
         self.assertTrue(self.controller.canUndoDelete)
         self.assertTrue(undo_btn.property("enabled"), "undoDeleteButton must be enabled after deleting a region")
+        self.assertFalse(self.controller.canDeleteSelected)
+        self.assertFalse(del_btn.property("enabled"))
 
         # Click undo delete
         self.mock_service.get_active_page_regions.return_value = [r_del]
@@ -655,14 +668,21 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
 
     def test_sync_error_badge_visibility_and_retry_click(self):
         """
-        10. Verifies sync error feedback and retry affordance:
+        10. Verifies sync error feedback, retry affordance, and responsive text:
            - Visible on bounding box canvas delegate when sync_status === "sync_failed".
-           - Hidden when sync_status === "synchronized".
+           - Hidden when sync_status === "synced".
+           - High contrast #ffffff text color for both badges.
+           - Responsive text: "Sync Error ↻" when box width >= 80, "↻" when box width < 80.
            - Clicking syncErrorMouseArea invokes controller.retryRegionSync(region_id).
            - Selection manipulator displays selectionRetryAffordance (z: 20) when selectedRegion.sync_status === "sync_failed".
            - Clicking selectionRetryMouseArea invokes controller.retryRegionSync.
         """
-        r_failed = VisualRegionDTO(
+        def _to_hex(val) -> str:
+            if hasattr(val, "name"):
+                return val.name().lower()
+            return str(val).lower()
+
+        r_failed_wide = VisualRegionDTO(
             id=40,
             region_id="reg-sync-fail",
             job_id=1,
@@ -670,9 +690,28 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
             display_order=1,
             origin=RegionOrigin.AI_DETECTED.value,
             review_status=ReviewStatus.UNREVIEWED.value,
-            sync_status="sync_failed",
-            effective_bbox=BoundingBox(100, 100, 200, 200),
-            detected_bbox=BoundingBox(100, 100, 200, 200),
+            sync_status=SyncStatus.SYNC_FAILED.value,
+            effective_bbox=BoundingBox(100, 100, 200, 300),
+            detected_bbox=BoundingBox(100, 100, 200, 300),
+            reviewed_bbox=None,
+            active_artifact_version=0,
+            active_artifact_uri=None,
+            is_modified=False,
+            is_deleted=False,
+            created_at=None,
+            updated_at=None,
+        )
+        r_failed_narrow = VisualRegionDTO(
+            id=42,
+            region_id="reg-sync-fail-narrow",
+            job_id=1,
+            page_number=1,
+            display_order=2,
+            origin=RegionOrigin.AI_DETECTED.value,
+            review_status=ReviewStatus.UNREVIEWED.value,
+            sync_status=SyncStatus.SYNC_FAILED.value,
+            effective_bbox=BoundingBox(100, 100, 150, 130),
+            detected_bbox=BoundingBox(100, 100, 150, 130),
             reviewed_bbox=None,
             active_artifact_version=0,
             active_artifact_uri=None,
@@ -686,10 +725,10 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
             region_id="reg-sync-ok",
             job_id=1,
             page_number=1,
-            display_order=2,
+            display_order=3,
             origin=RegionOrigin.AI_DETECTED.value,
             review_status=ReviewStatus.UNREVIEWED.value,
-            sync_status="synchronized",
+            sync_status=SyncStatus.SYNCED.value,
             effective_bbox=BoundingBox(300, 300, 400, 400),
             detected_bbox=BoundingBox(300, 300, 400, 400),
             reviewed_bbox=None,
@@ -701,19 +740,31 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
             updated_at=None,
         )
 
-        self.mock_service.get_active_page_regions.return_value = [r_failed, r_synced]
+        self.mock_service.get_active_page_regions.return_value = [r_failed_wide, r_failed_narrow, r_synced]
         self.controller.loadPageSync(1, 1)
         self.app.processEvents()
 
         # Canvas delegates
         badge_failed = find_quick_item(self.view_root, "syncErrorBadge_reg-sync-fail")
+        badge_narrow = find_quick_item(self.view_root, "syncErrorBadge_reg-sync-fail-narrow")
         badge_synced = find_quick_item(self.view_root, "syncErrorBadge_reg-sync-ok")
 
-        self.assertIsNotNone(badge_failed, "syncErrorBadge must exist for failed region")
+        self.assertIsNotNone(badge_failed, "syncErrorBadge must exist for wide failed region")
+        self.assertIsNotNone(badge_narrow, "syncErrorBadge must exist for narrow failed region")
         self.assertIsNotNone(badge_synced, "syncErrorBadge must exist for synced region")
 
         self.assertTrue(badge_failed.property("visible"), "syncErrorBadge must be visible when sync_status == 'sync_failed'")
-        self.assertFalse(badge_synced.property("visible"), "syncErrorBadge must be hidden when sync_status == 'synchronized'")
+        self.assertTrue(badge_narrow.property("visible"), "syncErrorBadge must be visible on narrow failed region")
+        self.assertFalse(badge_synced.property("visible"), "syncErrorBadge must be hidden when sync_status == 'synced'")
+
+        # Verify high contrast text color #ffffff and responsive label
+        text_failed = find_quick_item(badge_failed, "syncErrorText_reg-sync-fail")
+        text_narrow = find_quick_item(badge_narrow, "syncErrorText_reg-sync-fail-narrow")
+        self.assertIsNotNone(text_failed)
+        self.assertIsNotNone(text_narrow)
+        self.assertEqual(_to_hex(text_failed.property("color")), "#ffffff", "Sync error text color must be #ffffff for contrast")
+        self.assertEqual(text_failed.property("text"), "Sync Error ↻", "Wide box must show full Sync Error ↻")
+        self.assertEqual(text_narrow.property("text"), "↻", "Narrow box must show compact ↻")
 
         # Click retry on unselected failed badge via retryRequested signal
         mouse_area_failed = find_quick_item(self.view_root, "syncErrorMouseArea_reg-sync-fail")
@@ -740,6 +791,10 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
         self.assertTrue(sel_retry.property("visible"))
         self.assertEqual(sel_retry.property("z"), 20, "selectionRetryAffordance must have z=20 (above drag area and handles)")
 
+        sel_retry_text = find_quick_item(sel_retry, "selectionRetryText")
+        self.assertIsNotNone(sel_retry_text)
+        self.assertEqual(_to_hex(sel_retry_text.property("color")), "#ffffff", "Selection retry text color must be #ffffff")
+
         sel_retry_mouse = find_quick_item(self.view_root, "selectionRetryMouseArea")
         self.assertIsNotNone(sel_retry_mouse)
 
@@ -753,3 +808,117 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
         self.controller.selectRegion("reg-sync-ok")
         self.app.processEvents()
         self.assertFalse(sel_retry.property("visible"), "selectionRetryAffordance must be hidden for synced region")
+
+    def test_inflight_sync_indicators_and_pending_affordances(self):
+        """
+        11. Verifies in-flight sync indicators for pending_initial_crop and dirty_recrop_required:
+           - syncPendingBadge visible on canvas delegates when pending_initial_crop or dirty_recrop_required.
+           - Text color is #ffffff and label is responsive.
+           - selectionPendingAffordance (z: 20) visible on selectionManipulator when selected region is pending.
+           - selectionPendingAffordance hidden when selected region is synced.
+        """
+        def _to_hex(val) -> str:
+            if hasattr(val, "name"):
+                return val.name().lower()
+            return str(val).lower()
+
+        r_pending_initial = VisualRegionDTO(
+            id=50,
+            region_id="reg-pending-init",
+            job_id=1,
+            page_number=1,
+            display_order=1,
+            origin=RegionOrigin.USER_MANUAL.value,
+            review_status=ReviewStatus.MANUAL.value,
+            sync_status=SyncStatus.PENDING_INITIAL_CROP.value,
+            effective_bbox=BoundingBox(50, 50, 200, 200),
+            detected_bbox=None,
+            reviewed_bbox=BoundingBox(50, 50, 200, 200),
+            active_artifact_version=0,
+            active_artifact_uri=None,
+            is_modified=False,
+            is_deleted=False,
+            created_at=None,
+            updated_at=None,
+        )
+        r_dirty_recrop = VisualRegionDTO(
+            id=51,
+            region_id="reg-dirty-recrop",
+            job_id=1,
+            page_number=1,
+            display_order=2,
+            origin=RegionOrigin.AI_DETECTED.value,
+            review_status=ReviewStatus.MODIFIED.value,
+            sync_status=SyncStatus.DIRTY_RECROP_REQUIRED.value,
+            effective_bbox=BoundingBox(250, 250, 400, 400),
+            detected_bbox=BoundingBox(250, 250, 350, 350),
+            reviewed_bbox=BoundingBox(250, 250, 400, 400),
+            active_artifact_version=1,
+            active_artifact_uri="art/p1_r2.png",
+            is_modified=True,
+            is_deleted=False,
+            created_at=None,
+            updated_at=None,
+        )
+        r_synced = VisualRegionDTO(
+            id=52,
+            region_id="reg-synced-clean",
+            job_id=1,
+            page_number=1,
+            display_order=3,
+            origin=RegionOrigin.AI_DETECTED.value,
+            review_status=ReviewStatus.ACCEPTED.value,
+            sync_status=SyncStatus.SYNCED.value,
+            effective_bbox=BoundingBox(450, 450, 550, 550),
+            detected_bbox=BoundingBox(450, 450, 550, 550),
+            reviewed_bbox=BoundingBox(450, 450, 550, 550),
+            active_artifact_version=2,
+            active_artifact_uri="art/p1_r3.png",
+            is_modified=False,
+            is_deleted=False,
+            created_at=None,
+            updated_at=None,
+        )
+
+        self.mock_service.get_active_page_regions.return_value = [
+            r_pending_initial, r_dirty_recrop, r_synced
+        ]
+        self.controller.loadPageSync(1, 1)
+        self.app.processEvents()
+
+        # Canvas delegates for pending indicators
+        badge_init = find_quick_item(self.view_root, "syncPendingBadge_reg-pending-init")
+        badge_dirty = find_quick_item(self.view_root, "syncPendingBadge_reg-dirty-recrop")
+        badge_clean = find_quick_item(self.view_root, "syncPendingBadge_reg-synced-clean")
+
+        self.assertIsNotNone(badge_init, "syncPendingBadge must exist for pending_initial_crop")
+        self.assertIsNotNone(badge_dirty, "syncPendingBadge must exist for dirty_recrop_required")
+        self.assertIsNotNone(badge_clean, "syncPendingBadge must exist for synced region")
+
+        self.assertTrue(badge_init.property("visible"), "Visible when pending_initial_crop")
+        self.assertTrue(badge_dirty.property("visible"), "Visible when dirty_recrop_required")
+        self.assertFalse(badge_clean.property("visible"), "Hidden when synced")
+
+        # Text color #ffffff
+        text_init = find_quick_item(badge_init, "syncPendingText_reg-pending-init")
+        self.assertIsNotNone(text_init)
+        self.assertEqual(_to_hex(text_init.property("color")), "#ffffff")
+        self.assertEqual(text_init.property("text"), "Syncing...")
+
+        # Select dirty region -> selectionPendingAffordance on manipulator must be visible with z=20
+        self.controller.selectRegion("reg-dirty-recrop")
+        self.app.processEvents()
+
+        sel_pending = find_quick_item(self.view_root, "selectionPendingAffordance")
+        self.assertIsNotNone(sel_pending)
+        self.assertTrue(sel_pending.property("visible"))
+        self.assertEqual(sel_pending.property("z"), 20)
+
+        sel_pending_text = find_quick_item(sel_pending, "selectionPendingText")
+        self.assertIsNotNone(sel_pending_text)
+        self.assertEqual(_to_hex(sel_pending_text.property("color")), "#ffffff")
+
+        # Select clean region -> selectionPendingAffordance must be hidden
+        self.controller.selectRegion("reg-synced-clean")
+        self.app.processEvents()
+        self.assertFalse(sel_pending.property("visible"))
