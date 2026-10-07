@@ -17,8 +17,8 @@ Rectangle {
     implicitHeight: 48
     Layout.preferredHeight: 48
 
-    color: "#261608"
-    border.color: "#b45309"
+    color: (typeof theme !== "undefined" && theme) ? theme.warningBackground : "maroon"
+    border.color: (typeof theme !== "undefined" && theme) ? theme.warningBorder : "goldenrod"
     border.width: 1
 
     RowLayout {
@@ -37,7 +37,7 @@ Rectangle {
             objectName: "conflictLabel"
             Layout.fillWidth: true
             text: controller ? controller.currentConflictLabel : ""
-            color: "#fef3c7"
+            color: (typeof theme !== "undefined" && theme) ? theme.warningText : "yellow"
             font.pixelSize: 12
             font.bold: true
             elide: Text.ElideRight
@@ -68,7 +68,7 @@ Rectangle {
         Rectangle {
             width: 1
             height: 20
-            color: "#78350f"
+            color: (typeof theme !== "undefined" && theme) ? theme.warningBorder : "brown"
         }
 
         RowLayout {

@@ -30,9 +30,9 @@ Rectangle {
     width: Math.max(80, Math.min(240, 160 * scaleFactor))
     height: Math.max(60, Math.min(180, 110 * scaleFactor))
     radius: 4
-    color: "#18181f"
+    color: (typeof theme !== "undefined" && theme) ? theme.surfaceElevated : "black"
     border.width: isHighlighted ? 2 : 1
-    border.color: isHighlighted ? "#3b82f6" : (mouseArea.containsMouse ? "#60a5fa" : "#3a3a48")
+    border.color: (typeof theme !== "undefined" && theme) ? (isHighlighted ? theme.accent : (mouseArea.containsMouse ? theme.accentHover : theme.border)) : "gray"
 
     clip: true
 
@@ -51,7 +51,7 @@ Rectangle {
     Rectangle {
         anchors.fill: parent
         anchors.margins: 4
-        color: "#24242e"
+        color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "gray"
         visible: thumbnailImage.status === Image.Error || !inlineImageRoot.imageUri
 
         ColumnLayout {
@@ -66,7 +66,7 @@ Rectangle {
 
             Text {
                 text: inlineImageRoot.altText || "Missing Image"
-                color: "#9ca3af"
+                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                 font.pixelSize: 10
                 elide: Text.ElideRight
                 Layout.maximumWidth: inlineImageRoot.width - 16
@@ -84,13 +84,13 @@ Rectangle {
         height: 18
         width: Math.max(22, badgeText.implicitWidth + 8)
         radius: 3
-        color: isHighlighted ? "#2563eb" : "#1d4ed8"
+        color: (typeof theme !== "undefined" && theme) ? (isHighlighted ? theme.accentActive : theme.accent) : "blue"
 
         Text {
             id: badgeText
             anchors.centerIn: parent
             text: "#" + inlineImageRoot.displayOrder
-            color: "#ffffff"
+            color: (typeof theme !== "undefined" && theme) ? theme.accentText : "white"
             font.pixelSize: 10
             font.bold: true
         }

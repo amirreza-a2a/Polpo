@@ -57,8 +57,8 @@ Item {
             objectName: "toolbarContainer"
             Layout.fillWidth: true
             implicitHeight: toolbarContent.implicitHeight + 12
-            color: "#1e1e24"
-            border.color: "#2a2a35"
+            color: (typeof theme !== "undefined" && theme) ? theme.surface : "black"
+            border.color: (typeof theme !== "undefined" && theme) ? theme.border : "gray"
             border.width: 1
 
             ColumnLayout {
@@ -86,7 +86,7 @@ Item {
 
                         Text {
                             text: controller ? "p. " + controller.currentPage + " / " + Math.max(1, controller.totalPages) : "p. 1 / 1"
-                            color: "#f0f0f0"
+                            color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
                             font.pixelSize: 12
                             font.bold: true
                             verticalAlignment: Text.AlignVCenter
@@ -112,7 +112,7 @@ Item {
 
                         Text {
                             text: controller ? Math.round(controller.zoom * 100) + "%" : "100%"
-                            color: "#e0e0e0"
+                            color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
                             font.pixelSize: 11
                             Layout.preferredWidth: 36
                             horizontalAlignment: Text.AlignHCenter
@@ -146,15 +146,15 @@ Item {
                         height: 24
                         width: regionCountText.implicitWidth + 12
                         radius: 12
-                        color: "#283044"
-                        border.color: "#00b4d8"
+                        color: (typeof theme !== "undefined" && theme) ? theme.infoBackground : "darkblue"
+                        border.color: (typeof theme !== "undefined" && theme) ? theme.infoBorder : "blue"
                         visible: controller !== null
 
                         Text {
                             id: regionCountText
                             anchors.centerIn: parent
                             text: controller ? controller.activeRegions.length + " Regions" : "0 Regions"
-                            color: "#00b4d8"
+                            color: (typeof theme !== "undefined" && theme) ? theme.infoText : "lightblue"
                             font.pixelSize: 10
                             font.bold: true
                         }
@@ -235,7 +235,7 @@ Item {
             objectName: "viewportArea"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            color: "#121216"
+            color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "black"
             clip: true
 
             function syncViewportAndScene() {
@@ -348,7 +348,7 @@ Item {
 
                     Text {
                         text: "Failed to load page image texture"
-                        color: "#ffffff"
+                        color: (typeof theme !== "undefined" && theme) ? theme.accentText : "white"
                         font.pixelSize: 12
                         font.bold: true
                     }
@@ -372,7 +372,7 @@ Item {
 
                     Text {
                         text: "Rendering PDF Page..."
-                        color: "#ffffff"
+                        color: (typeof theme !== "undefined" && theme) ? theme.accentText : "white"
                         font.pixelSize: 13
                         Layout.alignment: Qt.AlignHCenter
                     }
@@ -387,7 +387,7 @@ Item {
                 anchors.margins: 16
                 height: 48
                 radius: 6
-                color: "#d90429"
+                color: (typeof theme !== "undefined" && theme) ? theme.error : "red"
                 visible: controller ? controller.errorMessage !== "" : false
 
                 Text {

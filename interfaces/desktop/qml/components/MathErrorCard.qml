@@ -39,9 +39,9 @@ Rectangle {
     implicitWidth: Math.min(680, Math.max(300, 560 * scaleFactor))
     implicitHeight: cardLayout.implicitHeight + 20
     radius: 6
-    color: (typeof theme !== "undefined" && theme) ? theme.errorBackground : "#18181f"
+    color: (typeof theme !== "undefined" && theme) ? theme.errorBackground : "darkred"
     border.width: 1
-    border.color: (typeof theme !== "undefined" && theme) ? theme.errorBorder : "#7f1d1d"
+    border.color: (typeof theme !== "undefined" && theme) ? theme.errorBorder : "red"
 
     ColumnLayout {
         id: cardLayout
@@ -55,7 +55,7 @@ Rectangle {
 
             Text {
                 text: "⚠"
-                color: (typeof theme !== "undefined" && theme) ? theme.error : "#ef4444"
+                color: (typeof theme !== "undefined" && theme) ? theme.error : "red"
                 font.pixelSize: Math.round(14 * scaleFactor)
                 Layout.alignment: Qt.AlignVCenter
             }
@@ -64,14 +64,14 @@ Rectangle {
                 height: 22
                 width: badgeText.implicitWidth + 14
                 radius: 4
-                color: (typeof theme !== "undefined" && theme) ? theme.error : mathErrorCardRoot.categoryBadgeColor
+                color: mathErrorCardRoot.categoryBadgeColor
                 Layout.alignment: Qt.AlignVCenter
 
                 Text {
                     id: badgeText
                     anchors.centerIn: parent
                     text: "[" + mathErrorCardRoot.categoryLabel + "]"
-                    color: (typeof theme !== "undefined" && theme) ? theme.accentText : "#ffffff"
+                    color: (typeof theme !== "undefined" && theme) ? theme.accentText : "white"
                     font.pixelSize: Math.round(11 * scaleFactor)
                     font.bold: true
                 }
@@ -89,15 +89,15 @@ Rectangle {
                 Layout.alignment: Qt.AlignVCenter
 
                 background: Rectangle {
-                    color: copyBtn.down ? ((typeof theme !== "undefined" && theme) ? theme.surfaceActive : "#374151") : (copyBtn.hovered ? ((typeof theme !== "undefined" && theme) ? theme.surfaceHover : "#2d3748") : ((typeof theme !== "undefined" && theme) ? theme.surface : "#1f2937"))
+                    color: copyBtn.down ? ((typeof theme !== "undefined" && theme) ? theme.surfaceActive : "gray") : (copyBtn.hovered ? ((typeof theme !== "undefined" && theme) ? theme.surfaceHover : "darkgray") : ((typeof theme !== "undefined" && theme) ? theme.surface : "black"))
                     radius: 3
-                    border.color: (typeof theme !== "undefined" && theme) ? theme.border : "#4b5563"
+                    border.color: (typeof theme !== "undefined" && theme) ? theme.border : "gray"
                     border.width: 1
                 }
 
                 contentItem: Text {
                     text: copyBtn.text
-                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "#e5e7eb"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
                     font: copyBtn.font
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
@@ -110,9 +110,9 @@ Rectangle {
         Rectangle {
             Layout.fillWidth: true
             implicitHeight: Math.min(240, Math.max(48, texInput.implicitHeight + 16))
-            color: (typeof theme !== "undefined" && theme) ? theme.codeBackground : "#101014"
+            color: (typeof theme !== "undefined" && theme) ? theme.codeBackground : "black"
             radius: 4
-            border.color: (typeof theme !== "undefined" && theme) ? theme.codeBorder : "#2a2a35"
+            border.color: (typeof theme !== "undefined" && theme) ? theme.codeBorder : "gray"
             border.width: 1
 
             ScrollView {
@@ -126,7 +126,7 @@ Rectangle {
                     selectByMouse: true
                     textFormat: TextEdit.PlainText
                     text: mathErrorCardRoot.mathTex
-                    color: (typeof theme !== "undefined" && theme) ? theme.codeText : "#e5e7eb"
+                    color: (typeof theme !== "undefined" && theme) ? theme.codeText : "white"
                     font.family: "Monospace"
                     font.pixelSize: Math.round(12 * scaleFactor)
                     wrapMode: TextEdit.WrapAnywhere
@@ -141,14 +141,14 @@ Rectangle {
 
             Text {
                 text: "ℹ"
-                color: (typeof theme !== "undefined" && theme) ? theme.errorText : "#9ca3af"
+                color: (typeof theme !== "undefined" && theme) ? theme.errorText : "gray"
                 font.pixelSize: Math.round(11 * scaleFactor)
                 Layout.alignment: Qt.AlignTop
             }
 
             Text {
                 text: mathErrorCardRoot.errorMessage
-                color: (typeof theme !== "undefined" && theme) ? theme.errorText : "#9ca3af"
+                color: (typeof theme !== "undefined" && theme) ? theme.errorText : "gray"
                 font.pixelSize: Math.round(11 * scaleFactor)
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true

@@ -29,9 +29,9 @@ Rectangle {
     implicitWidth: Math.min(680, Math.max(300, 560 * scaleFactor))
     implicitHeight: cardLayout.implicitHeight + 20
     radius: 6
-    color: "#1a1a22"
+    color: (typeof theme !== "undefined" && theme) ? theme.surfaceElevated : "black"
     border.width: isHighlighted ? 2 : 1
-    border.color: isHighlighted ? "#3b82f6" : (cardMouseArea.containsMouse ? "#4b5563" : "#2a2a35")
+    border.color: (typeof theme !== "undefined" && theme) ? (isHighlighted ? theme.accent : (cardMouseArea.containsMouse ? theme.borderStrong : theme.border)) : "gray"
 
     ColumnLayout {
         id: cardLayout
@@ -49,13 +49,13 @@ Rectangle {
                 height: 22
                 width: Math.max(28, orderText.implicitWidth + 12)
                 radius: 4
-                color: isHighlighted ? "#2563eb" : "#1d4ed8"
+                color: (typeof theme !== "undefined" && theme) ? (isHighlighted ? theme.accentActive : theme.accent) : "blue"
 
                 Text {
                     id: orderText
                     anchors.centerIn: parent
                     text: "#" + imageCardRoot.displayOrder
-                    color: "#ffffff"
+                    color: (typeof theme !== "undefined" && theme) ? theme.accentText : "white"
                     font.pixelSize: 11
                     font.bold: true
                 }
@@ -63,7 +63,7 @@ Rectangle {
 
             Text {
                 text: imageCardRoot.altText || (imageCardRoot.isAssociated ? "Visual Region Crop" : "Image")
-                color: isHighlighted ? "#93c5fd" : "#d1d5db"
+                color: (typeof theme !== "undefined" && theme) ? (isHighlighted ? theme.accentHover : theme.textPrimary) : "white"
                 font.pixelSize: 12
                 font.bold: true
                 elide: Text.ElideRight
@@ -75,7 +75,7 @@ Rectangle {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: Math.min(420 * scaleFactor, 500)
-            color: "#121216"
+            color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "black"
             radius: 4
             clip: true
 
@@ -104,7 +104,7 @@ Rectangle {
 
                 Text {
                     text: "Image file could not be loaded"
-                    color: "#ef4444"
+                    color: (typeof theme !== "undefined" && theme) ? theme.error : "red"
                     font.pixelSize: 12
                     font.bold: true
                     Layout.alignment: Qt.AlignHCenter
@@ -112,7 +112,7 @@ Rectangle {
 
                 Text {
                     text: imageCardRoot.imageUri || imageCardRoot.altText
-                    color: "#6b7280"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textMuted : "gray"
                     font.pixelSize: 10
                     elide: Text.ElideMiddle
                     Layout.maximumWidth: parent.width - 20
