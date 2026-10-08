@@ -457,9 +457,10 @@ def test_clipboard_commands(qapp):
         assert QGuiApplication.clipboard().text() == "[100, 150, 300, 350]"
 
         # 3. Copy Region Path
+        from core.entities.artifact import resolve_canonical_file_path
         res_path = ctrl.copyRegionPath(reg_a)
         assert res_path is True
-        assert QGuiApplication.clipboard().text() == "artifacts/crop_a.png"
+        assert QGuiApplication.clipboard().text() == str(resolve_canonical_file_path("artifacts/crop_a.png"))
 
         # 4. Copy Region Token
         res_token = ctrl.copyRegionToken(reg_a)
