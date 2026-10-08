@@ -91,6 +91,10 @@ def wire_review_workspace_sync(
     document_viewer_controller.regionArtifactCommitted.connect(_on_region_artifact_committed)
 
     if markdown_editor_controller is not None:
+        document_viewer_controller.set_markdown_token_inserter(
+            markdown_editor_controller.insertVisualRegionToken
+        )
+
         def _on_source_text_changed():
             if markdown_editor_controller.hasUnresolvedConflict:
                 return
@@ -170,6 +174,7 @@ def wire_review_workspace_sync(
             viewer_controller=markdown_viewer_controller,
         )
 
+    document_viewer_controller.set_markdown_token_inserter(None)
     return None
 
 

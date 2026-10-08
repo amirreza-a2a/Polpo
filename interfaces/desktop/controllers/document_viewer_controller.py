@@ -4,14 +4,24 @@
 # ============================================================
 
 import os
+import uuid
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Callable
 
-from interfaces.desktop.qt_compat import QObject, Signal, Slot, Property, QUrl
+from interfaces.desktop.qt_compat import (
+    QGuiApplication,
+    QObject,
+    Signal,
+    Slot,
+    Property,
+    QUrl,
+)
 from application.services.document_viewer_service import DocumentViewerService
 from application.services.visual_region_publication_service import VisualRegionPublicationService
 from application.dto.visual_region_dto import VisualRegionDTO
 from application.dto.visual_region_publication_dto import RegionPublicationResultDTO
+from core.domain.visual_token import VisualOccurrenceToken, serialize_canonical_token
+from core.entities.artifact import resolve_canonical_file_path
 from core.entities.bounding_box import BoundingBox
 from core.geometry.coordinates import (
     CoordinateTransformer,
@@ -26,6 +36,8 @@ from core.geometry.box_editor import (
     HandleType,
     MIN_NORMALIZED_DIMENSION,
 )
+from core.markdown.visual_token_mutator import normalize_uuid
+from interfaces.desktop.actions.region_actions import RegionActionProvider
 
 
 class DocumentViewerController(QObject):
@@ -116,11 +128,30 @@ class DocumentViewerController(QObject):
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="PdfViewerWorker")
         self._last_apply_future = None
 
+        # Markdown token inserter and validation hooks (TICK-P04A)
+        self._markdown_token_inserter: Optional[Callable[..., bool]] = None
+        self._can_insert_query: Optional[Callable[[int, str], bool]] = None
+        self._is_duplicated_query: Optional[Callable[[int, str], bool]] = None
+
         # Connect internal worker signals
         self._internalPageLoaded.connect(self._on_internal_page_loaded)
         self._internalPageError.connect(self._on_internal_page_error)
         self._internalApplyFinished.connect(self._on_internal_apply_finished)
         self._internalApplyError.connect(self._on_internal_apply_error)
+
+    def set_markdown_token_inserter(
+        self,
+        callback: Optional[Callable[..., bool]],
+        can_insert_query: Optional[Callable[[int, str], bool]] = None,
+        is_duplicated_query: Optional[Callable[[int, str], bool]] = None,
+    ) -> None:
+        """
+        Registers callback for inserting visual region tokens into the Markdown editor.
+        Optionally accepts presentation queries for insertion enablement and duplicate check.
+        """
+        self._markdown_token_inserter = callback
+        self._can_insert_query = can_insert_query
+        self._is_duplicated_query = is_duplicated_query
 
     # =========================================================================
     # QML Properties
@@ -1365,40 +1396,105 @@ class DocumentViewerController(QObject):
         self.editorStateChanged.emit()
         self.transientBoxChanged.emit()
 
-    @Slot()
-    def deleteSelectedRegion(self) -> None:
-        """Rejects (deletes) the currently selected region. Preserves historical audit log."""
+    def _resolve_target_region(self, region_id: str = "") -> Optional[Dict[str, Any]]:
+        """
+        Resolves the exact target visual region dictionary within current job context.
+
+        Rules:
+        - If region_id is explicit (non-empty string):
+          Must match a region in self._active_regions with matching job_id.
+          Never falls back to self._selected_region_id when explicit ID is given.
+        - If region_id is empty string:
+          Falls back to self._selected_region_id if a selection exists.
+        - Returns None if target does not exist, job is <= 0, or job mismatch.
+        """
+        if self._current_job_id <= 0:
+            return None
+
+        target_id = str(region_id).strip() if region_id else ""
+        if target_id:
+            for r in self._active_regions:
+                if r.get("region_id") == target_id:
+                    if r.get("job_id") == self._current_job_id:
+                        return r
+                    return None
+            return None
+
+        # Empty region_id -> fallback to selected region
         if not self._selected_region_id:
-            return
-        target_id = self._selected_region_id
+            return None
+
+        for r in self._active_regions:
+            if r.get("region_id") == self._selected_region_id:
+                if r.get("job_id") == self._current_job_id:
+                    return r
+                return None
+        return None
+
+    @Slot(result=bool)
+    @Slot(str, result=bool)
+    def deleteRegion(self, region_id: str = "") -> bool:
+        """
+        Rejects (deletes) the targeted or selected region. Preserves historical audit log.
+        Deleting a context target does not depend on current selection, and deleting a
+        non-selected target does not clear or alter an existing selection.
+        """
+        target = self._resolve_target_region(region_id)
+        if target is None:
+            return False
+
+        target_id = target["region_id"]
         try:
             self.viewer_service.reject_region(target_id)
             self._last_deleted_region_id = target_id
             self.canUndoDeleteChanged.emit()
-            self.clearSelection()
+            if target_id == self._selected_region_id:
+                self.clearSelection()
             self._reload_page_regions()
             self.regionDeleted.emit(target_id)
             self.regionsChanged.emit()
             self._trigger_async_apply(self._current_job_id, target_id)
+            return True
         except Exception as e:
             self._error_message = f"Failed to delete region: {str(e)}"
             self.errorChanged.emit()
+            return False
 
     @Slot()
-    def acceptSelectedRegion(self) -> None:
-        """Explicitly accepts the currently selected AI-detected visual region."""
-        if not self._selected_region_id:
-            return
-        target_id = self._selected_region_id
+    def deleteSelectedRegion(self) -> None:
+        """Rejects (deletes) the currently selected region. Preserves historical audit log."""
+        self.deleteRegion()
+
+    @Slot(result=bool)
+    @Slot(str, result=bool)
+    def acceptRegion(self, region_id: str = "") -> bool:
+        """
+        Explicitly accepts the targeted or selected AI-detected visual region.
+        Operates on explicit region_id if provided; falls back to selectedRegion if empty.
+        Accepting one region cannot alter another region's selection.
+        """
+        target = self._resolve_target_region(region_id)
+        if target is None:
+            return False
+
+        target_id = target["region_id"]
         try:
             self.viewer_service.accept_region(target_id)
             self._reload_page_regions()
             self.regionUpdated.emit(target_id)
-            self.selectionChanged.emit()
+            if target_id == self._selected_region_id:
+                self.selectionChanged.emit()
             self.regionsChanged.emit()
+            return True
         except Exception as e:
             self._error_message = f"Failed to accept region: {str(e)}"
             self.errorChanged.emit()
+            return False
+
+    @Slot()
+    def acceptSelectedRegion(self) -> None:
+        """Explicitly accepts the currently selected AI-detected visual region."""
+        self.acceptRegion()
 
     def _do_restore_region(self, region_id: str) -> bool:
         """Restores a rejected region back into active document review state."""
@@ -1438,27 +1534,226 @@ class DocumentViewerController(QObject):
     @Slot(str)
     def retryRegionSync(self, region_id: str = "") -> None:
         """Dispatches asynchronous publication/cropping for a failed or dirty region."""
-        target_id = region_id or self._selected_region_id
-        if not target_id:
+        target = self._resolve_target_region(region_id)
+        if target is None:
             return
+        target_id = target["region_id"]
         self._trigger_async_apply(self._current_job_id, target_id)
 
-    @Slot()
-    def resetSelectedRegionToAi(self) -> None:
-        """Resets the selected region geometry back to its original AI detected_bbox."""
-        if not self._selected_region_id:
-            return
-        target_id = self._selected_region_id
+    @Slot(result=bool)
+    @Slot(str, result=bool)
+    def resetRegionToAi(self, region_id: str = "") -> bool:
+        """
+        Resets the targeted or selected region geometry back to its original AI detected_bbox.
+        Resetting uses the exact target.
+        """
+        target = self._resolve_target_region(region_id)
+        if target is None:
+            return False
+
+        target_id = target["region_id"]
         try:
             self.viewer_service.reset_region_to_ai(target_id)
             self._reload_page_regions()
             self.regionUpdated.emit(target_id)
-            self.selectionChanged.emit()
+            if target_id == self._selected_region_id:
+                self.selectionChanged.emit()
             self.regionsChanged.emit()
             self._trigger_async_apply(self._current_job_id, target_id)
+            return True
         except Exception as e:
             self._error_message = f"Failed to reset region to AI: {str(e)}"
             self.errorChanged.emit()
+            return False
+
+    @Slot()
+    def resetSelectedRegionToAi(self) -> None:
+        """Resets the selected region geometry back to its original AI detected_bbox."""
+        self.resetRegionToAi()
+
+    # =========================================================================
+    # Region Context Actions & Clipboard Dispatch (TICK-P04A)
+    # =========================================================================
+
+    @Slot(str, result=bool)
+    @Slot(result=bool)
+    def copyRegionPath(self, region_id: str = "") -> bool:
+        """Copies resolved filesystem artifact path of the target region to clipboard."""
+        target = self._resolve_target_region(region_id)
+        if target is None:
+            return False
+        if str(target.get("sync_status", "")).lower() not in ("synced", "synchronized"):
+            return False
+        uri = target.get("active_artifact_uri")
+        if not uri or not str(uri).strip():
+            return False
+        resolved_path = str(resolve_canonical_file_path(str(uri).strip()))
+        cb = QGuiApplication.clipboard()
+        if cb is not None:
+            cb.setText(resolved_path)
+            return True
+        return False
+
+    @Slot(str, result=bool)
+    @Slot(result=bool)
+    def copyRegionToken(self, region_id: str = "") -> bool:
+        """Copies canonical visual occurrence CommonMark token to clipboard."""
+        target = self._resolve_target_region(region_id)
+        if target is None:
+            return False
+        if str(target.get("sync_status", "")).lower() not in ("synced", "synchronized"):
+            return False
+        uri = target.get("active_artifact_uri")
+        if not uri or not str(uri).strip():
+            return False
+        try:
+            target_uuid = normalize_uuid(target["region_id"], "region_id")
+        except (ValueError, TypeError):
+            return False
+        token = VisualOccurrenceToken(
+            region_id=target_uuid,
+            occurrence_id=uuid.uuid4(),
+            uri=str(uri).strip(),
+            alt_text="",
+        )
+        token_str = serialize_canonical_token(token)
+        cb = QGuiApplication.clipboard()
+        if cb is not None:
+            cb.setText(token_str)
+            return True
+        return False
+
+    @Slot(str, result=bool)
+    @Slot(result=bool)
+    def copyRegionId(self, region_id: str = "") -> bool:
+        """Copies canonical 36-char lowercase UUID of the target region to clipboard."""
+        target = self._resolve_target_region(region_id)
+        if target is None:
+            return False
+        try:
+            target_uuid = normalize_uuid(target["region_id"], "region_id")
+            canonical_id = str(target_uuid)
+        except (ValueError, TypeError):
+            canonical_id = str(target.get("region_id", "")).strip()
+        cb = QGuiApplication.clipboard()
+        if cb is not None:
+            cb.setText(canonical_id)
+            return True
+        return False
+
+    @Slot(str, result=bool)
+    @Slot(result=bool)
+    def copyRegionBoundingBox(self, region_id: str = "") -> bool:
+        """Copies canonical [ymin, xmin, ymax, xmax] coordinates of target region to clipboard."""
+        target = self._resolve_target_region(region_id)
+        if target is None:
+            return False
+        ymin = int(target.get("effective_ymin", 0))
+        xmin = int(target.get("effective_xmin", 0))
+        ymax = int(target.get("effective_ymax", 0))
+        xmax = int(target.get("effective_xmax", 0))
+        bbox_str = f"[{ymin}, {xmin}, {ymax}, {xmax}]"
+        cb = QGuiApplication.clipboard()
+        if cb is not None:
+            cb.setText(bbox_str)
+            return True
+        return False
+
+    @Slot(str, result="QVariant")
+    @Slot(result="QVariant")
+    def getRegionContextActions(self, region_id: str = "") -> List[Dict[str, Any]]:
+        """
+        Returns serialized context action descriptors for the targeted region.
+        Returns an empty list if target region is invalid, belongs to another job, or job <= 0.
+        """
+        target = self._resolve_target_region(region_id)
+        if target is None:
+            return []
+
+        target_reg_id = target["region_id"]
+
+        can_insert = False
+        is_duplicated = False
+
+        if self._can_insert_query is not None:
+            can_insert = self._can_insert_query(self._current_job_id, target_reg_id)
+        elif self._markdown_token_inserter is not None:
+            editor = getattr(self._markdown_token_inserter, "__self__", None)
+            if editor is not None and hasattr(editor, "active_job_id"):
+                can_insert = (editor.active_job_id == self._current_job_id and self._current_job_id > 0)
+            else:
+                can_insert = (self._current_job_id > 0)
+
+        if self._is_duplicated_query is not None:
+            is_duplicated = self._is_duplicated_query(self._current_job_id, target_reg_id)
+
+        descriptors = RegionActionProvider.build_actions(
+            job_id=self._current_job_id,
+            region=target,
+            can_insert_markdown=can_insert,
+            is_duplicated_in_markdown=is_duplicated,
+        )
+        return [d.to_dict() for d in descriptors]
+
+    @Slot(str, str, result=bool)
+    @Slot(str, result=bool)
+    def executeRegionAction(self, action_id: str, region_id: str = "") -> bool:
+        """
+        Validates current job context, ensures target region existence and ownership,
+        verifies action permission, and dispatches to the corresponding command.
+        """
+        if self._current_job_id <= 0:
+            return False
+
+        target = self._resolve_target_region(region_id)
+        if target is None:
+            return False
+
+        target_reg_id = target["region_id"]
+
+        # Validate that the requested action is visible and enabled
+        actions = self.getRegionContextActions(target_reg_id)
+        descriptor = next((a for a in actions if a.get("action_id") == action_id), None)
+        if descriptor is None:
+            return False
+        if not descriptor.get("is_visible", False) or not descriptor.get("is_enabled", False):
+            return False
+
+        # Dispatch
+        if action_id == "insert_markdown":
+            if self._markdown_token_inserter is None:
+                return False
+            try:
+                return bool(self._markdown_token_inserter(self._current_job_id, target_reg_id, ""))
+            except TypeError:
+                return bool(self._markdown_token_inserter(self._current_job_id, target_reg_id))
+
+        elif action_id == "copy_token":
+            return self.copyRegionToken(target_reg_id)
+
+        elif action_id == "copy_path":
+            return self.copyRegionPath(target_reg_id)
+
+        elif action_id == "copy_bbox":
+            return self.copyRegionBoundingBox(target_reg_id)
+
+        elif action_id == "copy_id":
+            return self.copyRegionId(target_reg_id)
+
+        elif action_id == "accept_region":
+            return self.acceptRegion(target_reg_id)
+
+        elif action_id == "reset_to_ai":
+            return self.resetRegionToAi(target_reg_id)
+
+        elif action_id == "delete_region":
+            return self.deleteRegion(target_reg_id)
+
+        elif action_id == "retry_sync":
+            self.retryRegionSync(target_reg_id)
+            return True
+
+        return False
 
     @Slot(float, float, float, float, result=list)
     @Slot(float, float, float, float, float, result=list)
