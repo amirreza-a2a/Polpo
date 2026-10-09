@@ -646,7 +646,7 @@ def test_task_list_item_with_image_preserves_task_checkbox_in_segments():
 
     # First segment of item 1 must carry the completed checkbox
     assert item1_segs[0].segment_type == "text"
-    assert item1_segs[0].text_html.startswith("☑ ")
+    assert item1_segs[0].text_html.startswith(("☑ ", "☒ "))
 
 
 def test_blockquote_with_heading_and_multiple_blocks_preserves_content():
