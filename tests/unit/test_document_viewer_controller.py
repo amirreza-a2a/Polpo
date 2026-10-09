@@ -633,3 +633,89 @@ def test_execute_region_action_inserter_exception_handled(qapp):
         assert "Buffer corrupted" in ctrl.errorMessage
     finally:
         ctrl.shutdown()
+
+
+def test_wire_review_workspace_sync_duplicate_token_detection(qapp):
+    """
+    Verifies Phase 2 integration gap resolution:
+    - Pre-existing canonical token disables insert_markdown with meaningful explanation.
+    - Token absent enables insert_markdown when prerequisites pass.
+    - Query inspects live current editor buffer at query time.
+    - Job mismatch disables with correct reason.
+    - P13 insertion guard still rejects duplicate if buffer changes between query and dispatch.
+    """
+    from uuid import UUID, uuid4
+    from interfaces.desktop.app import wire_review_workspace_sync
+    from interfaces.desktop.controllers.markdown_editor_controller import MarkdownEditorController
+    from core.domain.visual_token import VisualOccurrenceToken, serialize_canonical_token
+
+    ctrl, _, _ = _setup_controller_with_regions()
+    reg_a = "01234567-89ab-4cde-8f01-23456789abcd"
+
+    mock_region_svc = MagicMock()
+    # Mock get_visual_region so P13 insertVisualRegionToken prerequisites pass
+    mock_reg = MagicMock()
+    mock_reg.job_id = 10
+    mock_reg.is_active = True
+    mock_reg.is_deleted = False
+    mock_reg.review_status = "unreviewed"
+    mock_reg.sync_status = "synchronized"
+    mock_reg.active_artifact_uri = "artifacts/10/reg_a.png"
+    mock_region_svc.get_visual_region.return_value = mock_reg
+
+    editor = MarkdownEditorController(editor_service=MagicMock(), region_service=mock_region_svc)
+    editor._active_job_id = 10
+    editor._source_text = "# Chapter 1\nSome introductory text.\n"
+
+    try:
+        wire_review_workspace_sync(
+            document_viewer_controller=ctrl,
+            markdown_viewer_controller=MagicMock(),
+            markdown_editor_controller=editor,
+        )
+
+        # 1. Token absent -> action enabled
+        actions = ctrl.getRegionContextActions(reg_a)
+        insert_act = next(a for a in actions if a["action_id"] == "insert_markdown")
+        assert insert_act["is_enabled"] is True
+        assert insert_act["disabled_reason"] == ""
+
+        # 2. Add canonical token to buffer -> action disabled with duplicate reason
+        token = VisualOccurrenceToken(
+            region_id=UUID(reg_a),
+            occurrence_id=uuid4(),
+            uri="artifacts/10/reg_a.png",
+            alt_text="Figure 1",
+        )
+        token_str = serialize_canonical_token(token)
+        editor.set_source_text(f"# Chapter 1\n{token_str}\n")
+
+        actions_dup = ctrl.getRegionContextActions(reg_a)
+        insert_act_dup = next(a for a in actions_dup if a["action_id"] == "insert_markdown")
+        assert insert_act_dup["is_visible"] is True
+        assert insert_act_dup["is_enabled"] is False
+        assert "already exists in Markdown editor" in insert_act_dup["disabled_reason"]
+
+        # 3. Remove token from buffer -> action enabled again dynamically
+        editor.set_source_text("# Chapter 1\nClean buffer without token.\n")
+        actions_cleared = ctrl.getRegionContextActions(reg_a)
+        insert_act_cleared = next(a for a in actions_cleared if a["action_id"] == "insert_markdown")
+        assert insert_act_cleared["is_enabled"] is True
+        assert insert_act_cleared["disabled_reason"] == ""
+
+        # 4. Job mismatch -> action disabled
+        editor._active_job_id = 42
+        actions_mismatch = ctrl.getRegionContextActions(reg_a)
+        insert_act_mismatch = next(a for a in actions_mismatch if a["action_id"] == "insert_markdown")
+        assert insert_act_mismatch["is_enabled"] is False
+        assert "not available for this job" in insert_act_mismatch["disabled_reason"]
+
+        # 5. P13 final insertion guard rejects duplicate even if query was bypassed
+        editor._active_job_id = 10
+        editor.set_source_text(f"# Chapter 1\n{token_str}\n")
+        # Direct call to insertVisualRegionToken
+        inserted = editor.insertVisualRegionToken(10, reg_a)
+        assert inserted is False
+    finally:
+        ctrl.shutdown()
+        editor.shutdown()

@@ -7,11 +7,19 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from interfaces.desktop.qt_compat import QGuiApplication, QQmlApplicationEngine, QUrl
+from interfaces.desktop.qt_compat import (
+    QGuiApplication,
+    QQmlApplicationEngine,
+    QUrl,
+    QEvent,
+    Qt,
+)
 try:
     from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QMouseEvent
 except ImportError:
     from PyQt6.QtCore import QPointF
+    from PyQt6.QtGui import QMouseEvent
 from core.entities.bounding_box import BoundingBox
 from core.entities.visual_region import RegionOrigin, ReviewStatus, SyncStatus
 from application.dto.document_viewer_dto import PageRasterDTO
@@ -157,6 +165,9 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
         self.assertIsNotNone(overlay)
         creation_preview = self.view_root.findChild(object, "creationPreview")
         self.assertIsNotNone(creation_preview)
+        region_menu = self.view_root.findChild(object, "regionContextMenu")
+        self.assertIsNotNone(region_menu)
+        self.assertEqual(region_menu.property("controller"), self.controller)
 
         # Verify no critical QML runtime errors
         critical_errors = [
@@ -922,3 +933,61 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
         self.controller.selectRegion("reg-synced-clean")
         self.app.processEvents()
         self.assertFalse(sel_pending.property("visible"))
+
+    def test_region_context_menu_coexistence_and_right_click_interactions(self):
+        """
+        12. Verifies TICK-P04B RegionContextMenu presence and interaction coexistence:
+            - regionContextMenu exists and is bound to the document viewer controller.
+            - bodyDragArea accepts both LeftButton and RightButton.
+            - manipulatorDragArea accepts both LeftButton and RightButton.
+            - Left-click drag on region body remains functional without interference.
+            - Right-click on emptyArea initiates canvas panning (isPanDragging=True) without opening context menu.
+        """
+        overlay = find_quick_item(self.view_root, "regionOverlay")
+        self.assertIsNotNone(overlay)
+
+        menu = self.view_root.findChild(object, "regionContextMenu")
+        self.assertIsNotNone(menu)
+        self.assertEqual(menu.property("controller"), self.controller)
+
+        # Region delegate bodyDragArea acceptedButtons
+        body_area = find_quick_item(self.view_root, "bodyDragArea_test-r1")
+        self.assertIsNotNone(body_area)
+        accepted_body = body_area.property("acceptedButtons")
+        self.assertTrue(bool(accepted_body & Qt.LeftButton), "bodyDragArea must accept LeftButton")
+        self.assertTrue(bool(accepted_body & Qt.RightButton), "bodyDragArea must accept RightButton")
+
+        # Select region to activate manipulator
+        self.controller.selectRegion("test-r1")
+        self.app.processEvents()
+
+        manip_area = find_quick_item(self.view_root, "manipulatorDragArea")
+        self.assertIsNotNone(manip_area)
+        accepted_manip = manip_area.property("acceptedButtons")
+        self.assertTrue(bool(accepted_manip & Qt.LeftButton), "manipulatorDragArea must accept LeftButton")
+        self.assertTrue(bool(accepted_manip & Qt.RightButton), "manipulatorDragArea must accept RightButton")
+
+        # Left-click drag on bodyDragArea still initiates dragging state
+        self.controller.clearSelection()
+        self.app.processEvents()
+        self.assertEqual(self.controller.editorState, "idle")
+
+        left_press = QMouseEvent(QEvent.MouseButtonPress, QPointF(10.0, 10.0), QPointF(10.0, 10.0), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+        self.app.sendEvent(body_area, left_press)
+        self.app.processEvents()
+        self.assertEqual(self.controller.editorState, "dragging")
+        self.controller.cancelDrag()
+        self.app.processEvents()
+
+        # Right-click on emptyArea initiates canvas pan drag and does not open context menu
+        empty_area = find_quick_item(self.view_root, "emptyArea")
+        self.assertIsNotNone(empty_area)
+        self.assertFalse(empty_area.property("isPanDragging"))
+        self.assertFalse(menu.property("opened"))
+
+        right_press_empty = QMouseEvent(QEvent.MouseButtonPress, QPointF(500.0, 400.0), QPointF(500.0, 400.0), Qt.RightButton, Qt.RightButton, Qt.NoModifier)
+        self.app.sendEvent(empty_area, right_press_empty)
+        self.app.processEvents()
+
+        self.assertTrue(empty_area.property("isPanDragging"), "Right click on emptyArea must engage isPanDragging")
+        self.assertFalse(menu.property("opened"), "Right click on emptyArea must not open context menu")

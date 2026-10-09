@@ -32,6 +32,7 @@ from interfaces.desktop.models import (
 from interfaces.desktop.coordinators.review_workspace_sync_coordinator import ReviewWorkspaceSyncCoordinator
 from interfaces.desktop.providers.math_image_provider import MathImageProvider
 from application.services.markdown_merge_service import MarkdownMergeService
+from core.markdown.visual_token_mutator import find_canonical_token_spans
 
 
 def wire_review_workspace_sync(
@@ -91,8 +92,28 @@ def wire_review_workspace_sync(
     document_viewer_controller.regionArtifactCommitted.connect(_on_region_artifact_committed)
 
     if markdown_editor_controller is not None:
+        def _can_insert_markdown(job_id: int, region_id: str) -> bool:
+            try:
+                active_job = markdown_editor_controller.activeJobId
+                return active_job > 0 and active_job == job_id
+            except (ValueError, TypeError, AttributeError):
+                return False
+
+        def _is_duplicated_markdown(job_id: int, region_id: str) -> bool:
+            try:
+                active_job = markdown_editor_controller.activeJobId
+                if active_job <= 0 or active_job != job_id:
+                    return False
+                source_text = markdown_editor_controller.sourceText
+                spans = find_canonical_token_spans(source_text, region_id)
+                return bool(spans)
+            except (ValueError, TypeError, AttributeError):
+                return False
+
         document_viewer_controller.set_markdown_token_inserter(
-            markdown_editor_controller.insertVisualRegionToken
+            markdown_editor_controller.insertVisualRegionToken,
+            can_insert_query=_can_insert_markdown,
+            is_duplicated_query=_is_duplicated_markdown,
         )
 
         def _on_source_text_changed():

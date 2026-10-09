@@ -526,4 +526,18 @@ Item {
             overwriteConfirmModal.open();
         }
     }
+
+    // Auto-switch to source editor tab on navigation request if right pane displays rendered preview
+    Connections {
+        target: typeof markdownEditorController !== "undefined" ? markdownEditorController : null
+        function onRequestNavigateToPosition(position) {
+            var activeJob = reviewWorkspaceRoot.getActiveJobId();
+            if (activeJob <= 0) return;
+            if (typeof markdownEditorController !== "undefined" && markdownEditorController && markdownEditorController.activeJobId === activeJob) {
+                if (rightPane && rightPane.currentTab === 0) {
+                    rightPane.setTab(1);
+                }
+            }
+        }
+    }
 }
