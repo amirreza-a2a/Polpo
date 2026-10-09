@@ -34,6 +34,17 @@ class RegionActionDescriptor:
         }
 
 
+def normalize_region_status(val: Any) -> str:
+    """Extracts clean lowercase string representation from str or Enum."""
+    if val is None:
+        return ""
+    raw = getattr(val, "value", val)
+    s = str(raw).strip()
+    if "." in s and (s.startswith("RegionOrigin.") or s.startswith("ReviewStatus.") or s.startswith("SyncStatus.")):
+        s = s.split(".", 1)[1]
+    return s.lower()
+
+
 class RegionActionProvider:
     """
     Presentation-scoped action builder for visual region context actions.
@@ -60,12 +71,12 @@ class RegionActionProvider:
         Returns:
             Deterministic ordered list of RegionActionDescriptors.
         """
-        if job_id <= 0 or not region:
+        if job_id <= 0 or not region or not str(region.get("region_id", "")).strip():
             return []
 
-        origin = str(region.get("origin") or "")
-        review_status = str(region.get("review_status") or "").lower()
-        sync_status = str(region.get("sync_status") or "").lower()
+        origin = normalize_region_status(region.get("origin"))
+        review_status = normalize_region_status(region.get("review_status"))
+        sync_status = normalize_region_status(region.get("sync_status"))
         artifact_uri = region.get("active_artifact_uri")
         has_artifact = bool(artifact_uri and str(artifact_uri).strip())
         is_modified = bool(region.get("is_modified", False))

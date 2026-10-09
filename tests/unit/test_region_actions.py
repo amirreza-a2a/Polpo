@@ -241,6 +241,65 @@ def test_provider_clipboard_actions_enablement():
     assert acts_unsynced["copy_id"].is_enabled is True
 
 
+def test_provider_supports_domain_enums():
+    """Verifies that RegionActionProvider cleanly handles domain Enum objects (not just plain strings)."""
+    from core.entities.visual_region import RegionOrigin, ReviewStatus, SyncStatus
+
+    # AI unreviewed & synced
+    r1 = {
+        "region_id": "r1",
+        "origin": RegionOrigin.AI_DETECTED,
+        "review_status": ReviewStatus.UNREVIEWED,
+        "sync_status": SyncStatus.SYNCED,
+        "active_artifact_uri": "crop.png",
+        "is_modified": False,
+    }
+    acts1 = {a.action_id: a for a in RegionActionProvider.build_actions(1, r1, can_insert_markdown=True)}
+    assert acts1["accept_region"].is_visible is True
+    assert acts1["accept_region"].is_enabled is True
+    assert acts1["insert_markdown"].is_enabled is True
+    assert acts1["copy_token"].is_enabled is True
+    assert acts1["copy_path"].is_enabled is True
+    assert acts1["retry_sync"].is_visible is False
+
+    # AI accepted & modified & sync_failed
+    r2 = {
+        "region_id": "r2",
+        "origin": RegionOrigin.AI_DETECTED,
+        "review_status": ReviewStatus.ACCEPTED,
+        "sync_status": SyncStatus.SYNC_FAILED,
+        "active_artifact_uri": "crop.png",
+        "is_modified": True,
+    }
+    acts2 = {a.action_id: a for a in RegionActionProvider.build_actions(1, r2)}
+    assert acts2["accept_region"].is_visible is True
+    assert acts2["accept_region"].is_enabled is False
+    assert acts2["accept_region"].disabled_reason == "Region has already been accepted"
+    assert acts2["reset_to_ai"].is_visible is True
+    assert acts2["reset_to_ai"].is_enabled is True
+    assert acts2["retry_sync"].is_visible is True
+    assert acts2["retry_sync"].is_enabled is True
+
+    # User manual
+    r3 = {
+        "region_id": "r3",
+        "origin": RegionOrigin.USER_MANUAL,
+        "review_status": ReviewStatus.MANUAL,
+        "sync_status": SyncStatus.SYNCED,
+        "active_artifact_uri": "crop.png",
+    }
+    acts3 = {a.action_id: a for a in RegionActionProvider.build_actions(1, r3)}
+    assert acts3["accept_region"].is_visible is False
+    assert acts3["reset_to_ai"].is_visible is False
+
+
+def test_provider_empty_or_whitespace_region_id_rejected():
+    """Verifies that missing, empty, or whitespace region_id yields empty action list."""
+    assert RegionActionProvider.build_actions(1, {"origin": "ai_detected"}) == []
+    assert RegionActionProvider.build_actions(1, {"region_id": "", "origin": "ai_detected"}) == []
+    assert RegionActionProvider.build_actions(1, {"region_id": "   ", "origin": "ai_detected"}) == []
+
+
 def test_architecture_action_model_zero_qt_zero_persistence():
     """AST invariant test verifying zero Qt and zero persistence imports in actions/."""
     actions_dir = Path(__file__).parent.parent.parent / "interfaces" / "desktop" / "actions"
