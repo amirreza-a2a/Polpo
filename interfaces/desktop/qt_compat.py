@@ -36,6 +36,7 @@ try:
         QPalette,
         QPixmap,
         QStyleHints,
+        QMouseEvent,
     )
     from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
     from PySide6.QtQuick import QQuickItem, QQuickImageProvider
@@ -74,6 +75,7 @@ except ImportError:
         QPalette,
         QPixmap,
         QStyleHints,
+        QMouseEvent,
     )
     from PyQt6.QtQml import QQmlApplicationEngine, QQmlComponent
     from PyQt6.QtQuick import QQuickItem, QQuickImageProvider
@@ -115,5 +117,6 @@ __all__ = [
     "QFont",
     "QMetaObject",
     "QPointF",
+    "QMouseEvent",
     "QT_BINDING",
 ]

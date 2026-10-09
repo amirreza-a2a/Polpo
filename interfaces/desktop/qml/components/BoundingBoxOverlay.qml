@@ -301,7 +301,7 @@ Item {
                     return boxRect.isSelected ? Qt.SizeAllCursor : Qt.PointingHandCursor;
                 }
 
-                ToolTip.visible: bodyDragArea.containsMouse && !bodyDragArea.pressed
+                ToolTip.visible: bodyDragArea.containsMouse && !bodyDragArea.pressed && (!regionContextMenu.opened)
                 ToolTip.delay: 400
                 ToolTip.text: "Region ID: " + modelData.region_id + "\n" +
                               "Origin: " + modelData.origin + "\n" +
@@ -377,7 +377,7 @@ Item {
             enabled: controller ? controller.interactionMode === "pan_select" : false
             cursorShape: (controller && controller.interactionMode === "create_region") ? Qt.CrossCursor : Qt.SizeAllCursor
 
-            ToolTip.visible: manipulatorDragArea.containsMouse && !manipulatorDragArea.pressed && controller && controller.selectedRegion
+            ToolTip.visible: manipulatorDragArea.containsMouse && !manipulatorDragArea.pressed && (!regionContextMenu.opened) && controller && controller.selectedRegion
             ToolTip.delay: 400
             ToolTip.text: {
                 var sel = controller ? controller.selectedRegion : null;
