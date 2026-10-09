@@ -713,7 +713,9 @@ def test_wire_review_workspace_sync_duplicate_token_detection(qapp):
         # 5. P13 final insertion guard rejects duplicate even if query was bypassed
         editor._active_job_id = 10
         editor.set_source_text(f"# Chapter 1\n{token_str}\n")
-        # Direct call to insertVisualRegionToken
+        # Controller dispatch layer rejects execution when duplicate is present
+        assert ctrl.executeRegionAction("insert_markdown", reg_a) is False
+        # Direct call to insertVisualRegionToken also rejects duplicate
         inserted = editor.insertVisualRegionToken(10, reg_a)
         assert inserted is False
     finally:

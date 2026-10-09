@@ -26,11 +26,11 @@ Menu {
             readonly property bool tipVisible: ToolTip.visible
 
             ToolTip.text: disabledReason
-            ToolTip.visible: hovered && !enabled && (disabledReason !== "")
+            ToolTip.visible: contextMenuRoot.visible && hovered && !enabled && (disabledReason !== "")
             ToolTip.delay: 300
 
             onTriggered: {
-                if (actionId && contextMenuRoot.contextRegionId && contextMenuRoot.controller) {
+                if (enabled && actionId && contextMenuRoot.contextRegionId && contextMenuRoot.controller) {
                     contextMenuRoot.controller.executeRegionAction(actionId, contextMenuRoot.contextRegionId);
                 }
             }
@@ -47,9 +47,10 @@ Menu {
     function clearItems() {
         while (contextMenuRoot.count > 0) {
             var it = contextMenuRoot.takeItem(0);
-            if (it) {
-                it.destroy();
+            if (!it) {
+                break;
             }
+            it.destroy();
         }
     }
 
@@ -58,11 +59,13 @@ Menu {
         clearItems();
         contextRegionId = regionId ? String(regionId) : "";
         if (!controller || !contextRegionId) {
+            contextRegionId = "";
             return;
         }
 
         var rawActions = controller.getRegionContextActions(contextRegionId);
         if (!rawActions || rawActions.length === 0) {
+            contextRegionId = "";
             return;
         }
 
@@ -73,6 +76,7 @@ Menu {
             }
         }
         if (visibleActions.length === 0) {
+            contextRegionId = "";
             return;
         }
 
@@ -121,6 +125,7 @@ Menu {
     // Automatic dismissal on page navigation or target region invalidation
     Connections {
         target: contextMenuRoot.controller
+        ignoreUnknownSignals: true
         function onPageChanged() {
             contextMenuRoot.dismiss();
             contextMenuRoot.contextRegionId = "";
@@ -149,6 +154,16 @@ Menu {
                 var delId = String(deletedId).toLowerCase();
                 var curId = contextMenuRoot.contextRegionId.toLowerCase();
                 if (delId === curId || delId.replace(/-/g, "") === curId.replace(/-/g, "")) {
+                    contextMenuRoot.dismiss();
+                    contextMenuRoot.contextRegionId = "";
+                }
+            }
+        }
+        function onRegionUpdated(updatedId) {
+            if (updatedId && contextMenuRoot.contextRegionId) {
+                var updId = String(updatedId).toLowerCase();
+                var curId = contextMenuRoot.contextRegionId.toLowerCase();
+                if (updId === curId || updId.replace(/-/g, "") === curId.replace(/-/g, "")) {
                     contextMenuRoot.dismiss();
                     contextMenuRoot.contextRegionId = "";
                 }

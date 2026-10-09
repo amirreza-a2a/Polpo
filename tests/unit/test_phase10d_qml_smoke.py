@@ -13,13 +13,9 @@ from interfaces.desktop.qt_compat import (
     QUrl,
     QEvent,
     Qt,
+    QPointF,
+    QMouseEvent,
 )
-try:
-    from PySide6.QtCore import QPointF
-    from PySide6.QtGui import QMouseEvent
-except ImportError:
-    from PyQt6.QtCore import QPointF
-    from PyQt6.QtGui import QMouseEvent
 from core.entities.bounding_box import BoundingBox
 from core.entities.visual_region import RegionOrigin, ReviewStatus, SyncStatus
 from application.dto.document_viewer_dto import PageRasterDTO
@@ -991,3 +987,10 @@ class TestDocumentViewerPhase10DQmlSmoke(unittest.TestCase):
 
         self.assertTrue(empty_area.property("isPanDragging"), "Right click on emptyArea must engage isPanDragging")
         self.assertFalse(menu.property("opened"), "Right click on emptyArea must not open context menu")
+
+        # Right-click on region selects region and routes to showForRegion establishing context target
+        right_press_body = QMouseEvent(QEvent.MouseButtonPress, QPointF(15.0, 15.0), QPointF(15.0, 15.0), Qt.RightButton, Qt.RightButton, Qt.NoModifier)
+        self.app.sendEvent(body_area, right_press_body)
+        self.app.processEvents()
+        self.assertEqual(self.controller.selectedRegionId, "test-r1")
+        self.assertEqual(menu.property("contextRegionId"), "test-r1")

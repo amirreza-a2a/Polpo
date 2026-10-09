@@ -530,6 +530,7 @@ Item {
     // Auto-switch to source editor tab on navigation request if right pane displays rendered preview
     Connections {
         target: typeof markdownEditorController !== "undefined" ? markdownEditorController : null
+        ignoreUnknownSignals: true
         function onRequestNavigateToPosition(position) {
             var activeJob = reviewWorkspaceRoot.getActiveJobId();
             if (activeJob <= 0) return;

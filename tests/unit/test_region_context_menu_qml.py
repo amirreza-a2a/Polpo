@@ -18,10 +18,10 @@ from interfaces.desktop.qt_compat import (
     Slot,
     Property,
     QPointF,
+    QMouseEvent,
     QEvent,
     Qt,
 )
-from PySide6.QtGui import QMouseEvent
 
 
 def find_quick_item(root, object_name: str):
@@ -73,6 +73,7 @@ class MockMenuController(QObject):
     pageChanged = Signal()
     regionsChanged = Signal()
     regionDeleted = Signal(str)
+    regionUpdated = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -289,6 +290,17 @@ class TestRegionContextMenuQml(unittest.TestCase):
         self.assertEqual(item_token.property("disabledReason"), "Not synced")
         self.assertEqual(item_token.property("tipText"), "Not synced")
 
+        # Verify disabled reason tooltip becomes visible on hover
+        import time
+        self.assertFalse(item_token.property("tipVisible"))
+        hover_pt = QPointF(10.0, 10.0)
+        hover_ev = QMouseEvent(QEvent.MouseMove, hover_pt, hover_pt, Qt.NoButton, Qt.NoButton, Qt.NoModifier)
+        self.app.sendEvent(item_token, hover_ev)
+        self.app.processEvents()
+        time.sleep(0.35)
+        self.app.processEvents()
+        self.assertTrue(item_token.property("tipVisible"))
+
         # Verify hidden action is not rendered
         item_diag = menu.findChild(QObject, "menuItem_retry_sync")
         self.assertIsNone(item_diag)
@@ -304,6 +316,23 @@ class TestRegionContextMenuQml(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(menu.property("count"), 0)
         self.assertEqual(menu.property("contextRegionId"), "")
+
+    def test_disabled_action_cannot_be_triggered_or_executed(self):
+        """Verifies that triggering a disabled menuItem does not execute action on controller."""
+        mock_ctrl = MockMenuController()
+        win, menu = self._create_test_window_with_menu(mock_ctrl)
+        box = win.findChild(QObject, "testBox")
+
+        menu.showForRegion(box, 10, 10, "reg-disabled-test")
+        self.app.processEvents()
+
+        item_token = menu.findChild(QObject, "menuItem_copy_token")
+        self.assertIsNotNone(item_token)
+        self.assertFalse(item_token.property("enabled"))
+
+        QMetaObject.invokeMethod(item_token, "triggered")
+        self.app.processEvents()
+        self.assertEqual(mock_ctrl.executed_action, "")
 
     def test_future_unknown_action_descriptor_renders_without_qml_changes(self):
         """Verifies that adding a new action descriptor in Python automatically renders in QML."""
@@ -423,6 +452,48 @@ class TestRegionContextMenuQml(unittest.TestCase):
         mock_ctrl.regionsChanged.emit()
         self.app.processEvents()
         self.assertFalse(menu.property("opened"))
+
+    def test_menu_dismisses_when_target_region_updated(self):
+        """Verifies that regionUpdated for the target region dismisses the menu, while unrelated updates do not."""
+        mock_ctrl = MockMenuController()
+        win, menu = self._create_test_window_with_menu(mock_ctrl)
+        box = win.findChild(QObject, "testBox")
+
+        menu.showForRegion(box, 10, 10, "reg-A")
+        self.app.processEvents()
+        self.assertTrue(menu.property("opened"))
+
+        # Emit regionUpdated for unrelated region: menu stays open
+        mock_ctrl.regionUpdated.emit("reg-B")
+        self.app.processEvents()
+        self.assertTrue(menu.property("opened"))
+        self.assertEqual(menu.property("contextRegionId"), "reg-A")
+
+        # Emit regionUpdated for targeted region reg-A: menu dismisses
+        mock_ctrl.regionUpdated.emit("reg-A")
+        self.app.processEvents()
+        self.assertFalse(menu.property("opened"))
+        self.assertEqual(menu.property("contextRegionId"), "")
+
+    def test_show_for_region_with_empty_or_unknown_region_resets_context_target(self):
+        """Verifies that showForRegion clears contextRegionId and does not open when region is invalid or has no actions."""
+        mock_ctrl = MockMenuController()
+        mock_ctrl.getRegionContextActions = MagicMock(return_value=[])
+
+        win, menu = self._create_test_window_with_menu(mock_ctrl)
+        box = win.findChild(QObject, "testBox")
+
+        # Empty region
+        menu.showForRegion(box, 10, 10, "")
+        self.app.processEvents()
+        self.assertFalse(menu.property("opened"))
+        self.assertEqual(menu.property("contextRegionId"), "")
+
+        # Nonexistent/empty actions region
+        menu.showForRegion(box, 10, 10, "reg-unknown")
+        self.app.processEvents()
+        self.assertFalse(menu.property("opened"))
+        self.assertEqual(menu.property("contextRegionId"), "")
 
     # =========================================================================
     # 3. Coordinate Mapping under Zoom and Pan
@@ -568,6 +639,28 @@ class TestRegionContextMenuQml(unittest.TestCase):
             editor_ctrl.requestNavigateToPosition.emit(20)
             self.app.processEvents()
             self.assertEqual(right_pane.property("currentTab"), 1)
+
+            # Switch back to tab 0 (Preview)
+            right_pane.setTab(0)
+            self.app.processEvents()
+            self.assertEqual(right_pane.property("currentTab"), 0)
+
+            # Navigation for a different job does NOT switch tab
+            editor_ctrl._active_job_id = 99
+            editor_ctrl.requestNavigateToPosition.emit(30)
+            self.app.processEvents()
+            self.assertEqual(right_pane.property("currentTab"), 0)
+
+            # Restore active job and switch to tab 2 (Dual Pane)
+            editor_ctrl._active_job_id = 5
+            right_pane.setTab(2)
+            self.app.processEvents()
+            self.assertEqual(right_pane.property("currentTab"), 2)
+
+            # Navigation while on tab 2 preserves tab 2 (Dual Pane)
+            editor_ctrl.requestNavigateToPosition.emit(40)
+            self.app.processEvents()
+            self.assertEqual(right_pane.property("currentTab"), 2)
         finally:
             doc_ctrl.shutdown()
             editor_ctrl.shutdown()
