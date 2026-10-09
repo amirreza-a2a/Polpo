@@ -37,7 +37,10 @@ from core.geometry.box_editor import (
     MIN_NORMALIZED_DIMENSION,
 )
 from core.markdown.visual_token_mutator import normalize_uuid
-from interfaces.desktop.actions.region_actions import RegionActionProvider
+from interfaces.desktop.actions.region_actions import (
+    RegionActionProvider,
+    normalize_region_status,
+)
 
 
 class DocumentViewerController(QObject):
@@ -1411,10 +1414,17 @@ class DocumentViewerController(QObject):
         if self._current_job_id <= 0:
             return None
 
-        target_id = str(region_id).strip() if region_id else ""
+        target_id = str(region_id).strip() if region_id is not None and str(region_id).strip() else ""
         if target_id:
+            target_norm = None
+            try:
+                target_norm = str(normalize_uuid(target_id, "region_id"))
+            except Exception:
+                target_norm = None
+
             for r in self._active_regions:
-                if r.get("region_id") == target_id:
+                rid = str(r.get("region_id", "")).strip()
+                if rid == target_id or (target_norm is not None and rid.lower() == target_norm):
                     if r.get("job_id") == self._current_job_id:
                         return r
                     return None
@@ -1582,7 +1592,7 @@ class DocumentViewerController(QObject):
         target = self._resolve_target_region(region_id)
         if target is None:
             return False
-        if str(target.get("sync_status", "")).lower() not in ("synced", "synchronized"):
+        if normalize_region_status(target.get("sync_status")) not in ("synced", "synchronized"):
             return False
         uri = target.get("active_artifact_uri")
         if not uri or not str(uri).strip():
@@ -1601,27 +1611,32 @@ class DocumentViewerController(QObject):
         target = self._resolve_target_region(region_id)
         if target is None:
             return False
-        if str(target.get("sync_status", "")).lower() not in ("synced", "synchronized"):
+        if normalize_region_status(target.get("sync_status")) not in ("synced", "synchronized"):
             return False
         uri = target.get("active_artifact_uri")
         if not uri or not str(uri).strip():
             return False
         try:
             target_uuid = normalize_uuid(target["region_id"], "region_id")
+            token = VisualOccurrenceToken(
+                region_id=target_uuid,
+                occurrence_id=uuid.uuid4(),
+                uri=str(uri).strip(),
+                alt_text="",
+            )
+            token_str = serialize_canonical_token(token)
         except (ValueError, TypeError):
             return False
-        token = VisualOccurrenceToken(
-            region_id=target_uuid,
-            occurrence_id=uuid.uuid4(),
-            uri=str(uri).strip(),
-            alt_text="",
-        )
-        token_str = serialize_canonical_token(token)
         cb = QGuiApplication.clipboard()
         if cb is not None:
             cb.setText(token_str)
             return True
         return False
+
+    @Slot(result=bool)
+    def copySelectedToken(self) -> bool:
+        """Copies canonical Markdown token for currently selected region to clipboard."""
+        return self.copyRegionToken()
 
     @Slot(str, result=bool)
     @Slot(result=bool)
@@ -1648,11 +1663,20 @@ class DocumentViewerController(QObject):
         target = self._resolve_target_region(region_id)
         if target is None:
             return False
-        ymin = int(target.get("effective_ymin", 0))
-        xmin = int(target.get("effective_xmin", 0))
-        ymax = int(target.get("effective_ymax", 0))
-        xmax = int(target.get("effective_xmax", 0))
-        bbox_str = f"[{ymin}, {xmin}, {ymax}, {xmax}]"
+        ymin = target.get("effective_ymin")
+        xmin = target.get("effective_xmin")
+        ymax = target.get("effective_ymax")
+        xmax = target.get("effective_xmax")
+        if ymin is None or xmin is None or ymax is None or xmax is None:
+            bbox = target.get("effective_bbox")
+            if bbox is not None:
+                ymin = getattr(bbox, "ymin", None) or (bbox.get("ymin", 0) if isinstance(bbox, dict) else 0)
+                xmin = getattr(bbox, "xmin", None) or (bbox.get("xmin", 0) if isinstance(bbox, dict) else 0)
+                ymax = getattr(bbox, "ymax", None) or (bbox.get("ymax", 0) if isinstance(bbox, dict) else 0)
+                xmax = getattr(bbox, "xmax", None) or (bbox.get("xmax", 0) if isinstance(bbox, dict) else 0)
+            else:
+                ymin, xmin, ymax, xmax = 0, 0, 0, 0
+        bbox_str = f"[{int(ymin)}, {int(xmin)}, {int(ymax)}, {int(xmax)}]"
         cb = QGuiApplication.clipboard()
         if cb is not None:
             cb.setText(bbox_str)
@@ -1679,8 +1703,18 @@ class DocumentViewerController(QObject):
             can_insert = self._can_insert_query(self._current_job_id, target_reg_id)
         elif self._markdown_token_inserter is not None:
             editor = getattr(self._markdown_token_inserter, "__self__", None)
-            if editor is not None and hasattr(editor, "active_job_id"):
-                can_insert = (editor.active_job_id == self._current_job_id and self._current_job_id > 0)
+            if editor is not None:
+                job_val = getattr(editor, "activeJobId", None)
+                if job_val is None or callable(job_val):
+                    job_attr = getattr(editor, "active_job_id", None)
+                    job_val = job_attr() if callable(job_attr) else job_attr
+                if job_val is not None:
+                    try:
+                        can_insert = (int(job_val) == self._current_job_id and self._current_job_id > 0)
+                    except (ValueError, TypeError):
+                        can_insert = False
+                else:
+                    can_insert = (self._current_job_id > 0)
             else:
                 can_insert = (self._current_job_id > 0)
 
@@ -1724,9 +1758,14 @@ class DocumentViewerController(QObject):
             if self._markdown_token_inserter is None:
                 return False
             try:
-                return bool(self._markdown_token_inserter(self._current_job_id, target_reg_id, ""))
-            except TypeError:
-                return bool(self._markdown_token_inserter(self._current_job_id, target_reg_id))
+                try:
+                    return bool(self._markdown_token_inserter(self._current_job_id, target_reg_id, ""))
+                except TypeError:
+                    return bool(self._markdown_token_inserter(self._current_job_id, target_reg_id))
+            except Exception as e:
+                self._error_message = f"Failed to insert markdown token: {str(e)}"
+                self.errorChanged.emit()
+                return False
 
         elif action_id == "copy_token":
             return self.copyRegionToken(target_reg_id)

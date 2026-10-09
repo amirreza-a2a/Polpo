@@ -292,6 +292,26 @@ def _transform_list_item(item_blocks: Sequence[Any], indent_level: int = 0) -> L
                 children=coalesced[0].children,
             )
             coalesced[0] = new_first
+        elif first_text.startswith(("☐ ", "\u2610 ")):
+            is_task = True
+            task_checked = False
+            new_first = InlineSpan(
+                span_type=InlineType.TEXT,
+                text=first_text[2:],
+                target=coalesced[0].target,
+                children=coalesced[0].children,
+            )
+            coalesced[0] = new_first
+        elif first_text.startswith(("☑ ", "☒ ", "\u2611 ", "\u2612 ")):
+            is_task = True
+            task_checked = True
+            new_first = InlineSpan(
+                span_type=InlineType.TEXT,
+                text=first_text[2:],
+                target=coalesced[0].target,
+                children=coalesced[0].children,
+            )
+            coalesced[0] = new_first
 
     return ListItem(
         inlines=tuple(coalesced),

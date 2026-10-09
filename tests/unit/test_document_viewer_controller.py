@@ -542,3 +542,94 @@ def test_wire_review_workspace_sync_connects_markdown_inserter(qapp):
         assert doc_ctrl._markdown_token_inserter is None
     finally:
         doc_ctrl.shutdown()
+
+
+def test_wire_review_workspace_sync_enables_markdown_insertion_with_real_editor(qapp):
+    """
+    Verifies that wiring a real MarkdownEditorController correctly enables
+    insert_markdown action when jobs match, and disables it when jobs differ.
+    Protects against bound-method comparison bugs (editor.active_job_id vs int).
+    """
+    from interfaces.desktop.app import wire_review_workspace_sync
+    from interfaces.desktop.controllers.markdown_editor_controller import MarkdownEditorController
+
+    ctrl, _, _ = _setup_controller_with_regions()
+    reg_a = "01234567-89ab-4cde-8f01-23456789abcd"
+
+    real_editor = MarkdownEditorController(editor_service=MagicMock())
+    real_editor._active_job_id = 10  # Matches ctrl._current_job_id = 10
+
+    try:
+        wire_review_workspace_sync(
+            document_viewer_controller=ctrl,
+            markdown_viewer_controller=MagicMock(),
+            markdown_editor_controller=real_editor,
+        )
+
+        actions = ctrl.getRegionContextActions(reg_a)
+        insert_act = next(a for a in actions if a["action_id"] == "insert_markdown")
+        assert insert_act["is_enabled"] is True
+        assert insert_act["disabled_reason"] == ""
+
+        # Switch editor to another job
+        real_editor._active_job_id = 99
+        actions_mismatch = ctrl.getRegionContextActions(reg_a)
+        insert_act_mismatch = next(a for a in actions_mismatch if a["action_id"] == "insert_markdown")
+        assert insert_act_mismatch["is_enabled"] is False
+        assert "Markdown editor is not available" in insert_act_mismatch["disabled_reason"]
+    finally:
+        ctrl.shutdown()
+
+
+def test_target_resolution_case_insensitive_uuid(qapp):
+    """
+    Verifies that target region resolution accepts uppercase UUID string targets
+    and executes without false rejection.
+    """
+    ctrl, mock_service, _ = _setup_controller_with_regions()
+    reg_a = "01234567-89ab-4cde-8f01-23456789abcd"
+    reg_a_upper = reg_a.upper()
+
+    try:
+        actions = ctrl.getRegionContextActions(reg_a_upper)
+        assert len(actions) == 9
+
+        res = ctrl.executeRegionAction("accept_region", reg_a_upper)
+        assert res is True
+        mock_service.accept_region.assert_called_once_with(reg_a)
+    finally:
+        ctrl.shutdown()
+
+
+def test_copy_selected_token_slot(qapp):
+    """Verifies that copySelectedToken slot copies token of currently selected region."""
+    from core.domain.visual_token import parse_fields
+    from uuid import UUID
+
+    ctrl, _, _ = _setup_controller_with_regions()
+    reg_a = "01234567-89ab-4cde-8f01-23456789abcd"
+
+    try:
+        ctrl._selected_region_id = reg_a
+        res = ctrl.copySelectedToken()
+        assert res is True
+        parsed = parse_fields(QGuiApplication.clipboard().text())
+        assert parsed.region_id == UUID(reg_a)
+    finally:
+        ctrl.shutdown()
+
+
+def test_execute_region_action_inserter_exception_handled(qapp):
+    """Verifies that an exception during markdown token insertion is handled gracefully."""
+    ctrl, _, _ = _setup_controller_with_regions()
+    reg_a = "01234567-89ab-4cde-8f01-23456789abcd"
+
+    failing_inserter = MagicMock(side_effect=RuntimeError("Buffer corrupted"))
+    ctrl.set_markdown_token_inserter(failing_inserter)
+
+    try:
+        res = ctrl.executeRegionAction("insert_markdown", reg_a)
+        assert res is False
+        assert "Buffer corrupted" in ctrl.errorMessage
+    finally:
+        ctrl.shutdown()

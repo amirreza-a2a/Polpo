@@ -192,22 +192,23 @@ def test_parse_unordered_and_task_lists():
     md = "- Ordinary item\n- [ ] Unchecked task\n- [x] Checked task"
     doc = parser.parse(md)
 
-    assert len(doc.blocks) == 1
-    block = doc.blocks[0]
-    assert isinstance(block, ListBlock)
-    assert block.is_ordered is False
-    assert len(block.items) == 3
+    # Pandoc versions vary: older Pandoc groups into 1 list; Pandoc 3.6+ separates
+    # standard bullet lists from task lists into 2 adjacent ListBlocks.
+    assert len(doc.blocks) in (1, 2)
+    assert all(isinstance(block, ListBlock) and not block.is_ordered for block in doc.blocks)
+    items = [item for block in doc.blocks if isinstance(block, ListBlock) for item in block.items]
+    assert len(items) == 3
 
-    assert block.items[0].is_task is False
-    assert block.items[0].inlines[0].text == "Ordinary item"
+    assert items[0].is_task is False
+    assert items[0].inlines[0].text == "Ordinary item"
 
-    assert block.items[1].is_task is True
-    assert block.items[1].task_checked is False
-    assert "Unchecked task" in block.items[1].inlines[0].text
+    assert items[1].is_task is True
+    assert items[1].task_checked is False
+    assert "Unchecked task" in items[1].inlines[0].text
 
-    assert block.items[2].is_task is True
-    assert block.items[2].task_checked is True
-    assert "Checked task" in block.items[2].inlines[0].text
+    assert items[2].is_task is True
+    assert items[2].task_checked is True
+    assert "Checked task" in items[2].inlines[0].text
 
 
 def test_parse_ordered_list():
@@ -404,3 +405,28 @@ def test_pandoc_parser_propagates_runner_errors():
     mock_runner.run.side_effect = MarkdownParserError("Failed", returncode=1)
     with pytest.raises(MarkdownParserError):
         parser.parse("Some markdown")
+
+
+def test_transform_list_item_unicode_checkbox_markers():
+    from infrastructure.markdown.pandoc_parser import _transform_list_item
+
+    # Unicode unchecked checkbox
+    blocks_unchecked = [{"t": "Plain", "c": [{"t": "Str", "c": "☐"}, {"t": "Space"}, {"t": "Str", "c": "Todo"}]}]
+    item_unchecked = _transform_list_item(blocks_unchecked)
+    assert item_unchecked.is_task is True
+    assert item_unchecked.task_checked is False
+    assert item_unchecked.inlines[0].text == "Todo"
+
+    # Unicode checked checkbox (☑)
+    blocks_checked1 = [{"t": "Plain", "c": [{"t": "Str", "c": "☑"}, {"t": "Space"}, {"t": "Str", "c": "Done"}]}]
+    item_checked1 = _transform_list_item(blocks_checked1)
+    assert item_checked1.is_task is True
+    assert item_checked1.task_checked is True
+    assert item_checked1.inlines[0].text == "Done"
+
+    # Unicode checked checkbox (☒)
+    blocks_checked2 = [{"t": "Plain", "c": [{"t": "Str", "c": "☒"}, {"t": "Space"}, {"t": "Str", "c": "Finished"}]}]
+    item_checked2 = _transform_list_item(blocks_checked2)
+    assert item_checked2.is_task is True
+    assert item_checked2.task_checked is True
+    assert item_checked2.inlines[0].text == "Finished"
