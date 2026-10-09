@@ -292,7 +292,7 @@ Item {
                 anchors.fill: parent
                 z: 1
                 hoverEnabled: true
-                acceptedButtons: Qt.LeftButton
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
                 enabled: controller ? controller.interactionMode === "pan_select" : true
                 cursorShape: {
                     if (controller && controller.interactionMode === "create_region") {
@@ -310,7 +310,12 @@ Item {
                               ", " + modelData.effective_ymax + ", " + modelData.effective_xmax + "]"
 
                 onPressed: function(mouse) {
-                    if (mouse.button === Qt.LeftButton && controller) {
+                    if (mouse.button === Qt.RightButton) {
+                        if (controller) {
+                            controller.selectRegion(boxRect.regionId);
+                        }
+                        regionContextMenu.showForRegion(boxRect, mouse.x, mouse.y, boxRect.regionId);
+                    } else if (mouse.button === Qt.LeftButton && controller) {
                         var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, bodyDragArea);
                         controller.startDrag(boxRect.regionId, vpPt.x, vpPt.y);
                     }
@@ -368,7 +373,7 @@ Item {
             anchors.fill: parent
             z: 1
             hoverEnabled: true
-            acceptedButtons: Qt.LeftButton
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
             enabled: controller ? controller.interactionMode === "pan_select" : false
             cursorShape: (controller && controller.interactionMode === "create_region") ? Qt.CrossCursor : Qt.SizeAllCursor
 
@@ -385,7 +390,12 @@ Item {
             }
 
             onPressed: function(mouse) {
-                if (mouse.button === Qt.LeftButton && controller) {
+                if (mouse.button === Qt.RightButton) {
+                    var targetId = (controller && controller.selectedRegionId) ? controller.selectedRegionId : "";
+                    if (targetId) {
+                        regionContextMenu.showForRegion(selectionManipulator, mouse.x, mouse.y, targetId);
+                    }
+                } else if (mouse.button === Qt.LeftButton && controller) {
                     var vpPt = overlayRoot.mapToViewport(mouse.x, mouse.y, manipulatorDragArea);
                     controller.startDrag(controller.selectedRegionId, vpPt.x, vpPt.y);
                 }
@@ -929,5 +939,14 @@ Item {
         border.width: 2
         radius: 2
         z: 20
+    }
+
+    // =========================================================================
+    // Visual Region Context Menu (TICK-P04B)
+    // =========================================================================
+    RegionContextMenu {
+        id: regionContextMenu
+        objectName: "regionContextMenu"
+        controller: overlayRoot.controller
     }
 }

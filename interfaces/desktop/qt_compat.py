@@ -19,6 +19,8 @@ try:
         QTimer,
         QByteArray,
         QSize,
+        QMetaObject,
+        QPointF,
     )
     from PySide6.QtGui import (
         QGuiApplication,
@@ -55,6 +57,8 @@ except ImportError:
         QTimer,
         QByteArray,
         QSize,
+        QMetaObject,
+        QPointF,
     )
     from PyQt6.QtGui import (
         QGuiApplication,
@@ -109,5 +113,7 @@ __all__ = [
     "QTextCharFormat",
     "QColor",
     "QFont",
+    "QMetaObject",
+    "QPointF",
     "QT_BINDING",
 ]
