@@ -60,12 +60,14 @@ Menu {
         contextRegionId = regionId ? String(regionId) : "";
         if (!controller || !contextRegionId) {
             contextRegionId = "";
+            dismiss();
             return;
         }
 
         var rawActions = controller.getRegionContextActions(contextRegionId);
         if (!rawActions || rawActions.length === 0) {
             contextRegionId = "";
+            dismiss();
             return;
         }
 
@@ -77,6 +79,7 @@ Menu {
         }
         if (visibleActions.length === 0) {
             contextRegionId = "";
+            dismiss();
             return;
         }
 
@@ -87,13 +90,16 @@ Menu {
         var lastGroup = "";
         for (var j = 0; j < visibleActions.length; j++) {
             var act = visibleActions[j];
-            if (j > 0 && act.group !== lastGroup) {
+            var actGroup = act.group ? String(act.group) : "";
+            if (j > 0 && lastGroup !== "" && actGroup !== "" && actGroup !== lastGroup) {
                 var sep = menuSeparatorComponent.createObject(contextMenuRoot.contentItem);
                 if (sep) {
                     contextMenuRoot.addItem(sep);
                 }
             }
-            lastGroup = act.group;
+            if (actGroup !== "") {
+                lastGroup = actGroup;
+            }
 
             var item = menuItemComponent.createObject(contextMenuRoot.contentItem, {
                 "actionId": act.action_id || "",
@@ -122,13 +128,19 @@ Menu {
         contextRegionId = "";
     }
 
-    // Automatic dismissal on page navigation or target region invalidation
+    // Automatic dismissal on page navigation, reload, or target region invalidation
     Connections {
         target: contextMenuRoot.controller
         ignoreUnknownSignals: true
         function onPageChanged() {
             contextMenuRoot.dismiss();
             contextMenuRoot.contextRegionId = "";
+        }
+        function onLoadingChanged() {
+            if (contextMenuRoot.controller && contextMenuRoot.controller.isLoading) {
+                contextMenuRoot.dismiss();
+                contextMenuRoot.contextRegionId = "";
+            }
         }
         function onRegionsChanged() {
             if (!contextMenuRoot.contextRegionId) return;
