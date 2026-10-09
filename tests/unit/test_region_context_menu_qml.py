@@ -71,6 +71,7 @@ from core.domain.visual_token import VisualOccurrenceToken, serialize_canonical_
 class MockMenuController(QObject):
     """QObject mock for RegionContextMenu unit testing."""
     pageChanged = Signal()
+    loadingChanged = Signal()
     regionsChanged = Signal()
     regionDeleted = Signal(str)
     regionUpdated = Signal(str)
@@ -81,6 +82,15 @@ class MockMenuController(QObject):
         self.executed_target = ""
         self._active_regions = [{"region_id": "reg-A"}, {"region_id": "reg-B"}]
         self._selected_region_id = ""
+        self._is_loading = False
+
+    @Property(bool, notify=loadingChanged)
+    def isLoading(self):
+        return self._is_loading
+
+    @isLoading.setter
+    def isLoading(self, val):
+        self._is_loading = bool(val)
 
     @Property("QVariant", notify=regionsChanged)
     def activeRegions(self):
@@ -374,6 +384,27 @@ class TestRegionContextMenuQml(unittest.TestCase):
         ]
         self.assertEqual(critical_warnings, [])
 
+    def test_menu_does_not_create_separators_for_empty_groups(self):
+        """Verifies that empty/unspecified groups do not produce leading, trailing, or spurious separators."""
+        mock_ctrl = MockMenuController()
+        mock_ctrl.getRegionContextActions = MagicMock(return_value=[
+            {"action_id": "act_ungrouped_1", "label": "Ungrouped 1", "group": "", "order": 5, "is_enabled": True, "is_visible": True},
+            {"action_id": "act_md_1", "label": "MD 1", "group": "markdown", "order": 10, "is_enabled": True, "is_visible": True},
+            {"action_id": "act_md_2", "label": "MD 2", "group": "markdown", "order": 20, "is_enabled": True, "is_visible": True},
+            {"action_id": "act_ungrouped_2", "label": "Ungrouped 2", "group": "", "order": 30, "is_enabled": True, "is_visible": True},
+        ])
+        win, menu = self._create_test_window_with_menu(mock_ctrl)
+        box = win.findChild(QObject, "testBox")
+
+        menu.showForRegion(box, 10, 10, "reg-empty-groups")
+        self.app.processEvents()
+
+        # 4 actions, only 1 non-empty group ('markdown'), so zero separators expected between non-empty groups
+        # Leading and trailing empty groups must not produce separators
+        self.assertEqual(menu.property("count"), 4)
+        menu.close()
+        self.app.processEvents()
+
     # =========================================================================
     # 2. Target Freeze & Safe Invalidation Tests
     # =========================================================================
@@ -415,6 +446,24 @@ class TestRegionContextMenuQml(unittest.TestCase):
 
         # Emit pageChanged
         mock_ctrl.pageChanged.emit()
+        self.app.processEvents()
+
+        self.assertFalse(menu.property("opened"))
+        self.assertEqual(menu.property("contextRegionId"), "")
+
+    def test_menu_dismisses_on_loading_changed_signal(self):
+        """Verifies that page/document reload (isLoading -> True) automatically dismisses the popup and clears target."""
+        mock_ctrl = MockMenuController()
+        win, menu = self._create_test_window_with_menu(mock_ctrl)
+        box = win.findChild(QObject, "testBox")
+
+        menu.showForRegion(box, 10, 10, "reg-load-test")
+        self.app.processEvents()
+        self.assertTrue(menu.property("opened"))
+
+        # Reloading starts: isLoading becomes True and loadingChanged emits
+        mock_ctrl.isLoading = True
+        mock_ctrl.loadingChanged.emit()
         self.app.processEvents()
 
         self.assertFalse(menu.property("opened"))
@@ -491,6 +540,20 @@ class TestRegionContextMenuQml(unittest.TestCase):
 
         # Nonexistent/empty actions region
         menu.showForRegion(box, 10, 10, "reg-unknown")
+        self.app.processEvents()
+        self.assertFalse(menu.property("opened"))
+        self.assertEqual(menu.property("contextRegionId"), "")
+
+        # When menu is currently open, calling showForRegion for invalid/empty target dismisses the menu
+        mock_ctrl.getRegionContextActions = MagicMock(return_value=[
+            {"action_id": "test", "label": "Test", "group": "g", "order": 1, "is_enabled": True, "is_visible": True}
+        ])
+        menu.showForRegion(box, 10, 10, "reg-open")
+        self.app.processEvents()
+        self.assertTrue(menu.property("opened"))
+
+        mock_ctrl.getRegionContextActions = MagicMock(return_value=[])
+        menu.showForRegion(box, 10, 10, "reg-invalid-reopen")
         self.app.processEvents()
         self.assertFalse(menu.property("opened"))
         self.assertEqual(menu.property("contextRegionId"), "")
