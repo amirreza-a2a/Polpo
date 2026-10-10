@@ -4,8 +4,9 @@
 # ============================================================
 
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
+from typing import Any, Callable, Optional
 
+from application.ports.math_renderer import MathRenderResult
 from application.services.markdown_viewer_service import MarkdownViewerService
 from interfaces.desktop.models.markdown_document_model import MarkdownDocumentModel
 from interfaces.desktop.qt_compat import (
@@ -65,11 +66,18 @@ class MarkdownViewerController(QObject):
         self,
         viewer_service: MarkdownViewerService,
         parent: Optional[QObject] = None,
+        math_resolver: Optional[Callable[[str], Optional[MathRenderResult]]] = None,
+        math_foreground: str = "#e6edf3",
     ):
         super().__init__(parent)
         self.viewer_service = viewer_service
-        self._model = MarkdownDocumentModel(parent=self)
+        self._model = MarkdownDocumentModel(
+            parent=self,
+            math_resolver=math_resolver,
+            math_foreground=math_foreground,
+        )
         self._model.generationChanged.connect(self._on_model_generation_changed)
+        self._theme_controller: Optional[Any] = None
 
         self._is_loading: bool = False
         self._has_document: bool = False
@@ -120,6 +128,48 @@ class MarkdownViewerController(QObject):
         self._internalReconcileError.connect(self._on_internal_reconcile_error)
         self._internalPreviewLoaded.connect(self._on_internal_preview_loaded)
         self._internalPreviewError.connect(self._on_internal_preview_error)
+
+    # -----------------------------------------------------------------------
+    # Math Presentation & Theming Configuration
+    # -----------------------------------------------------------------------
+
+    def set_math_presentation_resolver(
+        self, resolver: Optional[Callable[[str], Optional[MathRenderResult]]]
+    ) -> None:
+        """Injects formula SVG presentation resolver into the document model."""
+        self._model.set_math_presentation_resolver(resolver)
+
+    set_math_resolver = set_math_presentation_resolver
+
+    def set_theme_controller(self, theme_controller: Optional[Any]) -> None:
+        """
+        Connects ThemeController lifecycle for dynamic math foreground re-projection.
+        Guarantees no accumulation of signal connections upon controller reuse.
+        """
+        if self._theme_controller is not None:
+            try:
+                self._theme_controller.themeChanged.disconnect(self._on_theme_changed)
+            except (RuntimeError, TypeError):
+                pass
+        self._theme_controller = theme_controller
+        if self._theme_controller is not None:
+            self._theme_controller.themeChanged.connect(self._on_theme_changed)
+            self._on_theme_changed()
+
+    def _on_theme_changed(self) -> None:
+        """Handles ThemeController.themeChanged signal by updating model math foreground."""
+        if self._theme_controller is not None:
+            color = getattr(self._theme_controller, "mathForeground", None)
+            if not color and hasattr(self._theme_controller, "current_palette"):
+                color = getattr(self._theme_controller.current_palette, "mathForeground", None)
+            if color:
+                self._model.reproject_math(color)
+
+    @Slot(str)
+    @Slot()
+    def reproject_math(self, color_hex: Optional[str] = None) -> None:
+        """Reprojects math formulas across active model items."""
+        self._model.reproject_math(color_hex)
 
     # -----------------------------------------------------------------------
     # Properties
@@ -435,7 +485,12 @@ class MarkdownViewerController(QObject):
         self._has_active_draft = False
         self._reconcile_in_flight = False
         self._request_id += 1
-        self._draft_revision += 1
+        if self._theme_controller is not None:
+            try:
+                self._theme_controller.themeChanged.disconnect(self._on_theme_changed)
+            except (RuntimeError, TypeError):
+                pass
+            self._theme_controller = None
         try:
             self._executor.shutdown(wait=False, cancel_futures=True)
         except TypeError:

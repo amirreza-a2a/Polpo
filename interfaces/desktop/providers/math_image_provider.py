@@ -8,8 +8,9 @@ Never invokes MathJax synchronously or blocks the GUI thread.
 from __future__ import annotations
 
 import logging
+import math
 import re
-from typing import Optional
+from typing import Any, Optional
 
 from infrastructure.math.lru_cache import MathSvgCache
 from interfaces.desktop.qt_compat import (
@@ -52,23 +53,75 @@ def parse_math_image_url(url_id: str) -> tuple[str, str]:
     return DEFAULT_MATH_THEME, ""
 
 
+_SVG_ROOT_TAG_PATTERN = re.compile(r"<svg(?=[\s/>])[^>]*>", re.IGNORECASE)
+_SVG_ATTR_PATTERN = re.compile(
+    r"(?P<prefix>\s+)(?P<name>[a-zA-Z_:][a-zA-Z0-9._:-]*)(?:\s*=\s*(?P<val>\"[^\"]*\"|'[^']*'|[^\s/>]+))?",
+    re.IGNORECASE,
+)
+
+
 def inject_svg_color(svg_xml: str, color_hex: str) -> str:
     """
     Injects or updates the 'color' attribute on the root <svg> element so that glyphs
     referencing 'currentColor' resolve to the theme foreground.
     Does not mutate the input string or cached SVG content.
+    Does not match hyphenated attributes such as stop-color, flood-color, or lighting-color.
     """
     if not svg_xml:
         return ""
-    match = re.search(r"<svg(\s[^>]*?)?>", svg_xml)
+    match = _SVG_ROOT_TAG_PATTERN.search(svg_xml)
     if not match:
         return svg_xml
     svg_tag = match.group(0)
-    if re.search(r'\bcolor=["\'][^"\']*["\']', svg_tag):
-        new_tag = re.sub(r'\bcolor=["\'][^"\']*["\']', f'color="{color_hex}"', svg_tag, count=1)
+
+    color_match = None
+    for m in _SVG_ATTR_PATTERN.finditer(svg_tag):
+        if m.group("name").lower() == "color":
+            color_match = m
+            break
+
+    if color_match:
+        start, end = color_match.span()
+        new_tag = svg_tag[:start] + f' color="{color_hex}"' + svg_tag[end:]
     else:
-        new_tag = re.sub(r"<svg(\s|>)", rf'<svg color="{color_hex}"\1', svg_tag, count=1)
+        new_tag = re.sub(
+            r"<svg(?=[\s/>])",
+            rf'<svg color="{color_hex}"',
+            svg_tag,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+
     return svg_xml[:match.start()] + new_tag + svg_xml[match.end():]
+
+
+def parse_dimension(dim_str: Any, fallback: float = 15.0, base_unit: float = 8.0) -> float:
+    """Parse dimension strings (e.g. '8.699ex', '20px') into logical pixel numbers.
+
+    Semantics:
+      - 'ex' -> base_unit (default 8.0 logical px per ex)
+      - 'em' -> base_unit * 2.0 (default 16.0 logical px per em)
+      - 'px' -> literal numeric value
+      - numeric string or number -> literal float
+      - non-finite ('nan', 'inf'), non-positive (<= 0), invalid, empty, or None -> fallback
+    """
+    if dim_str is None or dim_str == "":
+        return fallback
+    try:
+        s = str(dim_str).strip().lower()
+        if s.endswith("ex"):
+            val = float(s[:-2]) * base_unit
+        elif s.endswith("em"):
+            val = float(s[:-2]) * (base_unit * 2.0)
+        elif s.endswith("px"):
+            val = float(s[:-2])
+        else:
+            val = float(s)
+        if not math.isfinite(val) or val <= 0:
+            return fallback
+        return val
+    except (ValueError, TypeError, OverflowError):
+        return fallback
 
 
 class MathImageProvider(QQuickImageProvider):
@@ -193,27 +246,6 @@ class MathImageProvider(QQuickImageProvider):
         return QPixmap.fromImage(image)
 
     @staticmethod
-    def _parse_dimension(dim_str: str, fallback: float, base_unit: float) -> float:
+    def _parse_dimension(dim_str: str, fallback: float, base_unit: float = 8.0) -> float:
         """Parse dimension strings (e.g. '8.699ex', '20px') into logical pixel numbers."""
-        if not dim_str:
-            return fallback
-        s = dim_str.strip().lower()
-        if s.endswith("ex"):
-            try:
-                return float(s[:-2]) * base_unit
-            except ValueError:
-                return fallback
-        if s.endswith("em"):
-            try:
-                return float(s[:-2]) * (base_unit * 2.0)
-            except ValueError:
-                return fallback
-        if s.endswith("px"):
-            try:
-                return float(s[:-2])
-            except ValueError:
-                return fallback
-        try:
-            return float(s)
-        except ValueError:
-            return fallback
+        return parse_dimension(dim_str, fallback, base_unit)

@@ -283,7 +283,10 @@ def create_app(
     )
     markdown_viewer_controller = MarkdownViewerController(
         viewer_service=container.markdown_viewer_service,
+        math_resolver=container.math_svg_cache.get,
+        math_foreground=theme_controller.mathForeground,
     )
+    markdown_viewer_controller.set_theme_controller(theme_controller)
     markdown_merge_service = MarkdownMergeService(
         uow_factory=container.uow_factory,
         storage=container.storage,
