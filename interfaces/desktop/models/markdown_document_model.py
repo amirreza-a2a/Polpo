@@ -3,7 +3,12 @@
 #  QAbstractListModel for Virtualized Markdown Document AST
 # ============================================================
 
-from typing import Any, Dict, List, Optional
+import html
+import logging
+import re
+from typing import Any, Callable, Dict, List, Optional
+import urllib.parse
+
 from interfaces.desktop.qt_compat import (
     QAbstractListModel,
     QModelIndex,
@@ -17,6 +22,93 @@ from application.dto.markdown_dto import (
     MarkdownDocumentDTO,
     VisualRegionRefDTO,
 )
+from application.ports.math_renderer import MathRenderResult
+from interfaces.desktop.providers.math_image_provider import (
+    DEFAULT_MATH_THEME,
+    MATH_THEME_COLORS,
+    inject_svg_color,
+    parse_dimension,
+)
+
+logger = logging.getLogger(__name__)
+
+def _is_escaped(s: str, index: int) -> bool:
+    """Returns True if the character at index in s is preceded by an odd number of backslashes."""
+    count = 0
+    i = index - 1
+    while i >= 0 and s[i] == "\\":
+        count += 1
+        i -= 1
+    return (count % 2) == 1
+
+
+def normalize_math_tex(tex: Optional[str]) -> str:
+    """
+    Normalizes TeX math content by stripping supported outer delimiters ($$, $, \\[\\] and \\(\\)).
+    Does not strip escaped dollar signs or malformed/unwrapped delimiters.
+    """
+    if not tex or not isinstance(tex, str):
+        return ""
+    s = tex.strip()
+    if not s or s in ("$$", "$", r"\[\]", r"\(\)"):
+        return ""
+
+    # Check for $$...$$
+    if s.startswith("$$") and s.endswith("$$") and len(s) >= 4:
+        if not _is_escaped(s, len(s) - 2):
+            return s[2:-2].strip()
+
+    # Check for $...$
+    if s.startswith("$") and not s.startswith("$$") and s.endswith("$") and not s.endswith("$$") and len(s) >= 2:
+        if not _is_escaped(s, len(s) - 1):
+            return s[1:-1].strip()
+
+    # Check for \[...\]
+    if s.startswith(r"\[") and s.endswith(r"\]") and len(s) >= 4:
+        if not _is_escaped(s, len(s) - 2):
+            return s[2:-2].strip()
+
+    # Check for \(...\)
+    if s.startswith(r"\(") and s.endswith(r"\)") and len(s) >= 4:
+        if not _is_escaped(s, len(s) - 2):
+            return s[2:-2].strip()
+
+    return s
+
+
+_FORMULA_IMG_PATTERN = re.compile(
+    r'<img\b(?P<attrs>[^>]*?)(?<![\w-])src\s*=\s*(?:["\']image://math/(?:(?P<theme>[^/"\'\s<>]+)/)?(?P<hash>[^/"\'\s<>]+)["\']|image://math/(?:(?P<theme_u>[^/"\'\s<>]+)/)?(?P<hash_u>[^\s/>]+))(?P<trailing>[^>]*?)/?>',
+    re.IGNORECASE,
+)
+
+_HTML_ATTR_PATTERN = re.compile(
+    r'(?P<name>[a-zA-Z_:][a-zA-Z0-9._:-]*)(?:\s*=\s*(?P<val>"[^"]*"|\'[^\']*\'|[^\s/>]+))?',
+    re.IGNORECASE,
+)
+
+
+def _filter_img_attributes(attrs_str: str) -> str:
+    """
+    Extracts and preserves non-dimension, non-alignment attributes from an <img> tag.
+    Safely eliminates existing align, width, height, and src attributes (quoted or unquoted),
+    while preserving unrelated attributes and quoted attribute values containing spaces.
+    """
+    if not attrs_str:
+        return ""
+    cleaned = re.sub(r'/\s*$', '', attrs_str).strip()
+    if not cleaned:
+        return ""
+    kept: List[str] = []
+    for m in _HTML_ATTR_PATTERN.finditer(cleaned):
+        name = m.group("name")
+        if name.lower() in ("align", "width", "height", "src"):
+            continue
+        val = m.group("val")
+        if val is not None:
+            kept.append(f"{name}={val}")
+        else:
+            kept.append(name)
+    return " ".join(kept)
 
 
 class MarkdownDocumentModel(QAbstractListModel):
@@ -59,7 +151,12 @@ class MarkdownDocumentModel(QAbstractListModel):
     MathErrorCategoryRole = Qt.ItemDataRole.UserRole + 29
     MathErrorMessageRole = Qt.ItemDataRole.UserRole + 30
 
-    def __init__(self, parent: Optional[QObject] = None):
+    def __init__(
+        self,
+        parent: Optional[QObject] = None,
+        math_resolver: Optional[Callable[[str], Optional[MathRenderResult]]] = None,
+        math_foreground: str = MATH_THEME_COLORS[DEFAULT_MATH_THEME],
+    ):
         super().__init__(parent)
         self._items: List[Dict[str, Any]] = []
         self._model_generation: int = 0
@@ -68,6 +165,33 @@ class MarkdownDocumentModel(QAbstractListModel):
         self._region_to_occurrences: Dict[str, List[Dict[str, Any]]] = {}
         self._occurrence_to_node_index: Dict[str, int] = {}
         self._region_to_page_number: Dict[str, int] = {}
+        self._math_resolver: Optional[Callable[[str], Optional[MathRenderResult]]] = math_resolver
+        self._math_foreground: str = math_foreground
+        self._doc_hash_to_tex: Dict[str, str] = {}
+
+    @property
+    def math_resolver(self) -> Optional[Callable[[str], Optional[MathRenderResult]]]:
+        """Returns the active math presentation resolver."""
+        return self._math_resolver
+
+    @property
+    def math_foreground(self) -> str:
+        """Returns the active semantic foreground color for math SVG rendering."""
+        return self._math_foreground
+
+    def set_math_presentation_resolver(
+        self, resolver: Optional[Callable[[str], Optional[MathRenderResult]]]
+    ) -> None:
+        """Injects presentation resolver for formula SVGs and reprojects active document."""
+        self._math_resolver = resolver
+        if self._document_dto is not None and self._items:
+            self.reproject_math()
+
+    set_math_resolver = set_math_presentation_resolver
+
+    def set_math_foreground(self, color_hex: str) -> None:
+        """Updates active semantic foreground color and reprojects formulas in-place."""
+        self.reproject_math(color_hex)
 
     def roleNames(self) -> Dict[int, bytes]:
         return {
@@ -175,14 +299,94 @@ class MarkdownDocumentModel(QAbstractListModel):
             return str(item.get("mathErrorMessage", "") or "")
         return None
 
+    def _update_doc_hash_to_tex(self, document_dto: Optional[MarkdownDocumentDTO]) -> None:
+        """Indexes all formula TeX strings by their hash across the document."""
+        self._doc_hash_to_tex.clear()
+        if document_dto is None:
+            return
+        for node in document_dto.nodes:
+            if getattr(node, "math_hash", None) and getattr(node, "math_tex", None):
+                self._doc_hash_to_tex[node.math_hash] = node.math_tex
+            for s in getattr(node, "segments", ()) or ():
+                if getattr(s, "math_hash", None) and getattr(s, "math_tex", None):
+                    self._doc_hash_to_tex[s.math_hash] = s.math_tex
+            for item_segs in getattr(node, "list_item_segments", ()) or ():
+                for s in item_segs:
+                    if getattr(s, "math_hash", None) and getattr(s, "math_tex", None):
+                        self._doc_hash_to_tex[s.math_hash] = s.math_tex
+            for row in getattr(node, "table_cell_segments", ()) or ():
+                for col in row:
+                    for s in col:
+                        if getattr(s, "math_hash", None) and getattr(s, "math_tex", None):
+                            self._doc_hash_to_tex[s.math_hash] = s.math_tex
+            for q_child in getattr(node, "quote_children", ()) or ():
+                for s in getattr(q_child, "segments", ()) or ():
+                    if getattr(s, "math_hash", None) and getattr(s, "math_tex", None):
+                        self._doc_hash_to_tex[s.math_hash] = s.math_tex
+
+    def _project_html(self, html_text: str, seg_tex: Optional[str] = None) -> str:
+        """
+        Transforms formula-bearing HTML tags (<img src="image://math/{hash}"...>)
+        into theme-aware, dimensioned SVG Data URIs.
+        On cache misses or resolver errors, produces safe readable text fallbacks.
+        Preserves unrelated HTML, prose, and ordinary images.
+        """
+        if not html_text or not isinstance(html_text, str):
+            return html_text or ""
+        if "image://math/" not in html_text.lower():
+            return html_text
+
+        def _replace_formula_img(match: re.Match) -> str:
+            formula_hash = match.group("hash") or match.group("hash_u") or ""
+            attrs = match.group("attrs") or ""
+            trailing = match.group("trailing") or ""
+
+            result = None
+            if self._math_resolver is not None:
+                try:
+                    if hasattr(self._math_resolver, "resolve"):
+                        result = self._math_resolver.resolve(formula_hash)
+                    elif callable(self._math_resolver):
+                        result = self._math_resolver(formula_hash)
+                except Exception as e:
+                    logger.warning("Unexpected math presentation resolver error for hash %s: %s", formula_hash, e, exc_info=True)
+                    result = None
+
+            if result is not None and getattr(result, "svg_xml", None) and result.svg_xml.strip():
+                try:
+                    themed_svg = inject_svg_color(result.svg_xml, self._math_foreground)
+                    data_uri = "data:image/svg+xml;utf8," + urllib.parse.quote(themed_svg)
+                    w_px = parse_dimension(result.width, fallback=30.0, base_unit=8.0)
+                    h_px = parse_dimension(result.height, fallback=15.0, base_unit=8.0)
+                    w_val = max(1, round(w_px))
+                    h_val = max(1, round(h_px))
+
+                    extra = _filter_img_attributes(f"{attrs} {trailing}")
+                    if extra:
+                        return f'<img src="{data_uri}" width="{w_val}" height="{h_val}" align="middle" {extra}/>'
+                    return f'<img src="{data_uri}" width="{w_val}" height="{h_val}" align="middle"/>'
+                except Exception as e:
+                    logger.warning("Unexpected math presentation SVG encoding error for hash %s: %s", formula_hash, e, exc_info=True)
+
+            # Cache miss or resolver failure: readable text fallback
+            raw_tex = seg_tex or self._doc_hash_to_tex.get(formula_hash) or ""
+            clean_tex = normalize_math_tex(raw_tex)
+            if clean_tex:
+                escaped_tex = html.escape(clean_tex, quote=True)
+                return f'<span class="math-fallback">${escaped_tex}$</span>'
+            return '<span class="math-fallback">[Math]</span>'
+
+        return _FORMULA_IMG_PATTERN.sub(_replace_formula_img, html_text)
+
     def _node_dto_to_item(self, node: Any) -> Dict[str, Any]:
         """Converts a MarkdownNodeDTO into a dictionary for QML model roles."""
         def _convert_segment(s: Any) -> Dict[str, Any]:
+            s_tex = getattr(s, "math_tex", "") or ""
             return {
                 "segmentType": s.segment_type,
-                "textHtml": s.text_html,
+                "textHtml": self._project_html(s.text_html, seg_tex=s_tex),
                 "imageRef": self._ref_to_dict(s.image_ref) if s.image_ref else None,
-                "mathTex": getattr(s, "math_tex", "") or "",
+                "mathTex": s_tex,
                 "mathHash": getattr(s, "math_hash", "") or "",
                 "hasError": bool(getattr(s, "has_error", False)),
                 "errorCategory": str(getattr(s, "error_category", "") or ""),
@@ -229,7 +433,7 @@ class MarkdownDocumentModel(QAbstractListModel):
             q_segs = [_convert_segment(s) for s in q_child.segments]
             quote_child_dicts.append({
                 "childType": q_child.child_type,
-                "content": q_child.content,
+                "content": self._project_html(q_child.content),
                 "level": q_child.level,
                 "segments": q_segs,
             })
@@ -237,13 +441,13 @@ class MarkdownDocumentModel(QAbstractListModel):
         return {
             "nodeId": node.node_id,
             "nodeType": node.node_type,
-            "content": node.content,
+            "content": self._project_html(node.content),
             "level": node.level,
             "language": node.language,
             "isOrdered": node.is_ordered,
             "startIndex": node.start_index,
             "rawMarkdown": node.raw_markdown,
-            "listItems": list(node.list_items),
+            "listItems": [self._project_html(item) for item in node.list_items],
             "segments": seg_dicts,
             "listItemSegments": list_item_seg_dicts,
             "tableCellSegments": table_cell_seg_dicts,
@@ -267,6 +471,7 @@ class MarkdownDocumentModel(QAbstractListModel):
             "mathErrorMessage": str(getattr(node, "error_message", "") or ""),
         }
 
+
     def set_document(self, document_dto: Optional[MarkdownDocumentDTO]) -> None:
         """
         Atomically updates the model on the Qt GUI thread.
@@ -278,6 +483,8 @@ class MarkdownDocumentModel(QAbstractListModel):
         self._region_to_occurrences.clear()
         self._occurrence_to_node_index.clear()
         self._region_to_page_number.clear()
+
+        self._update_doc_hash_to_tex(document_dto)
 
         if document_dto is not None:
             self._document_dto = document_dto
@@ -333,6 +540,8 @@ class MarkdownDocumentModel(QAbstractListModel):
             self.set_document(document_dto)
             return
 
+        self._update_doc_hash_to_tex(document_dto)
+
         old_ids = [item["nodeId"] for item in self._items]
         new_nodes = document_dto.nodes
         new_ids = [node.node_id for node in new_nodes]
@@ -373,6 +582,14 @@ class MarkdownDocumentModel(QAbstractListModel):
                     roles_changed.append(self.RegionsRole)
                 if old_item_dict.get("content") != new_item_dict.get("content"):
                     roles_changed.append(self.ContentRole)
+                if old_item_dict.get("listItems") != new_item_dict.get("listItems"):
+                    roles_changed.append(self.ListItemsRole)
+                if old_item_dict.get("listItemSegments") != new_item_dict.get("listItemSegments"):
+                    roles_changed.append(self.ListItemSegmentsRole)
+                if old_item_dict.get("tableCellSegments") != new_item_dict.get("tableCellSegments"):
+                    roles_changed.append(self.TableCellSegmentsRole)
+                if old_item_dict.get("quoteChildren") != new_item_dict.get("quoteChildren"):
+                    roles_changed.append(self.QuoteChildrenRole)
                 if old_item_dict.get("sourceStartLine") != new_item_dict.get("sourceStartLine"):
                     roles_changed.append(self.SourceStartLineRole)
                 if old_item_dict.get("sourceEndLine") != new_item_dict.get("sourceEndLine"):
@@ -641,6 +858,110 @@ class MarkdownDocumentModel(QAbstractListModel):
                         self.RegionsRole,
                     ],
                 )
+
+    @Slot(str)
+    @Slot()
+    def reproject_math(self, new_foreground: Optional[str] = None) -> None:
+        """
+        Reprojects formula HTML from canonical data using active foreground color.
+        Emits targeted dataChanged notifications only for affected rows and roles.
+        Preserves model generation, list virtualization, node identity, and region indexes.
+        """
+        if new_foreground is not None and new_foreground != self._math_foreground:
+            self._math_foreground = new_foreground
+
+        if self._document_dto is None or not self._items:
+            return
+
+        for idx, canonical_node in enumerate(self._document_dto.nodes):
+            if idx >= len(self._items):
+                break
+
+            old_item = self._items[idx]
+            new_item = self._node_dto_to_item(canonical_node)
+
+            roles_changed = []
+            if old_item.get("content") != new_item.get("content"):
+                old_item["content"] = new_item["content"]
+                roles_changed.append(self.ContentRole)
+
+            if self._merge_segments_text_html(old_item.get("segments", []), new_item.get("segments", [])):
+                roles_changed.append(self.SegmentsRole)
+
+            if old_item.get("listItems") != new_item.get("listItems"):
+                old_item["listItems"] = new_item["listItems"]
+                roles_changed.append(self.ListItemsRole)
+
+            if self._merge_nested_segments_text_html(
+                old_item.get("listItemSegments", []), new_item.get("listItemSegments", [])
+            ):
+                roles_changed.append(self.ListItemSegmentsRole)
+
+            if self._merge_table_segments_text_html(
+                old_item.get("tableCellSegments", []), new_item.get("tableCellSegments", [])
+            ):
+                roles_changed.append(self.TableCellSegmentsRole)
+
+            if self._merge_quote_children_text_html(
+                old_item.get("quoteChildren", []), new_item.get("quoteChildren", [])
+            ):
+                roles_changed.append(self.QuoteChildrenRole)
+
+            if roles_changed:
+                m_idx = self.index(idx, 0)
+                self.dataChanged.emit(m_idx, m_idx, roles_changed)
+
+    @staticmethod
+    def _merge_segments_text_html(
+        old_segs: List[Dict[str, Any]], new_segs: List[Dict[str, Any]]
+    ) -> bool:
+        """Updates projected textHtml while preserving runtime region artifact fields."""
+        changed = False
+        for old_s, new_s in zip(old_segs, new_segs):
+            if old_s.get("textHtml") != new_s.get("textHtml"):
+                old_s["textHtml"] = new_s.get("textHtml", "")
+                changed = True
+        return changed
+
+    @staticmethod
+    def _merge_nested_segments_text_html(
+        old_nested: List[List[Dict[str, Any]]], new_nested: List[List[Dict[str, Any]]]
+    ) -> bool:
+        changed = False
+        for old_row, new_row in zip(old_nested, new_nested):
+            for old_s, new_s in zip(old_row, new_row):
+                if old_s.get("textHtml") != new_s.get("textHtml"):
+                    old_s["textHtml"] = new_s.get("textHtml", "")
+                    changed = True
+        return changed
+
+    @staticmethod
+    def _merge_table_segments_text_html(
+        old_table: List[List[List[Dict[str, Any]]]], new_table: List[List[List[Dict[str, Any]]]]
+    ) -> bool:
+        changed = False
+        for old_row, new_row in zip(old_table, new_table):
+            for old_col, new_col in zip(old_row, new_row):
+                for old_s, new_s in zip(old_col, new_col):
+                    if old_s.get("textHtml") != new_s.get("textHtml"):
+                        old_s["textHtml"] = new_s.get("textHtml", "")
+                        changed = True
+        return changed
+
+    @staticmethod
+    def _merge_quote_children_text_html(
+        old_qc: List[Dict[str, Any]], new_qc: List[Dict[str, Any]]
+    ) -> bool:
+        changed = False
+        for old_child, new_child in zip(old_qc, new_qc):
+            if old_child.get("content") != new_child.get("content"):
+                old_child["content"] = new_child.get("content", "")
+                changed = True
+            for old_s, new_s in zip(old_child.get("segments", []), new_child.get("segments", [])):
+                if old_s.get("textHtml") != new_s.get("textHtml"):
+                    old_s["textHtml"] = new_s.get("textHtml", "")
+                    changed = True
+        return changed
 
     @property
     def model_generation(self) -> int:

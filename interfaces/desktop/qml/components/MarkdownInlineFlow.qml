@@ -43,6 +43,23 @@ Item {
         });
     }
 
+    readonly property string effectiveTextHtml: {
+        if (inlineFlowRoot.textFallback && inlineFlowRoot.textFallback.length > 0) {
+            return inlineFlowRoot.formatThemedHtml(inlineFlowRoot.textFallback);
+        }
+        if (!inlineFlowRoot.segments || inlineFlowRoot.segments.length === 0) {
+            return "";
+        }
+        var combined = "";
+        for (var i = 0; i < inlineFlowRoot.segments.length; i++) {
+            var seg = inlineFlowRoot.segments[i];
+            if (seg && typeof seg.textHtml === "string") {
+                combined += seg.textHtml;
+            }
+        }
+        return inlineFlowRoot.formatThemedHtml(combined);
+    }
+
     width: parent ? parent.width : 600
     implicitHeight: hasFlowElements ? flowLayout.implicitHeight : singleText.implicitHeight
 
@@ -51,12 +68,11 @@ Item {
     // -----------------------------------------------------------------------
     Text {
         id: singleText
+        objectName: "singleText"
         visible: !inlineFlowRoot.hasFlowElements
         width: parent.width
         textFormat: Text.RichText
-        text: inlineFlowRoot.formatThemedHtml(inlineFlowRoot.textFallback !== "" ? inlineFlowRoot.textFallback : (
-            inlineFlowRoot.segments && inlineFlowRoot.segments.length > 0 ? inlineFlowRoot.segments[0].textHtml : ""
-        ))
+        text: inlineFlowRoot.effectiveTextHtml
         color: inlineFlowRoot.textColor
         font.pixelSize: Math.round(inlineFlowRoot.defaultPixelSize * inlineFlowRoot.scaleFactor)
         font.bold: inlineFlowRoot.fontBold
