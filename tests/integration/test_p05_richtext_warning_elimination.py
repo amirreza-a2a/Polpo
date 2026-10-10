@@ -4,6 +4,7 @@
 #  Eliminate Synchronous RichText Math Image Warnings
 # ============================================================
 
+import json
 from pathlib import Path
 from typing import List, Optional
 import pytest
@@ -139,7 +140,7 @@ def test_baseline_unprojected_image_provider_reproduces_warning(qapp):
     'QQuickPixmap: connectFinished() called when not loading.'
     """
     doc_dto, cache = _build_test_document_dto(num_formulas=10)
-    qml_file = str(
+    qml_file = (
         Path(__file__).resolve().parent.parent.parent
         / "interfaces"
         / "desktop"
@@ -152,7 +153,7 @@ def test_baseline_unprojected_image_provider_reproduces_warning(qapp):
     try:
         provider = MathImageProvider(cache)
         view.engine().addImageProvider("math", provider)
-        view.setSource(qml_file)
+        view.setSource(QUrl.fromLocalFile(str(qml_file)))
         root = view.rootObject()
         assert root is not None, "Failed to load MarkdownInlineFlow.qml"
 
@@ -188,7 +189,7 @@ def test_projected_data_uri_eliminates_connect_finished_warning(qapp):
     SVG Data URIs completely eliminates 'QQuickPixmap: connectFinished() called when not loading.'
     """
     doc_dto, cache = _build_test_document_dto(num_formulas=50)
-    qml_file = str(
+    qml_file = (
         Path(__file__).resolve().parent.parent.parent
         / "interfaces"
         / "desktop"
@@ -208,7 +209,7 @@ def test_projected_data_uri_eliminates_connect_finished_warning(qapp):
     try:
         provider = MathImageProvider(cache)
         view.engine().addImageProvider("math", provider)
-        view.setSource(qml_file)
+        view.setSource(QUrl.fromLocalFile(str(qml_file)))
         root = view.rootObject()
         assert root is not None
 
@@ -278,7 +279,7 @@ def test_theme_switching_reprojects_math_without_warnings(qapp):
     colors without reparsing AST and without emitting any QQuickPixmap warnings.
     """
     doc_dto, cache = _build_test_document_dto(num_formulas=50)
-    qml_file = str(
+    qml_file = (
         Path(__file__).resolve().parent.parent.parent
         / "interfaces"
         / "desktop"
@@ -297,7 +298,7 @@ def test_theme_switching_reprojects_math_without_warnings(qapp):
     try:
         provider = MathImageProvider(cache)
         view.engine().addImageProvider("math", provider)
-        view.setSource(qml_file)
+        view.setSource(QUrl.fromLocalFile(str(qml_file)))
         root = view.rootObject()
         assert root is not None
 
@@ -343,7 +344,7 @@ def test_cache_miss_fallback_projection_without_warnings(qapp):
     or fallback text without emitting image provider warnings.
     """
     doc_dto, _ = _build_test_document_dto(num_formulas=10)
-    qml_file = str(
+    qml_file = (
         Path(__file__).resolve().parent.parent.parent
         / "interfaces"
         / "desktop"
@@ -364,7 +365,7 @@ def test_cache_miss_fallback_projection_without_warnings(qapp):
     try:
         provider = MathImageProvider(empty_cache)
         view.engine().addImageProvider("math", provider)
-        view.setSource(qml_file)
+        view.setSource(QUrl.fromLocalFile(str(qml_file)))
         root = view.rootObject()
         assert root is not None
 
@@ -395,7 +396,7 @@ def test_repeated_creation_and_destruction_cycles_leak_free(qapp):
     verifying zero warning emissions across all cycles.
     """
     doc_dto, cache = _build_test_document_dto(num_formulas=50)
-    qml_file = str(
+    qml_file = (
         Path(__file__).resolve().parent.parent.parent
         / "interfaces"
         / "desktop"
@@ -420,7 +421,7 @@ def test_repeated_creation_and_destruction_cycles_leak_free(qapp):
             view = QQuickView()
             provider = MathImageProvider(cache)
             view.engine().addImageProvider("math", provider)
-            view.setSource(qml_file)
+            view.setSource(QUrl.fromLocalFile(str(qml_file)))
             root = view.rootObject()
             assert root is not None
 
@@ -521,7 +522,7 @@ def test_markdown_inline_flow_concatenates_all_segments_without_fallback(qapp):
     )
     model = MarkdownDocumentModel(math_resolver=cache.get, math_foreground="#e6edf3")
 
-    qml_file = str(
+    qml_file = (
         Path(__file__).resolve().parent.parent.parent
         / "interfaces"
         / "desktop"
@@ -535,7 +536,7 @@ def test_markdown_inline_flow_concatenates_all_segments_without_fallback(qapp):
     try:
         provider = MathImageProvider(cache)
         view.engine().addImageProvider("math", provider)
-        view.setSource(qml_file)
+        view.setSource(QUrl.fromLocalFile(str(qml_file)))
         root = view.rootObject()
         assert root is not None
 
@@ -590,14 +591,15 @@ def test_markdown_inline_flow_concatenates_all_segments_without_fallback(qapp):
     doc_dto = MarkdownDocumentDTO(job_id=1, version=1, nodes=(table_node,), region_to_occurrences={})
     model.set_document(doc_dto)
 
-    delegate_path = str(
+    delegate_path = (
         Path(__file__).resolve().parent.parent.parent
         / "interfaces"
         / "desktop"
         / "qml"
         / "components"
         / "MarkdownNodeDelegate.qml"
-    ).replace("\\", "/")
+    )
+    delegate_url = QUrl.fromLocalFile(str(delegate_path)).toString()
 
     view_tbl = QQuickView()
     try:
@@ -616,7 +618,7 @@ def test_markdown_inline_flow_concatenates_all_segments_without_fallback(qapp):
                 model: testDocModel
                 delegate: Loader {{
                     width: parent.width
-                    source: "{delegate_path}"
+                    source: {json.dumps(delegate_url)}
                 }}
             }}
         }}
@@ -670,14 +672,15 @@ def test_full_delegate_flow_path_with_markdown_node_delegate_and_theme_switching
     )
     model.set_document(doc_dto)
 
-    delegate_path = str(
+    delegate_path = (
         Path(__file__).resolve().parent.parent.parent
         / "interfaces"
         / "desktop"
         / "qml"
         / "components"
         / "MarkdownNodeDelegate.qml"
-    ).replace("\\", "/")
+    )
+    delegate_url = QUrl.fromLocalFile(str(delegate_path)).toString()
 
     view = QQuickView()
     try:
@@ -702,7 +705,7 @@ def test_full_delegate_flow_path_with_markdown_node_delegate_and_theme_switching
                 cacheBuffer: 100000
                 delegate: Loader {{
                     width: 800
-                    source: "{delegate_path}"
+                    source: {json.dumps(delegate_url)}
                     Component.onCompleted: harnessRoot.loaders.push(this)
                 }}
             }}
