@@ -366,7 +366,7 @@ def test_supervisor_windows_tree_kill_exit_code_128_returns_false(mock_sub_run):
     mock_proc.poll.return_value = 0  # Root process already exited
 
     mock_sub_run.return_value.returncode = 128
-    mock_sub_run.stderr = "ERROR: The process with PID 12345 not found."
+    mock_sub_run.return_value.stderr = "ERROR: The process with PID 12345 not found."
 
     success = supervisor._kill_process_tree(mock_proc, is_windows=True)
 
@@ -384,7 +384,7 @@ def test_supervisor_windows_root_terminated_but_tree_unverified_returns_false(mo
     mock_proc.poll.return_value = -9
 
     mock_sub_run.return_value.returncode = 128
-    mock_sub_run.stderr = "ERROR: The process with PID 54321 not found."
+    mock_sub_run.return_value.stderr = "ERROR: The process with PID 54321 not found."
 
     success = supervisor._kill_process_tree(mock_proc, is_windows=True)
 
