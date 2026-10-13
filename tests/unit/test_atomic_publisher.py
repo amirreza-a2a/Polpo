@@ -367,3 +367,77 @@ def test_publish_error_mapping_unsupported_enotsup(tmp_path: Path):
 
     assert not destination.exists()
     assert source_pdf.exists()
+
+
+def test_publish_same_file_symlink_rejected(tmp_path: Path):
+    """Rejects same-file invocation when destination is a symlink resolving to source file."""
+    staging_dir = tmp_path / "staging"
+    staging_dir.mkdir()
+    source_pdf = staging_dir / "compiled.pdf"
+    content = b"%PDF-1.7 original content across symlink"
+    source_pdf.write_bytes(content)
+
+    destination_symlink = staging_dir / "symlink_dest.pdf"
+    try:
+        destination_symlink.symlink_to(source_pdf)
+    except (OSError, NotImplementedError):
+        pytest.skip("Filesystem does not support symlinks")
+
+    publisher = AtomicPdfPublisher()
+    with pytest.raises(SameFileError):
+        publisher.publish(source_pdf, destination_symlink, overwrite=True)
+
+    assert source_pdf.exists()
+    assert source_pdf.read_bytes() == content
+
+
+def test_publish_error_mapping_eexist_oserror(tmp_path: Path):
+    """Asserts generic OSError with EEXIST is mapped to DestinationAlreadyExistsError."""
+    staging_dir = tmp_path / "staging"
+    staging_dir.mkdir()
+    source_pdf = staging_dir / "compiled.pdf"
+    source_pdf.write_bytes(b"%PDF-1.7 valid")
+
+    export_dir = tmp_path / "exports"
+    export_dir.mkdir()
+    destination = export_dir / "report.pdf"
+
+    publisher = AtomicPdfPublisher()
+
+    eexist_err = OSError()
+    eexist_err.errno = errno.EEXIST
+    eexist_err.strerror = "File exists"
+
+    with patch("os.link", side_effect=eexist_err):
+        with pytest.raises(DestinationAlreadyExistsError):
+            publisher.publish(source_pdf, destination, overwrite=False)
+
+    assert not destination.exists()
+    assert source_pdf.exists()
+
+
+def test_publish_error_mapping_edquot(tmp_path: Path):
+    """Asserts EDQUOT (disk quota exceeded) is re-raised as OSError, not UnsupportedFilesystemError."""
+    staging_dir = tmp_path / "staging"
+    staging_dir.mkdir()
+    source_pdf = staging_dir / "compiled.pdf"
+    source_pdf.write_bytes(b"%PDF-1.7 valid")
+
+    export_dir = tmp_path / "exports"
+    export_dir.mkdir()
+    destination = export_dir / "report.pdf"
+
+    publisher = AtomicPdfPublisher()
+
+    edquot_err = OSError()
+    edquot_err.errno = getattr(errno, "EDQUOT", 122)
+    edquot_err.strerror = "Disk quota exceeded"
+
+    with patch("os.link", side_effect=edquot_err):
+        with pytest.raises(OSError) as exc_info:
+            publisher.publish(source_pdf, destination, overwrite=False)
+
+    assert not isinstance(exc_info.value, UnsupportedFilesystemError)
+    assert exc_info.value.errno == getattr(errno, "EDQUOT", 122)
+    assert not destination.exists()
+    assert source_pdf.exists()

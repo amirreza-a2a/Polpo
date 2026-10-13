@@ -304,3 +304,54 @@ def test_supervisor_windows_tree_kill_failure_appends_warning_to_stderr(
 
     assert res.timed_out is True
     assert "Failed to terminate descendant process tree" in res.stderr
+
+
+@patch("infrastructure.pdf.subprocess_supervisor.platform.system")
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.Popen")
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.run")
+def test_supervisor_windows_tree_kill_cancellation_failure_appends_warning_to_stderr(
+    mock_sub_run, mock_popen, mock_system, tmp_path: Path
+):
+    """Verifies execute on Windows records a diagnostic in stderr when taskkill fails during cancellation."""
+    mock_system.return_value = "Windows"
+
+    mock_proc = MagicMock()
+    mock_proc.pid = 8888
+    mock_proc.poll.side_effect = [None, None, -1]
+    mock_proc.returncode = -1
+    mock_proc.stdout.read.return_value = b""
+    mock_proc.stderr.read.return_value = b""
+    mock_popen.return_value = mock_proc
+
+    mock_sub_run.return_value.returncode = 1
+    mock_sub_run.return_value.stderr = "ERROR: Access denied"
+
+    supervisor = SubprocessSupervisor()
+    cmd = ["quarto", "render", "doc.qmd"]
+
+    cancelled_flag = False
+
+    def is_cancelled():
+        nonlocal cancelled_flag
+        cancelled_flag = True
+        return True
+
+    res = supervisor.execute(cmd=cmd, cwd=tmp_path, is_cancelled=is_cancelled)
+
+    assert res.cancelled is True
+    assert "Failed to terminate descendant process tree" in res.stderr
+
+
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.run")
+def test_supervisor_tree_kill_process_remains_alive_returns_false(mock_sub_run):
+    """Verifies _kill_process_tree returns False if proc.poll() is still None after kill."""
+    supervisor = SubprocessSupervisor()
+    mock_proc = MagicMock()
+    mock_proc.pid = 12345
+    mock_sub_run.return_value.returncode = 0
+    # Process is unkillable / poll still returns None
+    mock_proc.poll.return_value = None
+
+    success = supervisor._kill_process_tree(mock_proc, is_windows=True)
+
+    assert success is False

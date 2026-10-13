@@ -170,6 +170,7 @@ class SubprocessSupervisor:
         start_time = time.monotonic()
         timed_out = False
         cancelled = False
+        tree_killed = True
 
         while True:
             ret = proc.poll()
@@ -179,19 +180,11 @@ class SubprocessSupervisor:
             if is_cancelled and is_cancelled():
                 cancelled = True
                 tree_killed = self._kill_process_tree(proc, is_windows)
-                if not tree_killed:
-                    stderr_chunks.append(
-                        f"\n[WARNING] Failed to terminate descendant process tree for PID {proc.pid}.".encode("utf-8")
-                    )
                 break
 
             if time.monotonic() - start_time > timeout_seconds:
                 timed_out = True
                 tree_killed = self._kill_process_tree(proc, is_windows)
-                if not tree_killed:
-                    stderr_chunks.append(
-                        f"\n[WARNING] Failed to terminate descendant process tree for PID {proc.pid}.".encode("utf-8")
-                    )
                 break
 
             time.sleep(0.05)
@@ -212,6 +205,10 @@ class SubprocessSupervisor:
 
         stdout_text = b"".join(stdout_chunks).decode("utf-8", errors="replace")
         stderr_text = b"".join(stderr_chunks).decode("utf-8", errors="replace")
+
+        if not tree_killed:
+            warning_msg = f"\n[WARNING] Failed to terminate descendant process tree for PID {proc.pid}."
+            stderr_text += warning_msg
 
         final_returncode = proc.returncode if proc.returncode is not None else -1
 
@@ -234,7 +231,8 @@ class SubprocessSupervisor:
 
         Returns:
             True if process tree termination succeeded or process was already terminated;
-            False if tree termination command failed and only root process could be killed.
+            False if tree termination command failed and only root process could be killed,
+            or if the process could not be terminated.
         """
         pid = proc.pid
         tree_killed = True
@@ -276,6 +274,9 @@ class SubprocessSupervisor:
                 except (PermissionError, OSError) as e:
                     tree_killed = False
                     logger.warning("Failed to get PGID or signal process group for PID %s: %s", pid, e)
+            else:
+                tree_killed = False
+                logger.warning("OS lacks getpgid/killpg primitives; process tree cannot be terminated for PID %s", pid)
 
         try:
             proc.kill()
@@ -286,5 +287,9 @@ class SubprocessSupervisor:
             proc.wait(timeout=2.0)
         except Exception:
             pass
+
+        if proc.poll() is None:
+            tree_killed = False
+            logger.warning("Root process PID %s failed to terminate after kill signal", pid)
 
         return tree_killed

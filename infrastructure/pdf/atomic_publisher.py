@@ -122,6 +122,18 @@ class AtomicPdfPublisher:
                     f"Permission denied creating hard link at '{dest_path}': {e}"
                 ) from e
             except OSError as e:
+                if e.errno == getattr(errno, "EEXIST", 17):
+                    raise DestinationAlreadyExistsError(
+                        f"Destination file already exists: '{dest_path}'"
+                    ) from e
+                if e.errno in {
+                    getattr(errno, "EACCES", 13),
+                    getattr(errno, "EPERM", 1),
+                    getattr(errno, "EROFS", 30),
+                }:
+                    raise ExportPermissionError(
+                        f"Permission denied creating hard link at '{dest_path}': {e}"
+                    ) from e
                 unsupported_errnos = {
                     getattr(errno, "EXDEV", 18),
                     getattr(errno, "ENOTSUP", 95),
@@ -137,14 +149,6 @@ class AtomicPdfPublisher:
                 ):
                     raise UnsupportedFilesystemError(
                         f"Filesystem does not support atomic hard links: {e}"
-                    ) from e
-                if e.errno in {
-                    getattr(errno, "EACCES", 13),
-                    getattr(errno, "EPERM", 1),
-                    getattr(errno, "EROFS", 30),
-                }:
-                    raise ExportPermissionError(
-                        f"Permission denied creating hard link at '{dest_path}': {e}"
                     ) from e
                 raise
         else:
