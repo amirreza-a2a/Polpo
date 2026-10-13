@@ -230,7 +230,7 @@ class SubprocessSupervisor:
         On POSIX, signals the child process group via SIGKILL.
 
         Returns:
-            True if process tree termination succeeded or process was already terminated;
+            True if process tree termination succeeded;
             False if tree termination command failed and only root process could be killed,
             or if the process could not be terminated.
         """
@@ -245,11 +245,17 @@ class SubprocessSupervisor:
                     timeout=5.0,
                     text=True,
                 )
-                # Code 128 indicates the process was not found (already exited)
-                if res.returncode != 0 and res.returncode != 128:
+                if res.returncode != 0:
                     tree_killed = False
-                    err_msg = res.stderr.strip() if res.stderr else f"exit code {res.returncode}"
-                    logger.warning("taskkill failed to terminate process tree for PID %s: %s", pid, err_msg)
+                    if res.returncode == 128:
+                        logger.warning(
+                            "taskkill reported PID %s not found (exit code 128); "
+                            "descendant process tree termination could not be verified",
+                            pid,
+                        )
+                    else:
+                        err_msg = res.stderr.strip() if res.stderr else f"exit code {res.returncode}"
+                        logger.warning("taskkill failed to terminate process tree for PID %s: %s", pid, err_msg)
             except subprocess.TimeoutExpired:
                 tree_killed = False
                 logger.warning("taskkill timed out attempting to terminate process tree for PID %s", pid)

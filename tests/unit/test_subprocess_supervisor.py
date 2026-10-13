@@ -355,3 +355,117 @@ def test_supervisor_tree_kill_process_remains_alive_returns_false(mock_sub_run):
     success = supervisor._kill_process_tree(mock_proc, is_windows=True)
 
     assert success is False
+
+
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.run")
+def test_supervisor_windows_tree_kill_exit_code_128_returns_false(mock_sub_run):
+    """Verifies taskkill exit code 128 (process not found) returns False because descendant tree cannot be verified."""
+    supervisor = SubprocessSupervisor()
+    mock_proc = MagicMock()
+    mock_proc.pid = 12345
+    mock_proc.poll.return_value = 0  # Root process already exited
+
+    mock_sub_run.return_value.returncode = 128
+    mock_sub_run.stderr = "ERROR: The process with PID 12345 not found."
+
+    success = supervisor._kill_process_tree(mock_proc, is_windows=True)
+
+    assert success is False
+    mock_proc.kill.assert_called_once()
+
+
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.run")
+def test_supervisor_windows_root_terminated_but_tree_unverified_returns_false(mock_sub_run):
+    """Verifies root process termination succeeding does not prove descendant termination if taskkill failed with 128."""
+    supervisor = SubprocessSupervisor()
+    mock_proc = MagicMock()
+    mock_proc.pid = 54321
+    # Process was running initially, but after kill it returns exitcode -9
+    mock_proc.poll.return_value = -9
+
+    mock_sub_run.return_value.returncode = 128
+    mock_sub_run.stderr = "ERROR: The process with PID 54321 not found."
+
+    success = supervisor._kill_process_tree(mock_proc, is_windows=True)
+
+    # Root process is terminated, but descendant tree could not be verified
+    assert success is False
+
+
+@patch("infrastructure.pdf.subprocess_supervisor.platform.system")
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.Popen")
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.run")
+def test_supervisor_windows_tree_kill_code_128_appends_warning_to_stderr_on_timeout(
+    mock_sub_run, mock_popen, mock_system, tmp_path: Path
+):
+    """Verifies execute on Windows records a diagnostic in stderr when taskkill exits with 128 during timeout."""
+    mock_system.return_value = "Windows"
+
+    mock_proc = MagicMock()
+    mock_proc.pid = 7777
+    killed = False
+
+    def fake_kill():
+        nonlocal killed
+        killed = True
+
+    mock_proc.kill.side_effect = fake_kill
+    mock_proc.poll.side_effect = lambda: 0 if killed else None
+    mock_proc.returncode = -9
+    mock_proc.stdout.read.return_value = b""
+    mock_proc.stderr.read.return_value = b""
+    mock_popen.return_value = mock_proc
+
+    mock_sub_run.return_value.returncode = 128
+    mock_sub_run.return_value.stderr = "ERROR: The process with PID 7777 not found."
+
+    supervisor = SubprocessSupervisor()
+    cmd = ["quarto", "render", "doc.qmd"]
+
+    res = supervisor.execute(cmd=cmd, cwd=tmp_path, timeout_seconds=0.05)
+
+    assert res.timed_out is True
+    assert "Failed to terminate descendant process tree" in res.stderr
+
+
+@patch("infrastructure.pdf.subprocess_supervisor.platform.system")
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.Popen")
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.run")
+def test_supervisor_windows_tree_kill_code_128_appends_warning_to_stderr_on_cancellation(
+    mock_sub_run, mock_popen, mock_system, tmp_path: Path
+):
+    """Verifies execute on Windows records a diagnostic in stderr when taskkill exits with 128 during cancellation."""
+    mock_system.return_value = "Windows"
+
+    mock_proc = MagicMock()
+    mock_proc.pid = 6666
+    killed = False
+
+    def fake_kill():
+        nonlocal killed
+        killed = True
+
+    mock_proc.kill.side_effect = fake_kill
+    mock_proc.poll.side_effect = lambda: 0 if killed else None
+    mock_proc.returncode = -9
+    mock_proc.stdout.read.return_value = b""
+    mock_proc.stderr.read.return_value = b""
+    mock_popen.return_value = mock_proc
+
+    mock_sub_run.return_value.returncode = 128
+    mock_sub_run.return_value.stderr = "ERROR: The process with PID 6666 not found."
+
+    supervisor = SubprocessSupervisor()
+    cmd = ["quarto", "render", "doc.qmd"]
+
+    cancelled_flag = False
+
+    def is_cancelled():
+        nonlocal cancelled_flag
+        cancelled_flag = True
+        return True
+
+    res = supervisor.execute(cmd=cmd, cwd=tmp_path, is_cancelled=is_cancelled)
+
+    assert res.cancelled is True
+    assert "Failed to terminate descendant process tree" in res.stderr
