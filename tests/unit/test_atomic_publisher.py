@@ -6,6 +6,7 @@
 
 import errno
 from pathlib import Path
+from shutil import SameFileError
 from unittest.mock import patch
 
 import pytest
@@ -225,3 +226,144 @@ def test_publish_destination_is_directory_rejected(tmp_path: Path):
         publisher.publish(source_pdf, target_dir, overwrite=True)
 
     assert "existing directory" in str(exc_info.value).lower()
+
+
+def test_publish_same_file_overwrite_rejected(tmp_path: Path):
+    """Rejects invalid invocation where source and destination are the exact same file."""
+    staging_dir = tmp_path / "staging"
+    staging_dir.mkdir()
+    source_pdf = staging_dir / "compiled.pdf"
+    content = b"%PDF-1.7 original immutable content"
+    source_pdf.write_bytes(content)
+
+    publisher = AtomicPdfPublisher()
+    with pytest.raises(SameFileError):
+        publisher.publish(source_pdf, source_pdf, overwrite=True)
+
+    # File must still exist and its original content must remain intact
+    assert source_pdf.exists()
+    assert source_pdf.read_bytes() == content
+
+
+def test_publish_same_file_distinct_paths_rejected(tmp_path: Path):
+    """Rejects same-file invocation when paths are distinct but resolve to the same underlying file."""
+    staging_dir = tmp_path / "staging"
+    staging_dir.mkdir()
+    source_pdf = staging_dir / "compiled.pdf"
+    content = b"%PDF-1.7 original content across distinct paths"
+    source_pdf.write_bytes(content)
+
+    sub_dir = staging_dir / "nested"
+    sub_dir.mkdir()
+    destination_via_dotdot = sub_dir / ".." / "compiled.pdf"
+
+    publisher = AtomicPdfPublisher()
+    with pytest.raises(SameFileError):
+        publisher.publish(source_pdf, destination_via_dotdot, overwrite=True)
+
+    assert source_pdf.exists()
+    assert source_pdf.read_bytes() == content
+
+
+def test_publish_error_mapping_enospc(tmp_path: Path):
+    """Asserts ENOSPC is re-raised as OSError, not misclassified as UnsupportedFilesystemError."""
+    staging_dir = tmp_path / "staging"
+    staging_dir.mkdir()
+    source_pdf = staging_dir / "compiled.pdf"
+    source_pdf.write_bytes(b"%PDF-1.7 valid")
+
+    export_dir = tmp_path / "exports"
+    export_dir.mkdir()
+    destination = export_dir / "report.pdf"
+
+    publisher = AtomicPdfPublisher()
+
+    enospc_err = OSError()
+    enospc_err.errno = errno.ENOSPC
+    enospc_err.strerror = "No space left on device"
+
+    with patch("os.link", side_effect=enospc_err):
+        with pytest.raises(OSError) as exc_info:
+            publisher.publish(source_pdf, destination, overwrite=False)
+
+    assert not isinstance(exc_info.value, UnsupportedFilesystemError)
+    assert exc_info.value.errno == errno.ENOSPC
+    assert not destination.exists()
+    assert source_pdf.exists()
+
+
+def test_publish_error_mapping_eio(tmp_path: Path):
+    """Asserts EIO is re-raised as OSError, not misclassified as UnsupportedFilesystemError."""
+    staging_dir = tmp_path / "staging"
+    staging_dir.mkdir()
+    source_pdf = staging_dir / "compiled.pdf"
+    source_pdf.write_bytes(b"%PDF-1.7 valid")
+
+    export_dir = tmp_path / "exports"
+    export_dir.mkdir()
+    destination = export_dir / "report.pdf"
+
+    publisher = AtomicPdfPublisher()
+
+    eio_err = OSError()
+    eio_err.errno = errno.EIO
+    eio_err.strerror = "Input/output error"
+
+    with patch("os.link", side_effect=eio_err):
+        with pytest.raises(OSError) as exc_info:
+            publisher.publish(source_pdf, destination, overwrite=False)
+
+    assert not isinstance(exc_info.value, UnsupportedFilesystemError)
+    assert exc_info.value.errno == errno.EIO
+    assert not destination.exists()
+    assert source_pdf.exists()
+
+
+def test_publish_error_mapping_erofs(tmp_path: Path):
+    """Asserts EROFS is mapped to ExportPermissionError, not UnsupportedFilesystemError."""
+    staging_dir = tmp_path / "staging"
+    staging_dir.mkdir()
+    source_pdf = staging_dir / "compiled.pdf"
+    source_pdf.write_bytes(b"%PDF-1.7 valid")
+
+    export_dir = tmp_path / "exports"
+    export_dir.mkdir()
+    destination = export_dir / "report.pdf"
+
+    publisher = AtomicPdfPublisher()
+
+    rofs_err = OSError()
+    rofs_err.errno = getattr(errno, "EROFS", 30)
+    rofs_err.strerror = "Read-only file system"
+
+    with patch("os.link", side_effect=rofs_err):
+        with pytest.raises(ExportPermissionError):
+            publisher.publish(source_pdf, destination, overwrite=False)
+
+    assert not destination.exists()
+    assert source_pdf.exists()
+
+
+def test_publish_error_mapping_unsupported_enotsup(tmp_path: Path):
+    """Asserts ENOTSUP is mapped to UnsupportedFilesystemError."""
+    staging_dir = tmp_path / "staging"
+    staging_dir.mkdir()
+    source_pdf = staging_dir / "compiled.pdf"
+    source_pdf.write_bytes(b"%PDF-1.7 valid")
+
+    export_dir = tmp_path / "exports"
+    export_dir.mkdir()
+    destination = export_dir / "report.pdf"
+
+    publisher = AtomicPdfPublisher()
+
+    notsup_err = OSError()
+    notsup_err.errno = getattr(errno, "ENOTSUP", 95)
+    notsup_err.strerror = "Operation not supported"
+
+    with patch("os.link", side_effect=notsup_err):
+        with pytest.raises(UnsupportedFilesystemError):
+            publisher.publish(source_pdf, destination, overwrite=False)
+
+    assert not destination.exists()
+    assert source_pdf.exists()

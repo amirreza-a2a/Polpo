@@ -9,6 +9,7 @@ from __future__ import annotations
 import errno
 import os
 from pathlib import Path
+from shutil import SameFileError
 from typing import Optional
 import uuid
 
@@ -59,6 +60,7 @@ class AtomicPdfPublisher:
             ArtifactNotFoundError: If source compiled PDF is missing.
             ExportPermissionError: If user lacks permissions to write to destination.
             UnsupportedFilesystemError: If atomic hard linking is not supported by filesystem.
+            SameFileError: If source and destination resolve to the same underlying file.
         """
         source_path = Path(source_compiled_pdf)
         dest_path = Path(destination_path)
@@ -90,6 +92,17 @@ class AtomicPdfPublisher:
                 f"Destination path is an existing directory: '{dest_path}'"
             )
 
+        # Check for same-file invalid invocation
+        if dest_path.exists() or dest_path.is_symlink():
+            try:
+                is_same = os.path.samefile(source_path, dest_path)
+            except OSError:
+                is_same = source_path.resolve() == dest_path.resolve()
+            if is_same:
+                raise SameFileError(
+                    f"Source and destination resolve to the same file: '{dest_path}'"
+                )
+
         if not overwrite and (dest_path.exists() or dest_path.is_symlink()):
             raise DestinationAlreadyExistsError(
                 f"Destination file already exists: '{dest_path}'"
@@ -113,19 +126,27 @@ class AtomicPdfPublisher:
                     getattr(errno, "EXDEV", 18),
                     getattr(errno, "ENOTSUP", 95),
                     getattr(errno, "EOPNOTSUPP", 95),
-                    getattr(errno, "EPERM", 1),
                 }
+                msg = str(e).lower()
                 if (
                     e.errno in unsupported_errnos
-                    or "cross-device" in str(e).lower()
-                    or "not supported" in str(e).lower()
+                    or "cross-device" in msg
+                    or "not supported" in msg
+                    or "function not implemented" in msg
+                    or "incorrect function" in msg
                 ):
                     raise UnsupportedFilesystemError(
                         f"Filesystem does not support atomic hard links: {e}"
                     ) from e
-                raise UnsupportedFilesystemError(
-                    f"Atomic hard link failed: {e}"
-                ) from e
+                if e.errno in {
+                    getattr(errno, "EACCES", 13),
+                    getattr(errno, "EPERM", 1),
+                    getattr(errno, "EROFS", 30),
+                }:
+                    raise ExportPermissionError(
+                        f"Permission denied creating hard link at '{dest_path}': {e}"
+                    ) from e
+                raise
         else:
             # Atomic Durable Replacement via sibling temp file + os.replace
             temp_path = dest_dir / f".tmp_{uuid.uuid4().hex[:12]}.pdf"
