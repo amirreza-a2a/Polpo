@@ -121,3 +121,15 @@ class ConflictingLatexHeaderError(DomainError):
     """Raised when user LaTeX headers explicitly conflict with system-managed packages."""
     def __init__(self, message: str = "Conflicting LaTeX package specified in headers."):
         super().__init__(message)
+
+
+class UnsupportedFilesystemError(DomainError):
+    """Raised when atomic linking fails due to filesystem limitations (e.g. cross-volume link, exFAT)."""
+    def __init__(self, message: str = "Filesystem does not support atomic hard linking for export."):
+        super().__init__(message)
+
+
+class ExportPermissionError(DomainError):
+    """Raised when user lacks write permission to destination directory."""
+    def __init__(self, message: str = "Permission denied while writing to destination directory."):
+        super().__init__(message)
