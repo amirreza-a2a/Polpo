@@ -19,6 +19,7 @@ provide operating-system filesystem read sandboxing for native TeX primitives
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import os
 from pathlib import Path
 import platform
@@ -31,6 +32,8 @@ from typing import Callable, Dict, List, Optional
 _DEFAULT_TIMEOUT_SECONDS: float = 60.0
 _MAX_STREAM_BYTES: int = 5 * 1024 * 1024  # 5 MB per stream hard cap
 _WIN32_CREATE_NO_WINDOW: int = 0x08000000
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -175,12 +178,20 @@ class SubprocessSupervisor:
 
             if is_cancelled and is_cancelled():
                 cancelled = True
-                self._kill_process_tree(proc, is_windows)
+                tree_killed = self._kill_process_tree(proc, is_windows)
+                if not tree_killed:
+                    stderr_chunks.append(
+                        f"\n[WARNING] Failed to terminate descendant process tree for PID {proc.pid}.".encode("utf-8")
+                    )
                 break
 
             if time.monotonic() - start_time > timeout_seconds:
                 timed_out = True
-                self._kill_process_tree(proc, is_windows)
+                tree_killed = self._kill_process_tree(proc, is_windows)
+                if not tree_killed:
+                    stderr_chunks.append(
+                        f"\n[WARNING] Failed to terminate descendant process tree for PID {proc.pid}.".encode("utf-8")
+                    )
                 break
 
             time.sleep(0.05)
@@ -212,24 +223,41 @@ class SubprocessSupervisor:
             cancelled=cancelled,
         )
 
-    def _kill_process_tree(self, proc: subprocess.Popen, is_windows: bool) -> None:
+    def _kill_process_tree(self, proc: subprocess.Popen, is_windows: bool) -> bool:
         """
-        Forcefully terminates child process and all its descendants.
+        Attempts to forcefully terminate child process and all its descendants.
 
         On Windows, invokes 'taskkill /F /T /PID <pid>' to eliminate child compilers.
+        If taskkill exits unsuccessfully, times out, or cannot be executed, falls back
+        to terminating the root process via proc.kill(), emits a warning, and returns False.
         On POSIX, signals the child process group via SIGKILL.
+
+        Returns:
+            True if process tree termination succeeded or process was already terminated;
+            False if tree termination command failed and only root process could be killed.
         """
         pid = proc.pid
+        tree_killed = True
         if is_windows:
             try:
-                subprocess.run(
+                res = subprocess.run(
                     ["taskkill", "/F", "/T", "/PID", str(pid)],
                     creationflags=_WIN32_CREATE_NO_WINDOW,
                     capture_output=True,
                     timeout=5.0,
+                    text=True,
                 )
-            except Exception:
-                pass
+                # Code 128 indicates the process was not found (already exited)
+                if res.returncode != 0 and res.returncode != 128:
+                    tree_killed = False
+                    err_msg = res.stderr.strip() if res.stderr else f"exit code {res.returncode}"
+                    logger.warning("taskkill failed to terminate process tree for PID %s: %s", pid, err_msg)
+            except subprocess.TimeoutExpired:
+                tree_killed = False
+                logger.warning("taskkill timed out attempting to terminate process tree for PID %s", pid)
+            except Exception as e:
+                tree_killed = False
+                logger.warning("taskkill invocation failed for PID %s: %s", pid, e)
         else:
             if hasattr(os, "getpgid") and hasattr(os, "killpg"):
                 try:
@@ -240,10 +268,14 @@ class SubprocessSupervisor:
                     # but descendant processes in process group (PGID == pid) may still be running.
                     try:
                         os.killpg(pid, signal.SIGKILL)
-                    except (ProcessLookupError, PermissionError, OSError):
+                    except ProcessLookupError:
                         pass
-                except (PermissionError, OSError):
-                    pass
+                    except (PermissionError, OSError) as e:
+                        tree_killed = False
+                        logger.warning("Failed to signal process group %s: %s", pid, e)
+                except (PermissionError, OSError) as e:
+                    tree_killed = False
+                    logger.warning("Failed to get PGID or signal process group for PID %s: %s", pid, e)
 
         try:
             proc.kill()
@@ -254,3 +286,5 @@ class SubprocessSupervisor:
             proc.wait(timeout=2.0)
         except Exception:
             pass
+
+        return tree_killed

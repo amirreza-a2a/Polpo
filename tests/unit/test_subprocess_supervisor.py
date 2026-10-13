@@ -183,9 +183,11 @@ def test_supervisor_windows_tree_kill(mock_sub_run):
     supervisor = SubprocessSupervisor()
     mock_proc = MagicMock()
     mock_proc.pid = 12345
+    mock_sub_run.return_value.returncode = 0
 
-    supervisor._kill_process_tree(mock_proc, is_windows=True)
+    success = supervisor._kill_process_tree(mock_proc, is_windows=True)
 
+    assert success is True
     mock_sub_run.assert_called_once()
     called_cmd = mock_sub_run.call_args[0][0]
     assert called_cmd == ["taskkill", "/F", "/T", "/PID", "12345"]
@@ -225,3 +227,80 @@ def test_supervisor_posix_tree_kill_when_session_leader_exited(mock_getpgid, moc
 
     mock_getpgid.assert_called_once_with(888)
     mock_killpg.assert_called_once_with(888, signal.SIGKILL)
+
+
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.run")
+def test_supervisor_windows_tree_kill_nonzero_exit(mock_sub_run):
+    """Verifies failed taskkill exit code returns False and still invokes proc.kill()."""
+    supervisor = SubprocessSupervisor()
+    mock_proc = MagicMock()
+    mock_proc.pid = 12345
+
+    mock_sub_run.return_value.returncode = 1
+    mock_sub_run.return_value.stderr = "ERROR: Access denied."
+
+    success = supervisor._kill_process_tree(mock_proc, is_windows=True)
+
+    assert success is False
+    mock_proc.kill.assert_called_once()
+
+
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.run")
+def test_supervisor_windows_tree_kill_timeout(mock_sub_run):
+    """Verifies taskkill timeout returns False and still invokes proc.kill()."""
+    import subprocess as sp
+    supervisor = SubprocessSupervisor()
+    mock_proc = MagicMock()
+    mock_proc.pid = 12345
+
+    mock_sub_run.side_effect = sp.TimeoutExpired(cmd=["taskkill"], timeout=5.0)
+
+    success = supervisor._kill_process_tree(mock_proc, is_windows=True)
+
+    assert success is False
+    mock_proc.kill.assert_called_once()
+
+
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.run")
+def test_supervisor_windows_tree_kill_command_not_found(mock_sub_run):
+    """Verifies taskkill missing executable returns False and still invokes proc.kill()."""
+    supervisor = SubprocessSupervisor()
+    mock_proc = MagicMock()
+    mock_proc.pid = 12345
+
+    mock_sub_run.side_effect = FileNotFoundError("taskkill not found")
+
+    success = supervisor._kill_process_tree(mock_proc, is_windows=True)
+
+    assert success is False
+    mock_proc.kill.assert_called_once()
+
+
+@patch("infrastructure.pdf.subprocess_supervisor.platform.system")
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.Popen")
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.run")
+def test_supervisor_windows_tree_kill_failure_appends_warning_to_stderr(
+    mock_sub_run, mock_popen, mock_system, tmp_path: Path
+):
+    """Verifies execute on Windows records a diagnostic in stderr when taskkill fails."""
+    mock_system.return_value = "Windows"
+
+    mock_proc = MagicMock()
+    mock_proc.pid = 9999
+    # Simulate process running until killed, then exiting
+    mock_proc.poll.side_effect = [None, None, None, -1]
+    mock_proc.returncode = -1
+    mock_proc.stdout.read.return_value = b""
+    mock_proc.stderr.read.return_value = b""
+    mock_popen.return_value = mock_proc
+
+    mock_sub_run.return_value.returncode = 1
+    mock_sub_run.return_value.stderr = "ERROR: Process tree kill failed"
+
+    supervisor = SubprocessSupervisor()
+    cmd = ["quarto", "render", "doc.qmd"]
+
+    res = supervisor.execute(cmd=cmd, cwd=tmp_path, timeout_seconds=0.05)
+
+    assert res.timed_out is True
+    assert "Failed to terminate descendant process tree" in res.stderr
