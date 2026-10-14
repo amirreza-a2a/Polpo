@@ -105,6 +105,21 @@ The pure, standalone, thread-safe three-state process reliability governor (`CLO
   * `OPEN`: Fast-fails all requests in $O(1)$ with `MathCircuitBreakerOpenError`. Lasts for a mandatory cooldown (`INITIAL_COOLDOWN_SECONDS = 30.0`). Transitions lazily to `HALF_OPEN` upon cooldown expiration.
   * `HALF_OPEN`: Allows exactly one atomic probe request via `with breaker.probe_permit():` while rejecting concurrent requests with `MathCircuitBreakerOpenError`. A successful probe closes the breaker, resets cooldown to 30.0s, and clears failure history; a failed probe re-opens it with doubled cooldown up to `MAX_COOLDOWN_SECONDS = 240.0`. Exiting the permit without recording an outcome safely releases the probe slot and preserves `HALF_OPEN` status.
 
+### 2.13 `Document PDF Export`
+The publication-grade document generation pipeline compiling canonical Markdown into vector PDF files via external Quarto CLI and XeLaTeX (ADR-003).
+* **Canonical Source Authority:** PDF compilation operates strictly on immutable on-disk canonical Markdown artifacts (`output_{job_id}_v{version}.md`). The transient QML preview scene graph is never scraped or rasterized.
+* **Save-Before-Export Gate:** If the active editor holds unsaved changes or unresolved merge conflicts, the export workflow prompts the user to save, committing a monotonic canonical version (`v{N+1}`) under OCC before compilation begins.
+* **Format Preservation:** The stored canonical document is never modified in-place or mutated to accommodate PDF generation. Export-specific preambles and font mappings are injected exclusively inside an ephemeral staging workspace.
+* **Export-Only TikZ Compilation:** Technical TikZ/PGF diagrams are authored using standard Pandoc/Quarto raw LaTeX fenced blocks (` ```{=latex} `). TikZ compilation is strictly scoped to explicit PDF export operations. The live editor preview does not launch TeX compilers and presents the block as a styled LaTeX code container.
+* **Strict Non-Networked Ordinary Export:** Ordinary document compilation strictly enforces `latex-auto-install: false`, preventing silent package downloads or external network activity during export.
+
+### 2.14 `SetupAssistant & Runtime Readiness` (Proposed Implementation Concept)
+The conceptual in-app discovery and diagnostics model governing external CLI tool prerequisites (Quarto CLI, TeX Live, TinyTeX) for PDF generation (ADR-003).
+* **External Prerequisite Policy:** Quarto is an external prerequisite in the initial implementation. It is discovered dynamically through system `PATH` or a user-configured path in `AppSettings`, without relying on machine-specific hardcoded paths.
+* **Graceful Degradation:** The absence of Quarto or TeX disables only PDF export capabilities and never blocks application launch or document review workflows.
+* **Grouped-Consent Package Recovery:** For Quarto-managed TinyTeX environments, missing LaTeX packages produce actionable diagnostics and offer an asynchronous, user-authorized recovery action. A single explicit confirmation authorizes installing the identified missing dependency set.
+* **Non-Elevated Privilege Boundary:** For system-managed TeX distributions, Polpo never invokes `sudo` or administrative privilege elevation, providing platform-appropriate manual instructions instead.
+
 ---
 
 ## 3. Architectural Seams Map
@@ -188,6 +203,12 @@ graph TD
   * Plaintext API keys and secrets are **strictly forbidden** in domain entities, SQLite columns, serialized JSON, and debug logs.
   * Secret resolution occurs solely at the infrastructure boundary (`infrastructure/security/keyring_resolver.py`) immediately before an outbound HTTPS request is dispatched to an AI provider.
 
+### 3.6 PDF Export Seam: Application Service vs Infrastructure Renderer
+* **Contract:** The presentation layer (`ExportController`) delegates PDF exports to an application service (`PdfExportService`), which orchestrates canonical document retrieval and asset closure resolution via `DocumentAssetResolver`. The service interacts with external document compilers strictly through an abstract application port (`IPdfExportEngine`).
+* **Invariants:**
+  * Application services and presentation controllers contain zero imports of `subprocess` or operating-system binary inspection modules.
+  * Concrete adapters in `infrastructure/pdf/` (`QuartoPdfAdapter`, `QuartoBinaryResolver`, `TexLogSanitizer`) manage isolated temporary staging workspaces (`<artifacts_dir>/.pdf_staging/<job_id>_<token>/`), suppress console window flashing on Windows (`CREATE_NO_WINDOW`), enforce execution timeouts (default 60s), cooperatively terminate child process trees upon cancellation, and sanitize machine-specific paths from compiler logs.
+
 ---
 
 ## 4. Legacy Transport Boundary
@@ -212,9 +233,9 @@ PolpoT enforces a strict multi-tier platform architecture ([`AGENTS.md`](AGENTS.
 
 ### 5.1 Continuous Integration Matrix (Blocking PR Gates)
 * **Tier-1 Linux Reference:** Ubuntu 24.04 LTS x86_64 / Python 3.12 (`test-linux`).
-  * *Architecture Boundary:* Ubuntu 24.04 serves as the POSIX reference environment for headless CI, not proof of continuous automated testing across all Linux distributions.
+  * *Architecture Boundary:* Ubuntu 24.04 serves as the POSIX reference environment for headless CI, not proof of continuous automated testing across all Linux distributions. Subprocess adapters and CLI resolvers are verified using mock executable doubles on standard CI, with live CLI tests conditionally enabled when host runtimes are present.
 * **Tier-1 Windows Reference:** Windows Server 2025 x64 / Python 3.12 (`windows-2025` runner, `test-windows`).
-  * *Architecture Boundary:* Windows CI verifies Win32 OS semantics, file URI pathing (`file:///C:/...`), non-POSIX file locking, and NTFS concurrency. Windows Server CI validates runtime and service correctness, but is not equivalent to consumer Windows 10/11 interactive desktop-shell or display verification. Windows Server 2022 is a non-continuously-tested compatibility target.
+  * *Architecture Boundary:* Windows CI verifies Win32 OS semantics, file URI pathing (`file:///C:/...`), non-POSIX file locking, and NTFS concurrency. Windows Server CI validates runtime and service correctness, but is not equivalent to consumer Windows 10/11 interactive desktop-shell or display verification. Windows Server 2022 is a non-continuously-tested compatibility target. Subprocess execution specifically validates `CREATE_NO_WINDOW` console window suppression and process tree termination (`taskkill`).
 * **Security & Quality Gates:** Static whitespace/bytecode/AST quality gates (`quality-gates`) and Gitleaks secret scanning (`secret-scan`) run on every push and pull request.
 
 ### 5.2 Periodic & Pre-Release Validation Matrix (Tier-2 Decoupled)
