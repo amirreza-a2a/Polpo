@@ -395,10 +395,10 @@ def test_supervisor_windows_root_terminated_but_tree_unverified_returns_false(mo
 @patch("infrastructure.pdf.subprocess_supervisor.platform.system")
 @patch("infrastructure.pdf.subprocess_supervisor.subprocess.Popen")
 @patch("infrastructure.pdf.subprocess_supervisor.subprocess.run")
-def test_supervisor_windows_tree_kill_code_128_appends_warning_to_stderr_on_timeout(
+def test_supervisor_windows_taskkill_fallback_code_128_appends_warning_on_timeout(
     mock_sub_run, mock_popen, mock_system, tmp_path: Path
 ):
-    """Verifies execute on Windows records a diagnostic in stderr when taskkill exits with 128 during timeout."""
+    """Verifies taskkill fallback records a diagnostic in stderr when taskkill exits with 128 during timeout."""
     mock_system.return_value = "Windows"
 
     mock_proc = MagicMock()
@@ -419,7 +419,7 @@ def test_supervisor_windows_tree_kill_code_128_appends_warning_to_stderr_on_time
     mock_sub_run.return_value.returncode = 128
     mock_sub_run.return_value.stderr = "ERROR: The process with PID 7777 not found."
 
-    supervisor = SubprocessSupervisor()
+    supervisor = SubprocessSupervisor(job_factory=lambda: None)
     cmd = ["quarto", "render", "doc.qmd"]
 
     res = supervisor.execute(cmd=cmd, cwd=tmp_path, timeout_seconds=0.05)
@@ -431,10 +431,10 @@ def test_supervisor_windows_tree_kill_code_128_appends_warning_to_stderr_on_time
 @patch("infrastructure.pdf.subprocess_supervisor.platform.system")
 @patch("infrastructure.pdf.subprocess_supervisor.subprocess.Popen")
 @patch("infrastructure.pdf.subprocess_supervisor.subprocess.run")
-def test_supervisor_windows_tree_kill_code_128_appends_warning_to_stderr_on_cancellation(
+def test_supervisor_windows_taskkill_fallback_code_128_appends_warning_on_cancellation(
     mock_sub_run, mock_popen, mock_system, tmp_path: Path
 ):
-    """Verifies execute on Windows records a diagnostic in stderr when taskkill exits with 128 during cancellation."""
+    """Verifies taskkill fallback records a diagnostic in stderr when taskkill exits with 128 during cancellation."""
     mock_system.return_value = "Windows"
 
     mock_proc = MagicMock()
@@ -455,7 +455,7 @@ def test_supervisor_windows_tree_kill_code_128_appends_warning_to_stderr_on_canc
     mock_sub_run.return_value.returncode = 128
     mock_sub_run.return_value.stderr = "ERROR: The process with PID 6666 not found."
 
-    supervisor = SubprocessSupervisor()
+    supervisor = SubprocessSupervisor(job_factory=lambda: None)
     cmd = ["quarto", "render", "doc.qmd"]
 
     cancelled_flag = False
@@ -469,3 +469,178 @@ def test_supervisor_windows_tree_kill_code_128_appends_warning_to_stderr_on_canc
 
     assert res.cancelled is True
     assert "Failed to terminate descendant process tree" in res.stderr
+
+
+@patch("infrastructure.pdf.subprocess_supervisor.platform.system")
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.Popen")
+def test_supervisor_windows_job_object_termination_success_on_timeout(
+    mock_popen, mock_system, tmp_path: Path
+):
+    """Verifies Job Object termination succeeds cleanly on timeout without warning diagnostics."""
+    mock_system.return_value = "Windows"
+
+    mock_proc = MagicMock()
+    mock_proc.pid = 1111
+    killed = False
+
+    def fake_kill():
+        nonlocal killed
+        killed = True
+
+    mock_proc.kill.side_effect = fake_kill
+    mock_proc.poll.side_effect = lambda: 0 if killed else None
+    mock_proc.returncode = -9
+    mock_proc.stdout.read.return_value = b""
+    mock_proc.stderr.read.return_value = b""
+    mock_popen.return_value = mock_proc
+
+    mock_job = MagicMock()
+    mock_job.spawn_process.return_value = mock_proc
+    mock_job.terminate.return_value = True
+
+    supervisor = SubprocessSupervisor(job_factory=lambda: mock_job)
+    cmd = ["quarto", "render", "doc.qmd"]
+
+    res = supervisor.execute(cmd=cmd, cwd=tmp_path, timeout_seconds=0.05)
+
+    assert res.timed_out is True
+    assert res.cancelled is False
+    assert "Failed to terminate descendant process tree" not in res.stderr
+    mock_job.terminate.assert_called_with(1)
+    mock_job.close.assert_called_once()
+
+
+@patch("infrastructure.pdf.subprocess_supervisor.platform.system")
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.Popen")
+def test_supervisor_windows_job_object_termination_failure_appends_warning_on_timeout(
+    mock_popen, mock_system, tmp_path: Path
+):
+    """Verifies Job Object termination failure appends a warning diagnostic to stderr on timeout."""
+    mock_system.return_value = "Windows"
+
+    mock_proc = MagicMock()
+    mock_proc.pid = 2222
+    killed = False
+
+    def fake_kill():
+        nonlocal killed
+        killed = True
+
+    mock_proc.kill.side_effect = fake_kill
+    mock_proc.poll.side_effect = lambda: 0 if killed else None
+    mock_proc.returncode = -9
+    mock_proc.stdout.read.return_value = b""
+    mock_proc.stderr.read.return_value = b""
+    mock_popen.return_value = mock_proc
+
+    mock_job = MagicMock()
+    mock_job.spawn_process.return_value = mock_proc
+    mock_job.terminate.return_value = False
+
+    supervisor = SubprocessSupervisor(job_factory=lambda: mock_job)
+    cmd = ["quarto", "render", "doc.qmd"]
+
+    res = supervisor.execute(cmd=cmd, cwd=tmp_path, timeout_seconds=0.05)
+
+    assert res.timed_out is True
+    assert "Failed to terminate descendant process tree" in res.stderr
+    mock_job.terminate.assert_called_with(1)
+    mock_job.close.assert_called_once()
+
+
+@patch("infrastructure.pdf.subprocess_supervisor.platform.system")
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.Popen")
+def test_supervisor_windows_job_object_cancellation(
+    mock_popen, mock_system, tmp_path: Path
+):
+    """Verifies cooperative cancellation on Windows triggers Job Object tree termination."""
+    mock_system.return_value = "Windows"
+
+    mock_proc = MagicMock()
+    mock_proc.pid = 4444
+    killed = False
+
+    def fake_kill():
+        nonlocal killed
+        killed = True
+
+    mock_proc.kill.side_effect = fake_kill
+    mock_proc.poll.side_effect = lambda: 0 if killed else None
+    mock_proc.returncode = 1
+    mock_proc.stdout.read.return_value = b""
+    mock_proc.stderr.read.return_value = b""
+    mock_popen.return_value = mock_proc
+
+    mock_job = MagicMock()
+    mock_job.spawn_process.return_value = mock_proc
+    mock_job.terminate.return_value = True
+
+    supervisor = SubprocessSupervisor(job_factory=lambda: mock_job)
+    cmd = ["quarto", "render", "doc.qmd"]
+
+    res = supervisor.execute(
+        cmd=cmd,
+        cwd=tmp_path,
+        timeout_seconds=10.0,
+        is_cancelled=lambda: True,
+    )
+
+    assert res.cancelled is True
+    assert res.timed_out is False
+    assert "Failed to terminate descendant process tree" not in res.stderr
+    mock_job.terminate.assert_called_with(1)
+    mock_job.close.assert_called_once()
+
+
+@patch("infrastructure.pdf.subprocess_supervisor.platform.system")
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.Popen")
+def test_supervisor_windows_job_object_normal_exit_terminates_lingering_descendants(
+    mock_popen, mock_system, tmp_path: Path
+):
+    """Verifies normal root exit detects active lingering descendants and terminates them."""
+    mock_system.return_value = "Windows"
+
+    mock_proc = MagicMock()
+    mock_proc.pid = 3333
+    mock_proc.poll.return_value = 0
+    mock_proc.returncode = 0
+    mock_proc.stdout.read.return_value = b""
+    mock_proc.stderr.read.return_value = b""
+    mock_popen.return_value = mock_proc
+
+    mock_job = MagicMock()
+    mock_job.spawn_process.return_value = mock_proc
+    # Report 2 lingering child processes remaining in job
+    mock_job.get_active_processes.return_value = 2
+    mock_job.terminate.return_value = True
+
+    supervisor = SubprocessSupervisor(job_factory=lambda: mock_job)
+    cmd = ["quarto", "render", "doc.qmd"]
+
+    res = supervisor.execute(cmd=cmd, cwd=tmp_path)
+
+    assert res.returncode == 0
+    assert res.timed_out is False
+    assert res.cancelled is False
+    mock_job.terminate.assert_called_with(0)
+    mock_job.close.assert_called_once()
+
+
+@patch("infrastructure.pdf.subprocess_supervisor.platform.system")
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.Popen")
+def test_supervisor_windows_job_closed_on_setup_failure(
+    mock_popen, mock_system, tmp_path: Path
+):
+    """Verifies Job Object is closed safely if process spawn fails."""
+    mock_system.return_value = "Windows"
+
+    mock_job = MagicMock()
+    mock_job.spawn_process.side_effect = RuntimeError("Spawn failed")
+
+    supervisor = SubprocessSupervisor(job_factory=lambda: mock_job)
+    cmd = ["quarto", "render", "doc.qmd"]
+
+    with pytest.raises(RuntimeError, match="Spawn failed"):
+        supervisor.execute(cmd=cmd, cwd=tmp_path)
+
+    mock_job.close.assert_called_once()

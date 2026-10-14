@@ -27,7 +27,9 @@ import signal
 import subprocess
 import threading
 import time
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
+
+from infrastructure.pdf.windows_job import WindowsJobObject
 
 _DEFAULT_TIMEOUT_SECONDS: float = 60.0
 _MAX_STREAM_BYTES: int = 5 * 1024 * 1024  # 5 MB per stream hard cap
@@ -68,8 +70,13 @@ class SubprocessSupervisor:
     OS filesystem read sandboxing for TeX primitives.
     """
 
-    def __init__(self, max_stream_bytes: int = _MAX_STREAM_BYTES) -> None:
+    def __init__(
+        self,
+        max_stream_bytes: int = _MAX_STREAM_BYTES,
+        job_factory: Optional[Callable[[], Any]] = None,
+    ) -> None:
         self._max_stream_bytes = max_stream_bytes
+        self._job_factory = job_factory or WindowsJobObject
 
     def sanitize_environment(
         self,
@@ -133,12 +140,25 @@ class SubprocessSupervisor:
             "shell": False,
         }
 
+        job: Optional[Any] = None
         if is_windows:
             popen_kwargs["creationflags"] = _WIN32_CREATE_NO_WINDOW
+            job = self._job_factory()
         else:
             popen_kwargs["start_new_session"] = True
 
-        proc = subprocess.Popen(cmd, **popen_kwargs)  # type: ignore[call-overload]
+        try:
+            if is_windows and job is not None:
+                proc = job.spawn_process(cmd, popen_cls=subprocess.Popen, **popen_kwargs)
+            else:
+                proc = subprocess.Popen(cmd, **popen_kwargs)  # type: ignore[call-overload]
+        except Exception:
+            if is_windows and job is not None:
+                try:
+                    job.close()
+                except Exception:
+                    pass
+            raise
 
         stdout_chunks: List[bytes] = []
         stderr_chunks: List[bytes] = []
@@ -172,62 +192,100 @@ class SubprocessSupervisor:
         cancelled = False
         tree_killed = True
 
-        while True:
-            ret = proc.poll()
-            if ret is not None:
-                break
-
-            if is_cancelled and is_cancelled():
-                cancelled = True
-                tree_killed = self._kill_process_tree(proc, is_windows)
-                break
-
-            if time.monotonic() - start_time > timeout_seconds:
-                timed_out = True
-                tree_killed = self._kill_process_tree(proc, is_windows)
-                break
-
-            time.sleep(0.05)
-
-        t_out.join(timeout=2.0)
-        t_err.join(timeout=2.0)
-
         try:
-            if proc.stdout and not proc.stdout.closed:
-                proc.stdout.close()
-        except Exception:
-            pass
-        try:
-            if proc.stderr and not proc.stderr.closed:
-                proc.stderr.close()
-        except Exception:
-            pass
+            while True:
+                ret = proc.poll()
+                if ret is not None:
+                    break
 
-        stdout_text = b"".join(stdout_chunks).decode("utf-8", errors="replace")
-        stderr_text = b"".join(stderr_chunks).decode("utf-8", errors="replace")
+                if is_cancelled and is_cancelled():
+                    cancelled = True
+                    tree_killed = self._kill_process_tree(proc, is_windows=is_windows, job=job)
+                    break
 
-        if not tree_killed:
-            warning_msg = f"\n[WARNING] Failed to terminate descendant process tree for PID {proc.pid}."
-            stderr_text += warning_msg
+                if time.monotonic() - start_time > timeout_seconds:
+                    timed_out = True
+                    tree_killed = self._kill_process_tree(proc, is_windows=is_windows, job=job)
+                    break
 
-        final_returncode = proc.returncode if proc.returncode is not None else -1
+                time.sleep(0.05)
 
-        return SubprocessResult(
-            returncode=final_returncode,
-            stdout=stdout_text,
-            stderr=stderr_text,
-            timed_out=timed_out,
-            cancelled=cancelled,
-        )
+            # Normal exit: check if root exited while descendants linger in the Job Object
+            if is_windows and job is not None and not (timed_out or cancelled):
+                try:
+                    active = job.get_active_processes()
+                    if active > 0:
+                        logger.warning(
+                            "Root process PID %s exited with return code %s, but %d lingering "
+                            "descendant process(es) remain in Job Object; terminating lingering tree.",
+                            proc.pid,
+                            proc.returncode,
+                            active,
+                        )
+                        term_ok = job.terminate(0)
+                        if not term_ok:
+                            tree_killed = False
+                except Exception as e:
+                    logger.warning(
+                        "Failed to query or terminate lingering descendants for PID %s: %s",
+                        proc.pid,
+                        e,
+                    )
 
-    def _kill_process_tree(self, proc: subprocess.Popen, is_windows: bool) -> bool:
+            # Coordinate output reader shutdown: lingering descendants terminated above,
+            # so pipes will reach EOF cleanly without indefinite hangs.
+            t_out.join(timeout=2.0)
+            t_err.join(timeout=2.0)
+
+            try:
+                if proc.stdout and not proc.stdout.closed:
+                    proc.stdout.close()
+            except Exception:
+                pass
+            try:
+                if proc.stderr and not proc.stderr.closed:
+                    proc.stderr.close()
+            except Exception:
+                pass
+
+            stdout_text = b"".join(stdout_chunks).decode("utf-8", errors="replace")
+            stderr_text = b"".join(stderr_chunks).decode("utf-8", errors="replace")
+
+            if not tree_killed:
+                warning_msg = f"\n[WARNING] Failed to terminate descendant process tree for PID {proc.pid}."
+                stderr_text += warning_msg
+
+            final_returncode = proc.returncode if proc.returncode is not None else -1
+
+            return SubprocessResult(
+                returncode=final_returncode,
+                stdout=stdout_text,
+                stderr=stderr_text,
+                timed_out=timed_out,
+                cancelled=cancelled,
+            )
+        finally:
+            if is_windows and job is not None:
+                try:
+                    job.close()
+                except Exception:
+                    pass
+
+    def _kill_process_tree(
+        self,
+        proc: subprocess.Popen,
+        is_windows: bool,
+        job: Optional[Any] = None,
+    ) -> bool:
         """
         Attempts to forcefully terminate child process and all its descendants.
 
-        On Windows, invokes 'taskkill /F /T /PID <pid>' to eliminate child compilers.
-        If taskkill exits unsuccessfully, times out, or cannot be executed, falls back
-        to terminating the root process via proc.kill(), emits a warning, and returns False.
-        On POSIX, signals the child process group via SIGKILL.
+        On Windows:
+        - If an active Job Object is present, terminates the entire process tree via
+          job.terminate(), guaranteeing complete descendant elimination.
+        - If no Job Object is present (fallback), invokes 'taskkill /F /T /PID <pid>'.
+        On POSIX:
+        - Signals the child process group via SIGKILL.
 
         Returns:
             True if process tree termination succeeded;
@@ -237,31 +295,41 @@ class SubprocessSupervisor:
         pid = proc.pid
         tree_killed = True
         if is_windows:
-            try:
-                res = subprocess.run(
-                    ["taskkill", "/F", "/T", "/PID", str(pid)],
-                    creationflags=_WIN32_CREATE_NO_WINDOW,
-                    capture_output=True,
-                    timeout=5.0,
-                    text=True,
-                )
-                if res.returncode != 0:
+            if job is not None:
+                try:
+                    res = job.terminate(1)
+                    if not res:
+                        tree_killed = False
+                        logger.warning("TerminateJobObject failed for PID %s", pid)
+                except Exception as e:
                     tree_killed = False
-                    if res.returncode == 128:
-                        logger.warning(
-                            "taskkill reported PID %s not found (exit code 128); "
-                            "descendant process tree termination could not be verified",
-                            pid,
-                        )
-                    else:
-                        err_msg = res.stderr.strip() if res.stderr else f"exit code {res.returncode}"
-                        logger.warning("taskkill failed to terminate process tree for PID %s: %s", pid, err_msg)
-            except subprocess.TimeoutExpired:
-                tree_killed = False
-                logger.warning("taskkill timed out attempting to terminate process tree for PID %s", pid)
-            except Exception as e:
-                tree_killed = False
-                logger.warning("taskkill invocation failed for PID %s: %s", pid, e)
+                    logger.warning("TerminateJobObject invocation failed for PID %s: %s", pid, e)
+            else:
+                try:
+                    res = subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(pid)],
+                        creationflags=_WIN32_CREATE_NO_WINDOW,
+                        capture_output=True,
+                        timeout=5.0,
+                        text=True,
+                    )
+                    if res.returncode != 0:
+                        tree_killed = False
+                        if res.returncode == 128:
+                            logger.warning(
+                                "taskkill reported PID %s not found (exit code 128); "
+                                "descendant process tree termination could not be verified",
+                                pid,
+                            )
+                        else:
+                            err_msg = res.stderr.strip() if res.stderr else f"exit code {res.returncode}"
+                            logger.warning("taskkill failed to terminate process tree for PID %s: %s", pid, err_msg)
+                except subprocess.TimeoutExpired:
+                    tree_killed = False
+                    logger.warning("taskkill timed out attempting to terminate process tree for PID %s", pid)
+                except Exception as e:
+                    tree_killed = False
+                    logger.warning("taskkill invocation failed for PID %s: %s", pid, e)
         else:
             if hasattr(os, "getpgid") and hasattr(os, "killpg"):
                 try:
