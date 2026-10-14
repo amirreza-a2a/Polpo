@@ -487,7 +487,7 @@ class WindowsJobObject:
                 else:
                     kwargs["creationflags"] = _CREATE_SUSPENDED
 
-                if orig_winapi_create is not None:
+                if orig_winapi_create is not None and not isinstance(self._win32, SimulatedWin32Api):
                     hp, ht, pid, tid = orig_winapi_create(*arg_list, **kwargs)
                 else:
                     hp, ht, pid, tid = self._win32.create_process(*arg_list, **kwargs)
