@@ -767,6 +767,9 @@ class WindowsJobObject:
             )
             return proc
 
+        if is_mock_popen and is_native_win32:
+            return popen_cls(cmd, **popen_kwargs)
+
         # Simulated, test-double, or non-native platform path:
         hp, ht, pid, tid = self._win32.create_process(
             cmd, cmd, None, None, 1, _CREATE_SUSPENDED, None, None, None

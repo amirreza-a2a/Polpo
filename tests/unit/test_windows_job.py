@@ -18,6 +18,7 @@ from infrastructure.pdf.windows_job import (
     JobClosureError,
     JobConfigurationError,
     JobResumeError,
+    RealWin32Api,
     SimulatedWin32Api,
     WindowsJobObject,
 )
@@ -377,3 +378,28 @@ def test_concurrent_subprocess_launch_isolation():
     assert api.jobs[job.handle]["assigned"][0] == proc._handle
 
     job.close()
+
+
+def test_job_object_spawn_process_mock_popen_on_native_win32_returns_mock_directly(monkeypatch):
+    """Verifies that when popen_cls is a mock on native Windows, spawn_process returns it directly without native CreateProcess."""
+    import platform
+    monkeypatch.setattr(platform, "system", lambda: "Windows")
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    dummy_winapi = types.ModuleType("_winapi")
+    monkeypatch.setattr("subprocess._winapi", dummy_winapi, raising=False)
+
+    real_api = object.__new__(RealWin32Api)
+    real_api.create_job_object = MagicMock(return_value=123)
+    real_api.set_kill_on_close = MagicMock(return_value=True)
+    real_api.create_process = MagicMock(side_effect=AssertionError("Should not call native create_process for mock popen"))
+
+    job = WindowsJobObject(win32_api=real_api)
+    mock_proc = MagicMock()
+    mock_popen = MagicMock(return_value=mock_proc)
+
+    proc = job.spawn_process(["quarto", "--version"], popen_cls=mock_popen)
+
+    assert proc is mock_proc
+    mock_popen.assert_called_once_with(["quarto", "--version"])
+    real_api.create_process.assert_not_called()
