@@ -297,7 +297,7 @@ def test_supervisor_windows_tree_kill_failure_appends_warning_to_stderr(
     mock_sub_run.return_value.returncode = 1
     mock_sub_run.return_value.stderr = "ERROR: Process tree kill failed"
 
-    supervisor = SubprocessSupervisor()
+    supervisor = SubprocessSupervisor(job_factory=lambda: None)
     cmd = ["quarto", "render", "doc.qmd"]
 
     res = supervisor.execute(cmd=cmd, cwd=tmp_path, timeout_seconds=0.05)
@@ -326,7 +326,7 @@ def test_supervisor_windows_tree_kill_cancellation_failure_appends_warning_to_st
     mock_sub_run.return_value.returncode = 1
     mock_sub_run.return_value.stderr = "ERROR: Access denied"
 
-    supervisor = SubprocessSupervisor()
+    supervisor = SubprocessSupervisor(job_factory=lambda: None)
     cmd = ["quarto", "render", "doc.qmd"]
 
     cancelled_flag = False
