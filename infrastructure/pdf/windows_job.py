@@ -21,9 +21,9 @@ from __future__ import annotations
 import ctypes
 from ctypes import wintypes
 import logging
+import os
 import subprocess
 import sys
-import threading
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 logger = logging.getLogger(__name__)
@@ -34,8 +34,6 @@ JobObjectExtendedLimitInformation: int = 9
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: int = 0x00002000
 _CREATE_SUSPENDED: int = 0x00000004
 _WIN32_CREATE_NO_WINDOW: int = 0x08000000
-
-_spawn_lock = threading.Lock()
 
 
 class JobConfigurationError(OSError):
@@ -48,6 +46,10 @@ class JobAssignmentError(OSError):
 
 class JobResumeError(OSError):
     """Raised when resuming a suspended process inside a Job Object fails."""
+
+
+class JobClosureError(OSError):
+    """Raised when closing a Windows Job Object handle fails."""
 
 
 # ctypes Win32 Structure Definitions
@@ -280,6 +282,8 @@ class SimulatedWin32Api:
         self.fail_resume_thread: bool = False
         self.fail_terminate_job: bool = False
         self.fail_query_active_processes: bool = False
+        self.fail_close_handle: bool = False
+        self.raise_on_close_handle: bool = False
         self.active_processes_count: int = 0
 
     def create_job_object(self) -> Optional[int]:
@@ -346,6 +350,12 @@ class SimulatedWin32Api:
 
     def close_handle(self, handle: int) -> bool:
         self.operation_log.append(f"close_handle:{handle}")
+        if self.raise_on_close_handle:
+            self.last_error = 6  # ERROR_INVALID_HANDLE
+            raise OSError("Simulated CloseHandle failure")
+        if self.fail_close_handle:
+            self.last_error = 6  # ERROR_INVALID_HANDLE
+            return False
         if handle in self.jobs:
             self.jobs[handle]["closed"] = True
         return True
@@ -392,6 +402,192 @@ class _SimulatedProcess:
 
     def kill(self) -> None:
         self.returncode = -9
+
+
+class _JobContainedPopen(subprocess.Popen):
+    """
+    Subprocess Popen implementation providing process-scoped Job Object containment.
+
+    Overrides `_execute_child` to guarantee that the child process is created
+    suspended (`CREATE_SUSPENDED`), assigned to the Job Object, and resumed
+    strictly before execution begins.
+
+    Eliminates global monkeypatching of `_winapi.CreateProcess`, ensuring that
+    concurrent `subprocess.Popen` invocations on other threads remain completely
+    isolated and unaffected.
+    """
+
+    def __init__(
+        self,
+        *args: Any,
+        job_handle: int,
+        win32_api: Win32ApiProtocol,
+        **kwargs: Any,
+    ) -> None:
+        self._job_handle = job_handle
+        self._win32 = win32_api
+        super().__init__(*args, **kwargs)
+
+    def _execute_child(
+        self,
+        args: Any,
+        executable: Any,
+        preexec_fn: Any,
+        close_fds: Any,
+        pass_fds: Any,
+        cwd: Any,
+        env: Any,
+        startupinfo: Any,
+        creationflags: Any,
+        shell: Any,
+        p2cread: Any,
+        p2cwrite: Any,
+        c2pread: Any,
+        c2pwrite: Any,
+        errread: Any,
+        errwrite: Any,
+        *unused_args: Any,
+        **unused_kwargs: Any,
+    ) -> None:
+        """
+        Executes child process on Windows with process-scoped Job Object containment.
+        """
+        assert not pass_fds, "pass_fds not supported on Windows."
+
+        if isinstance(args, str):
+            pass
+        elif isinstance(args, bytes):
+            if shell:
+                raise TypeError("bytes args is not allowed on Windows")
+            args = subprocess.list2cmdline([args])
+        elif isinstance(args, os.PathLike):
+            if shell:
+                raise TypeError("path-like args is not allowed when shell is true")
+            args = subprocess.list2cmdline([args])
+        else:
+            args = subprocess.list2cmdline(args)
+
+        if executable is not None:
+            executable = os.fsdecode(executable)
+
+        if startupinfo is None:
+            startupinfo = subprocess.STARTUPINFO()
+        else:
+            startupinfo = startupinfo.copy()
+
+        use_std_handles = -1 not in (p2cread, c2pwrite, errwrite)
+        if use_std_handles:
+            import _winapi
+
+            startupinfo.dwFlags |= _winapi.STARTF_USESTDHANDLES
+            startupinfo.hStdInput = p2cread
+            startupinfo.hStdOutput = c2pwrite
+            startupinfo.hStdError = errwrite
+
+        attribute_list = startupinfo.lpAttributeList
+        have_handle_list = bool(
+            attribute_list and "handle_list" in attribute_list and attribute_list["handle_list"]
+        )
+
+        if have_handle_list or (use_std_handles and close_fds):
+            if attribute_list is None:
+                attribute_list = startupinfo.lpAttributeList = {}
+            handle_list = attribute_list["handle_list"] = list(attribute_list.get("handle_list", []))
+
+            if use_std_handles:
+                handle_list += [int(p2cread), int(c2pwrite), int(errwrite)]
+
+            if hasattr(self, "_filter_handle_list"):
+                handle_list[:] = self._filter_handle_list(handle_list)
+            else:
+                import _winapi
+
+                handle_list[:] = list({
+                    h for h in handle_list
+                    if (h & 0x3 != 0x3) or (_winapi.GetFileType(h) != _winapi.FILE_TYPE_CHAR)
+                })
+
+            if handle_list:
+                close_fds = False
+
+        if shell:
+            import _winapi
+
+            startupinfo.dwFlags |= _winapi.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = _winapi.SW_HIDE
+            if not executable:
+                comspec = os.environ.get("ComSpec")
+                if not comspec:
+                    system_root = os.environ.get("SystemRoot", "")
+                    comspec = os.path.join(system_root, "System32", "cmd.exe")
+                    if not os.path.isabs(comspec):
+                        raise FileNotFoundError(
+                            "shell not found: neither %ComSpec% nor %SystemRoot% is set"
+                        )
+                if os.path.isabs(comspec):
+                    executable = comspec
+            else:
+                comspec = executable
+
+            args = f'{comspec} /c "{args}"'
+
+        if cwd is not None:
+            cwd = os.fsdecode(cwd)
+
+        sys.audit("subprocess.Popen", executable, args, cwd, env)
+
+        creationflags = (int(creationflags) if creationflags is not None else 0) | _CREATE_SUSPENDED
+
+        try:
+            hp, ht, pid, tid = self._win32.create_process(
+                executable,
+                args,
+                None,
+                None,
+                int(not close_fds),
+                creationflags,
+                env,
+                cwd,
+                startupinfo,
+            )
+        finally:
+            self._close_pipe_fds(p2cread, p2cwrite, c2pread, c2pwrite, errread, errwrite)
+
+        try:
+            if not self._win32.assign_process_to_job(self._job_handle, hp):
+                err = self._win32.get_last_error()
+                raise JobAssignmentError(
+                    f"AssignProcessToJobObject failed for PID {pid} with error code {err}"
+                )
+
+            prev_count = self._win32.resume_thread(ht)
+            if prev_count == 0xFFFFFFFF or prev_count == -1:
+                err = self._win32.get_last_error()
+                raise JobResumeError(
+                    f"ResumeThread failed for PID {pid} with error code {err}"
+                )
+        except Exception:
+            try:
+                self._win32.terminate_process(hp, 1)
+            except Exception:
+                pass
+            try:
+                self._win32.close_handle(hp)
+            except Exception:
+                pass
+            try:
+                self._win32.close_handle(ht)
+            except Exception:
+                pass
+            raise
+
+        self._child_created = True
+        if hasattr(subprocess, "Handle"):
+            self._handle = getattr(subprocess, "Handle")(hp)
+        else:
+            self._handle = hp
+        self.pid = pid
+        self._win32.close_handle(ht)
 
 
 class WindowsJobObject:
@@ -460,25 +656,71 @@ class WindowsJobObject:
             return 0
         return self._win32.query_active_processes(self._handle)
 
-    def close(self) -> None:
+    def close(self, raise_on_error: bool = False) -> bool:
         """
         Closes the Job Object handle safely.
 
         Idempotent: safe to invoke multiple times.
+
+        Args:
+            raise_on_error: If True, raises JobClosureError on failure instead
+                            of returning False.
+
+        Returns:
+            True if the handle is successfully closed (or was already closed).
+            False if handle closure failed.
+
+        Raises:
+            JobClosureError: If raise_on_error is True and handle closure fails.
         """
         handle = self._handle
-        if handle is not None:
-            self._handle = None
-            try:
-                self._win32.close_handle(handle)
-            except Exception:
-                pass
+        if handle is None:
+            return True
+
+        closed_ok = False
+        error_msg = ""
+        try:
+            res = self._win32.close_handle(handle)
+            if res:
+                closed_ok = True
+            else:
+                err = self._win32.get_last_error()
+                error_msg = f"CloseHandle returned False (error code {err})"
+                logger.warning(
+                    "CloseHandle failed for Job Object handle %s (error code %s)",
+                    handle,
+                    err,
+                )
+        except Exception as e:
+            error_msg = f"CloseHandle raised exception: {e}"
+            logger.warning(
+                "CloseHandle raised exception for Job Object handle %s: %s",
+                handle,
+                e,
+            )
+
+        if not closed_ok:
+            if raise_on_error:
+                raise JobClosureError(
+                    f"Failed to close Job Object handle {handle}: {error_msg}"
+                )
+            return False
+
+        # Only clear _handle when CloseHandle is confirmed successful
+        self._handle = None
+        return True
 
     def __enter__(self) -> WindowsJobObject:
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        self.close()
+        # In context manager exit, do not mask an in-flight primary exception
+        # with a secondary cleanup error. If no exception occurred, raise_on_error=True
+        # ensures handle closure failures are observable.
+        if exc_type is not None:
+            self.close(raise_on_error=False)
+        else:
+            self.close(raise_on_error=True)
 
     def spawn_process(
         self,
@@ -493,101 +735,76 @@ class WindowsJobObject:
         to the Job Object, and only resumed once assignment succeeds. If assignment
         or resumption fails, the process is terminated immediately and fail-closed
         exceptions are raised before any unsupervised code can execute.
+
+        Uses process-scoped containment without mutating process-wide APIs.
         """
         if self._handle is None:
             raise JobConfigurationError("Cannot spawn process: Job Object handle is invalid or closed")
 
-        with _spawn_lock:
-            winapi_mod = sys.modules.get("_winapi")
-            if winapi_mod is None and sys.platform == "win32":
-                try:
-                    import _winapi
+        is_native_win32 = isinstance(self._win32, RealWin32Api) and sys.platform == "win32"
+        is_mock_popen = (
+            callable(popen_cls)
+            and (hasattr(popen_cls, "mock_calls") or hasattr(popen_cls, "_mock_return_value"))
+        )
 
-                    winapi_mod = _winapi
-                except ImportError:
-                    pass
-            orig_winapi_create = getattr(winapi_mod, "CreateProcess", None) if winapi_mod else None
+        if is_native_win32 and not is_mock_popen:
+            if popen_cls is subprocess.Popen:
+                target_cls = _JobContainedPopen
+            elif isinstance(popen_cls, type) and issubclass(popen_cls, subprocess.Popen):
+                target_cls = type(
+                    f"_JobContained{popen_cls.__name__}",
+                    (popen_cls, _JobContainedPopen),
+                    {},
+                )
+            else:
+                target_cls = _JobContainedPopen
 
-            created_hp: Optional[int] = None
-            created_ht: Optional[int] = None
+            proc = target_cls(
+                cmd,
+                job_handle=self._handle,
+                win32_api=self._win32,
+                **popen_kwargs,
+            )
+            return proc
 
-            def _intercepted_create(*args: Any, **kwargs: Any) -> Tuple[int, int, int, int]:
-                nonlocal created_hp, created_ht
-                arg_list = list(args)
-                if len(arg_list) > 5:
-                    current_flags = int(arg_list[5]) if arg_list[5] is not None else 0
-                    arg_list[5] = current_flags | _CREATE_SUSPENDED
-                elif "creationflags" in kwargs:
-                    current_flags = int(kwargs["creationflags"]) if kwargs.get("creationflags") is not None else 0
-                    kwargs["creationflags"] = current_flags | _CREATE_SUSPENDED
-                else:
-                    kwargs["creationflags"] = _CREATE_SUSPENDED
+        # Simulated, test-double, or non-native platform path:
+        hp, ht, pid, tid = self._win32.create_process(
+            cmd, cmd, None, None, 1, _CREATE_SUSPENDED, None, None, None
+        )
 
-                if orig_winapi_create is not None and isinstance(self._win32, RealWin32Api):
-                    hp, ht, pid, tid = orig_winapi_create(*arg_list, **kwargs)
-                else:
-                    hp, ht, pid, tid = self._win32.create_process(*arg_list, **kwargs)
+        try:
+            if not self._win32.assign_process_to_job(self._handle, hp):
+                err = self._win32.get_last_error()
+                raise JobAssignmentError(
+                    f"AssignProcessToJobObject failed for PID {pid} with error code {err}"
+                )
 
-                created_hp = hp
-                created_ht = ht
-
-                # Step 4: Assign to Job Object BEFORE resuming thread
-                try:
-                    if not self._win32.assign_process_to_job(self._handle, hp):
-                        err = self._win32.get_last_error()
-                        raise JobAssignmentError(
-                            f"AssignProcessToJobObject failed for PID {pid} with error code {err}"
-                        )
-
-                    # Step 5: Resume thread only after successful assignment
-                    prev_count = self._win32.resume_thread(ht)
-                    if prev_count == 0xFFFFFFFF or prev_count == -1:
-                        err = self._win32.get_last_error()
-                        raise JobResumeError(
-                            f"ResumeThread failed for PID {pid} with error code {err}"
-                        )
-
-                except Exception:
-                    # Fail closed: terminate suspended process and release handles immediately
-                    try:
-                        self._win32.terminate_process(hp, 1)
-                    except Exception:
-                        pass
-                    try:
-                        self._win32.close_handle(hp)
-                    except Exception:
-                        pass
-                    try:
-                        self._win32.close_handle(ht)
-                    except Exception:
-                        pass
-                    raise
-
-                return int(hp), int(ht), int(pid), int(tid)
-
+            prev_count = self._win32.resume_thread(ht)
+            if prev_count == 0xFFFFFFFF or prev_count == -1:
+                err = self._win32.get_last_error()
+                raise JobResumeError(
+                    f"ResumeThread failed for PID {pid} with error code {err}"
+                )
+        except Exception:
             try:
-                if winapi_mod:
-                    winapi_mod.CreateProcess = _intercepted_create
-                if hasattr(subprocess, "_winapi") and hasattr(subprocess._winapi, "CreateProcess"):
-                    subprocess._winapi.CreateProcess = _intercepted_create
+                self._win32.terminate_process(hp, 1)
+            except Exception:
+                pass
+            try:
+                self._win32.close_handle(hp)
+            except Exception:
+                pass
+            try:
+                self._win32.close_handle(ht)
+            except Exception:
+                pass
+            raise
 
-                # If running with a non-native Win32 API implementation (in unit tests on any platform):
-                if not isinstance(self._win32, RealWin32Api):
-                    hp, ht, pid, tid = _intercepted_create(cmd, cmd, None, None, 1, 0, None, None, None)
-                    if callable(popen_cls) and (hasattr(popen_cls, "mock_calls") or hasattr(popen_cls, "_mock_return_value")):
-                        proc = popen_cls(cmd, **popen_kwargs)
-                        proc.pid = pid
-                        if hasattr(proc, "_handle"):
-                            proc._handle = hp
-                        return proc
+        if is_mock_popen:
+            proc = popen_cls(cmd, **popen_kwargs)
+            proc.pid = pid
+            if hasattr(proc, "_handle"):
+                proc._handle = hp
+            return proc
 
-                    # Otherwise return a simulated process representation
-                    return _SimulatedProcess(pid=pid, handle=hp)
-
-                proc = popen_cls(cmd, **popen_kwargs)
-                return proc
-            finally:
-                if winapi_mod and orig_winapi_create is not None:
-                    winapi_mod.CreateProcess = orig_winapi_create
-                if hasattr(subprocess, "_winapi") and orig_winapi_create is not None:
-                    subprocess._winapi.CreateProcess = orig_winapi_create
+        return _SimulatedProcess(pid=pid, handle=hp)

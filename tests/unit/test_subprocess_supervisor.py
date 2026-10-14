@@ -16,6 +16,7 @@ from infrastructure.pdf.subprocess_supervisor import (
     _WIN32_CREATE_NO_WINDOW,
     SubprocessSupervisor,
 )
+from infrastructure.pdf.windows_job import JobAssignmentError
 
 
 def test_supervisor_executes_simple_command(tmp_path: Path):
@@ -735,4 +736,87 @@ def test_supervisor_windows_normal_exit_terminate_lingering_exception_appends_wa
 
     assert res.returncode == 0
     assert "Failed to terminate descendant process tree for PID 5557" in res.stderr
+    mock_job.close.assert_called_once()
+
+
+@patch("infrastructure.pdf.subprocess_supervisor.platform.system")
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.Popen")
+def test_supervisor_windows_job_close_failure_appends_warning_to_stderr(
+    mock_popen, mock_system, tmp_path: Path
+):
+    """Verifies that when Job Object close() returns False, tree_killed is marked False and warning is appended."""
+    mock_system.return_value = "Windows"
+
+    mock_proc = MagicMock()
+    mock_proc.pid = 5558
+    mock_proc.poll.return_value = 0
+    mock_proc.returncode = 0
+    mock_proc.stdout.read.return_value = b""
+    mock_proc.stderr.read.return_value = b""
+    mock_popen.return_value = mock_proc
+
+    mock_job = MagicMock()
+    mock_job.spawn_process.return_value = mock_proc
+    mock_job.get_active_processes.return_value = 0
+    mock_job.close.return_value = False
+
+    supervisor = SubprocessSupervisor(job_factory=lambda: mock_job)
+    cmd = ["quarto", "render", "doc.qmd"]
+
+    res = supervisor.execute(cmd=cmd, cwd=tmp_path)
+
+    assert res.returncode == 0
+    assert "Failed to terminate descendant process tree for PID 5558" in res.stderr
+    mock_job.close.assert_called_once()
+
+
+@patch("infrastructure.pdf.subprocess_supervisor.platform.system")
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.Popen")
+def test_supervisor_windows_job_close_exception_appends_warning_to_stderr(
+    mock_popen, mock_system, tmp_path: Path
+):
+    """Verifies that when Job Object close() raises an exception, tree_killed is marked False and warning is appended."""
+    mock_system.return_value = "Windows"
+
+    mock_proc = MagicMock()
+    mock_proc.pid = 5559
+    mock_proc.poll.return_value = 0
+    mock_proc.returncode = 0
+    mock_proc.stdout.read.return_value = b""
+    mock_proc.stderr.read.return_value = b""
+    mock_popen.return_value = mock_proc
+
+    mock_job = MagicMock()
+    mock_job.spawn_process.return_value = mock_proc
+    mock_job.get_active_processes.return_value = 0
+    mock_job.close.side_effect = OSError("Simulated CloseHandle failure")
+
+    supervisor = SubprocessSupervisor(job_factory=lambda: mock_job)
+    cmd = ["quarto", "render", "doc.qmd"]
+
+    res = supervisor.execute(cmd=cmd, cwd=tmp_path)
+
+    assert res.returncode == 0
+    assert "Failed to terminate descendant process tree for PID 5559" in res.stderr
+    mock_job.close.assert_called_once()
+
+
+@patch("infrastructure.pdf.subprocess_supervisor.platform.system")
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.Popen")
+def test_supervisor_windows_job_close_failure_preserves_primary_launch_error(
+    mock_popen, mock_system, tmp_path: Path
+):
+    """Verifies that failure in job.close() does not mask the primary launch error."""
+    mock_system.return_value = "Windows"
+
+    mock_job = MagicMock()
+    mock_job.spawn_process.side_effect = JobAssignmentError("Primary assignment failure")
+    mock_job.close.return_value = False
+
+    supervisor = SubprocessSupervisor(job_factory=lambda: mock_job)
+    cmd = ["quarto", "render", "doc.qmd"]
+
+    with pytest.raises(JobAssignmentError, match="Primary assignment failure"):
+        supervisor.execute(cmd=cmd, cwd=tmp_path)
+
     mock_job.close.assert_called_once()

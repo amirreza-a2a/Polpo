@@ -4,6 +4,9 @@
 #  Phase 13 — Ticket #99
 # ============================================================
 
+import sys
+import threading
+import types
 from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import MagicMock
 
@@ -12,6 +15,7 @@ import pytest
 from infrastructure.pdf.windows_job import (
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JobAssignmentError,
+    JobClosureError,
     JobConfigurationError,
     JobResumeError,
     SimulatedWin32Api,
@@ -248,5 +252,128 @@ def test_job_object_spawn_process_default_popen_cls_returns_simulated_process():
 
     proc.kill()
     assert proc.poll() == -9
+
+    job.close()
+
+
+def test_job_object_close_failure_returns_false_and_preserves_handle():
+    """Verifies that when CloseHandle returns False, close() returns False and handle is not cleared."""
+    api = SimulatedWin32Api()
+    job = WindowsJobObject(win32_api=api)
+    handle = job.handle
+    assert handle is not None
+
+    api.fail_close_handle = True
+    success = job.close()
+
+    assert success is False
+    assert job.handle == handle, "Handle must NOT be cleared when CloseHandle fails"
+
+
+def test_job_object_close_exception_returns_false_and_preserves_handle():
+    """Verifies that when CloseHandle raises an exception, close() returns False and handle is not cleared."""
+    api = SimulatedWin32Api()
+    job = WindowsJobObject(win32_api=api)
+    handle = job.handle
+    assert handle is not None
+
+    api.raise_on_close_handle = True
+    success = job.close()
+
+    assert success is False
+    assert job.handle == handle, "Handle must NOT be cleared when CloseHandle raises"
+
+
+def test_job_object_close_raise_on_error_raises_job_closure_error():
+    """Verifies that close(raise_on_error=True) raises JobClosureError on failure."""
+    api = SimulatedWin32Api()
+    job = WindowsJobObject(win32_api=api)
+    api.fail_close_handle = True
+
+    with pytest.raises(JobClosureError, match="Failed to close Job Object handle"):
+        job.close(raise_on_error=True)
+
+
+def test_job_object_context_manager_raises_on_close_failure_on_clean_exit():
+    """Verifies context manager exit raises JobClosureError if handle closure fails during clean exit."""
+    api = SimulatedWin32Api()
+    api.fail_close_handle = True
+
+    with pytest.raises(JobClosureError, match="Failed to close Job Object handle"):
+        with WindowsJobObject(win32_api=api):
+            pass
+
+
+def test_job_object_context_manager_preserves_primary_exception_on_close_failure():
+    """Verifies context manager preserves primary in-flight exception even if handle close fails."""
+    api = SimulatedWin32Api()
+    api.fail_close_handle = True
+
+    with pytest.raises(ValueError, match="primary failure"):
+        with WindowsJobObject(win32_api=api):
+            raise ValueError("primary failure")
+
+
+def test_supervised_launch_does_not_mutate_global_winapi_createprocess(monkeypatch):
+    """Verifies that supervised launch never modifies _winapi.CreateProcess or subprocess._winapi."""
+    sentinel_create = object()
+    dummy_winapi = types.ModuleType("_winapi")
+    dummy_winapi.CreateProcess = sentinel_create
+    monkeypatch.setitem(sys.modules, "_winapi", dummy_winapi)
+
+    api = SimulatedWin32Api()
+    job = WindowsJobObject(win32_api=api)
+
+    mock_proc = MagicMock()
+    mock_popen = MagicMock(return_value=mock_proc)
+
+    job.spawn_process(["cmd.exe"], popen_cls=mock_popen)
+
+    assert sys.modules["_winapi"].CreateProcess is sentinel_create
+    job.close()
+
+
+def test_concurrent_subprocess_launch_isolation():
+    """
+    Verifies that an unrelated concurrent process launch is not assigned to the Job Object.
+    Uses threading synchronization primitives to make the test deterministic.
+    """
+    launch_in_progress = threading.Event()
+    unrelated_launched = threading.Event()
+
+    class HookedSimulatedApi(SimulatedWin32Api):
+        def create_process(self, *args: Any, **kwargs: Any) -> Tuple[int, int, int, int]:
+            res = super().create_process(*args, **kwargs)
+            launch_in_progress.set()
+            unrelated_launched.wait(timeout=2.0)
+            return res
+
+    api = HookedSimulatedApi()
+    job = WindowsJobObject(win32_api=api)
+
+    mock_supervised_proc = MagicMock()
+    mock_supervised_popen = MagicMock(return_value=mock_supervised_proc)
+
+    unrelated_proc_handle = 7777
+    unrelated_assigned = False
+
+    def unrelated_launcher():
+        nonlocal unrelated_assigned
+        assert launch_in_progress.wait(timeout=2.0)
+        unrelated_assigned = (
+            job.handle in api.jobs and unrelated_proc_handle in api.jobs[job.handle]["assigned"]
+        )
+        unrelated_launched.set()
+
+    t = threading.Thread(target=unrelated_launcher)
+    t.start()
+
+    proc = job.spawn_process(["supervised.exe"], popen_cls=mock_supervised_popen)
+    t.join(timeout=2.0)
+
+    assert not t.is_alive()
+    assert unrelated_assigned is False, "Unrelated process must not be assigned to the Job Object"
+    assert len(api.jobs[job.handle]["assigned"]) == 1
+    assert api.jobs[job.handle]["assigned"][0] == proc._handle
 
     job.close()

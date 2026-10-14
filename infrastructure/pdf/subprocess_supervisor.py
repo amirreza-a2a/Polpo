@@ -141,6 +141,7 @@ class SubprocessSupervisor:
         }
 
         job: Optional[Any] = None
+        job_closed: bool = False
         if is_windows:
             popen_kwargs["creationflags"] = _WIN32_CREATE_NO_WINDOW
             job = self._job_factory()
@@ -153,7 +154,8 @@ class SubprocessSupervisor:
             else:
                 proc = subprocess.Popen(cmd, **popen_kwargs)  # type: ignore[call-overload]
         except Exception:
-            if is_windows and job is not None:
+            if is_windows and job is not None and not job_closed:
+                job_closed = True
                 try:
                     job.close()
                 except Exception:
@@ -249,6 +251,23 @@ class SubprocessSupervisor:
             except Exception:
                 pass
 
+            # Close Job Object handle and verify closure succeeded
+            if is_windows and job is not None and not job_closed:
+                job_closed = True
+                try:
+                    close_ok = job.close()
+                except Exception as e:
+                    close_ok = False
+                    logger.warning("Error closing Job Object for PID %s: %s", proc.pid, e)
+
+                if not close_ok:
+                    tree_killed = False
+                    logger.warning(
+                        "Job Object handle closure failed for PID %s; "
+                        "process tree termination cannot be confirmed",
+                        proc.pid,
+                    )
+
             stdout_text = b"".join(stdout_chunks).decode("utf-8", errors="replace")
             stderr_text = b"".join(stderr_chunks).decode("utf-8", errors="replace")
 
@@ -266,7 +285,7 @@ class SubprocessSupervisor:
                 cancelled=cancelled,
             )
         finally:
-            if is_windows and job is not None:
+            if is_windows and job is not None and not job_closed:
                 try:
                     job.close()
                 except Exception:
@@ -282,9 +301,12 @@ class SubprocessSupervisor:
         Attempts to forcefully terminate child process and all its descendants.
 
         On Windows:
-        - If an active Job Object is present, terminates the entire process tree via
-          job.terminate(), guaranteeing complete descendant elimination.
-        - If no Job Object is present (fallback), invokes 'taskkill /F /T /PID <pid>'.
+        - When a Job Object is present (standard production path), terminates the entire
+          process tree via job.terminate(), guaranteeing complete descendant elimination.
+        - If no Job Object is present (e.g. supervisor explicitly configured with a
+          non-Job factory for legacy or testing harnesses), invokes 'taskkill /F /T /PID <pid>'
+          as a fallback. Job Object setup failure at launch fails closed and does not fall back
+          to unsupervised execution.
         On POSIX:
         - Signals the child process group via SIGKILL.
 

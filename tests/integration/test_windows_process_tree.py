@@ -13,15 +13,18 @@ Validates that:
 3. Lingering descendants are terminated even if the root process exits cleanly (exit code 0).
 4. Failure during Job Object setup/assignment never allows the target to run unsupervised.
 5. Tree cleanup does not rely solely on the root process exit code.
+6. Concurrent ordinary subprocess launches are completely isolated from Job Object tree containment.
 
 Gated to execute exclusively in Windows environments (e.g. Windows CI runner).
 """
 
 from pathlib import Path
+import subprocess
 import sys
 import textwrap
+import threading
 import time
-from typing import Generator, List
+from typing import Generator, List, Optional
 
 import pytest
 
@@ -379,3 +382,73 @@ def test_windows_cleanup_does_not_rely_only_on_root_exit_code(
     assert wait_for_pid_exit(child_pid, timeout=5.0), (
         f"Child PID {child_pid} was not terminated despite supervisor completing"
     )
+
+
+def test_windows_concurrent_launch_isolation(
+    tmp_path: Path, pid_cleanup: List[int]
+):
+    """
+    Scenario 6: Verifies that concurrent ordinary subprocess launches are completely
+    isolated from the supervised Job Object. An unrelated process launched during
+    supervised execution must not be assigned to the Job Object and must not be terminated
+    when the supervisor times out and terminates its tree.
+    """
+    supervised_pid_file = tmp_path / "supervised.pid"
+    unrelated_pid_file = tmp_path / "unrelated.pid"
+
+    supervised_script = tmp_path / "supervised.py"
+    supervised_script.write_text(
+        textwrap.dedent(f"""
+            import os, time
+            with open(r"{supervised_pid_file}", "w") as f:
+                f.write(str(os.getpid()))
+            time.sleep(60)
+        """),
+        encoding="utf-8",
+    )
+
+    unrelated_script = tmp_path / "unrelated.py"
+    unrelated_script.write_text(
+        textwrap.dedent(f"""
+            import os, time
+            with open(r"{unrelated_pid_file}", "w") as f:
+                f.write(str(os.getpid()))
+            time.sleep(60)
+        """),
+        encoding="utf-8",
+    )
+
+    unrelated_proc: Optional[subprocess.Popen] = None
+
+    def launch_unrelated():
+        nonlocal unrelated_proc
+        wait_for_pid_file(supervised_pid_file, timeout=10.0)
+        unrelated_proc = subprocess.Popen([sys.executable, str(unrelated_script)])
+
+    launcher_thread = threading.Thread(target=launch_unrelated)
+    launcher_thread.start()
+
+    supervisor = SubprocessSupervisor()
+    cmd = [sys.executable, str(supervised_script)]
+
+    res = supervisor.execute(cmd=cmd, cwd=tmp_path, timeout_seconds=2.0)
+
+    launcher_thread.join(timeout=5.0)
+    assert not launcher_thread.is_alive()
+    assert unrelated_proc is not None
+
+    supervised_pid = wait_for_pid_file(supervised_pid_file)
+    unrelated_pid = wait_for_pid_file(unrelated_pid_file)
+    pid_cleanup.extend([supervised_pid, unrelated_pid])
+
+    # Supervised process must be terminated by the supervisor timeout
+    assert wait_for_pid_exit(supervised_pid, timeout=5.0), f"Supervised PID {supervised_pid} survived timeout"
+
+    # Unrelated process MUST STILL BE ALIVE because it was never part of the Job Object
+    assert is_pid_alive(unrelated_pid), f"Unrelated PID {unrelated_pid} was wrongfully terminated by Job Object cleanup!"
+
+    try:
+        unrelated_proc.kill()
+        unrelated_proc.wait(timeout=5.0)
+    except Exception:
+        pass
