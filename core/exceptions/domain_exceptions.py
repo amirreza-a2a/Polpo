@@ -91,3 +91,45 @@ class RegionPublicationError(DomainError):
     """Raised when visual region review publication fails or exhausts retries."""
     def __init__(self, message: str = "Visual region publication failed."):
         super().__init__(message)
+
+
+class UntrustedDocumentExtensionError(DomainError):
+    """Raised when metadata contains prohibited execution keys, templates, or external files."""
+    def __init__(self, message: str = "Untrusted document extension or execution configuration detected."):
+        super().__init__(message)
+
+
+class UnsupportedMetadataKeyError(DomainError):
+    """Raised when YAML front matter contains unsupported or custom format keys."""
+    def __init__(self, message: str = "Unsupported metadata key or format detected."):
+        super().__init__(message)
+
+
+class UnsupportedDocumentClassError(DomainError):
+    """Raised when documentclass is not in the approved allowlist."""
+    def __init__(self, message: str = "Unsupported document class specified."):
+        super().__init__(message)
+
+
+class MalformedMetadataError(DomainError):
+    """Raised when metadata values violate type schema constraints."""
+    def __init__(self, message: str = "Malformed metadata values or type violation."):
+        super().__init__(message)
+
+
+class ConflictingLatexHeaderError(DomainError):
+    """Raised when user LaTeX headers explicitly conflict with system-managed packages."""
+    def __init__(self, message: str = "Conflicting LaTeX package specified in headers."):
+        super().__init__(message)
+
+
+class UnsupportedFilesystemError(DomainError):
+    """Raised when atomic linking fails due to filesystem limitations (e.g. cross-volume link, exFAT)."""
+    def __init__(self, message: str = "Filesystem does not support atomic hard linking for export."):
+        super().__init__(message)
+
+
+class ExportPermissionError(DomainError):
+    """Raised when user lacks write permission to destination directory."""
+    def __init__(self, message: str = "Permission denied while writing to destination directory."):
+        super().__init__(message)
