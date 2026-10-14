@@ -226,7 +226,8 @@ class RealWin32Api:
             ctypes.byref(ret_len),
         )
         if not res:
-            return 0
+            err = self.get_last_error()
+            raise OSError(f"QueryInformationJobObject failed with error code {err}")
         return int(info.ActiveProcesses)
 
     def close_handle(self, handle: int) -> bool:
@@ -278,6 +279,7 @@ class SimulatedWin32Api:
         self.fail_assign_process: bool = False
         self.fail_resume_thread: bool = False
         self.fail_terminate_job: bool = False
+        self.fail_query_active_processes: bool = False
         self.active_processes_count: int = 0
 
     def create_job_object(self) -> Optional[int]:
@@ -337,6 +339,9 @@ class SimulatedWin32Api:
 
     def query_active_processes(self, job_handle: int) -> int:
         self.operation_log.append(f"query_active_processes:{job_handle}")
+        if self.fail_query_active_processes:
+            self.last_error = 5
+            raise OSError("QueryInformationJobObject failed with error code 5")
         return self.active_processes_count
 
     def close_handle(self, handle: int) -> bool:
@@ -356,6 +361,37 @@ class SimulatedWin32Api:
         tid = 9999
         self.operation_log.append(f"create_process:{hp}:{ht}:{pid}:{tid}")
         return hp, ht, pid, tid
+
+
+class _SimulatedProcess:
+    """Lightweight test double representing a simulated subprocess for non-native execution."""
+
+    def __init__(self, pid: int, handle: int) -> None:
+        self.pid = pid
+        self._handle = handle
+        self.returncode: Optional[int] = 0
+
+        class _Stream:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def read(self, *args: Any) -> bytes:
+                return b""
+
+            def close(self) -> None:
+                self.closed = True
+
+        self.stdout = _Stream()
+        self.stderr = _Stream()
+
+    def poll(self) -> Optional[int]:
+        return self.returncode
+
+    def wait(self, timeout: Optional[float] = None) -> int:
+        return self.returncode or 0
+
+    def kill(self) -> None:
+        self.returncode = -9
 
 
 class WindowsJobObject:
@@ -487,7 +523,7 @@ class WindowsJobObject:
                 else:
                     kwargs["creationflags"] = _CREATE_SUSPENDED
 
-                if orig_winapi_create is not None and not isinstance(self._win32, SimulatedWin32Api):
+                if orig_winapi_create is not None and isinstance(self._win32, RealWin32Api):
                     hp, ht, pid, tid = orig_winapi_create(*arg_list, **kwargs)
                 else:
                     hp, ht, pid, tid = self._win32.create_process(*arg_list, **kwargs)
@@ -535,31 +571,18 @@ class WindowsJobObject:
                 if hasattr(subprocess, "_winapi") and hasattr(subprocess._winapi, "CreateProcess"):
                     subprocess._winapi.CreateProcess = _intercepted_create
 
-                # If running with SimulatedWin32Api (in unit tests on any platform):
-                if isinstance(self._win32, SimulatedWin32Api):
-                    from unittest.mock import MagicMock, Mock
-
+                # If running with a non-native Win32 API implementation (in unit tests on any platform):
+                if not isinstance(self._win32, RealWin32Api):
                     hp, ht, pid, tid = _intercepted_create(cmd, cmd, None, None, 1, 0, None, None, None)
-                    if isinstance(popen_cls, Mock) or hasattr(popen_cls, "_mock_return_value"):
+                    if callable(popen_cls) and (hasattr(popen_cls, "mock_calls") or hasattr(popen_cls, "_mock_return_value")):
                         proc = popen_cls(cmd, **popen_kwargs)
                         proc.pid = pid
                         if hasattr(proc, "_handle"):
                             proc._handle = hp
                         return proc
 
-                    # Otherwise build simulated mock process representation
-                    proc = MagicMock()
-                    proc.pid = pid
-                    proc._handle = hp
-                    proc.poll.return_value = 0
-                    proc.returncode = 0
-                    proc.stdout = MagicMock()
-                    proc.stdout.read.return_value = b""
-                    proc.stdout.closed = False
-                    proc.stderr = MagicMock()
-                    proc.stderr.read.return_value = b""
-                    proc.stderr.closed = False
-                    return proc
+                    # Otherwise return a simulated process representation
+                    return _SimulatedProcess(pid=pid, handle=hp)
 
                 proc = popen_cls(cmd, **popen_kwargs)
                 return proc

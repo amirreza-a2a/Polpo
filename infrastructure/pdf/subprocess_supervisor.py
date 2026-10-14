@@ -222,10 +222,11 @@ class SubprocessSupervisor:
                             proc.returncode,
                             active,
                         )
-                        term_ok = job.terminate(0)
+                        term_ok = job.terminate(proc.returncode if proc.returncode is not None else 0)
                         if not term_ok:
                             tree_killed = False
                 except Exception as e:
+                    tree_killed = False
                     logger.warning(
                         "Failed to query or terminate lingering descendants for PID %s: %s",
                         proc.pid,

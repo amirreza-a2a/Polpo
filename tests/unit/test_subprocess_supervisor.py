@@ -644,3 +644,95 @@ def test_supervisor_windows_job_closed_on_setup_failure(
         supervisor.execute(cmd=cmd, cwd=tmp_path)
 
     mock_job.close.assert_called_once()
+
+
+@patch("infrastructure.pdf.subprocess_supervisor.platform.system")
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.Popen")
+def test_supervisor_windows_normal_exit_query_active_processes_failure_appends_warning(
+    mock_popen, mock_system, tmp_path: Path
+):
+    """Verifies that an error querying lingering descendants on normal exit marks tree_killed=False and logs warning."""
+    mock_system.return_value = "Windows"
+
+    mock_proc = MagicMock()
+    mock_proc.pid = 5555
+    mock_proc.poll.return_value = 0
+    mock_proc.returncode = 0
+    mock_proc.stdout.read.return_value = b""
+    mock_proc.stderr.read.return_value = b""
+    mock_popen.return_value = mock_proc
+
+    mock_job = MagicMock()
+    mock_job.spawn_process.return_value = mock_proc
+    mock_job.get_active_processes.side_effect = OSError("QueryInformationJobObject failed with error code 5")
+
+    supervisor = SubprocessSupervisor(job_factory=lambda: mock_job)
+    cmd = ["quarto", "render", "doc.qmd"]
+
+    res = supervisor.execute(cmd=cmd, cwd=tmp_path)
+
+    assert res.returncode == 0
+    assert "Failed to terminate descendant process tree for PID 5555" in res.stderr
+    mock_job.close.assert_called_once()
+
+
+@patch("infrastructure.pdf.subprocess_supervisor.platform.system")
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.Popen")
+def test_supervisor_windows_normal_exit_terminate_lingering_failure_appends_warning(
+    mock_popen, mock_system, tmp_path: Path
+):
+    """Verifies that failure to terminate lingering descendants on normal exit marks tree_killed=False and logs warning."""
+    mock_system.return_value = "Windows"
+
+    mock_proc = MagicMock()
+    mock_proc.pid = 5556
+    mock_proc.poll.return_value = 0
+    mock_proc.returncode = 0
+    mock_proc.stdout.read.return_value = b""
+    mock_proc.stderr.read.return_value = b""
+    mock_popen.return_value = mock_proc
+
+    mock_job = MagicMock()
+    mock_job.spawn_process.return_value = mock_proc
+    mock_job.get_active_processes.return_value = 1
+    mock_job.terminate.return_value = False
+
+    supervisor = SubprocessSupervisor(job_factory=lambda: mock_job)
+    cmd = ["quarto", "render", "doc.qmd"]
+
+    res = supervisor.execute(cmd=cmd, cwd=tmp_path)
+
+    assert res.returncode == 0
+    assert "Failed to terminate descendant process tree for PID 5556" in res.stderr
+    mock_job.close.assert_called_once()
+
+
+@patch("infrastructure.pdf.subprocess_supervisor.platform.system")
+@patch("infrastructure.pdf.subprocess_supervisor.subprocess.Popen")
+def test_supervisor_windows_normal_exit_terminate_lingering_exception_appends_warning(
+    mock_popen, mock_system, tmp_path: Path
+):
+    """Verifies that an exception during lingering descendant termination marks tree_killed=False and logs warning."""
+    mock_system.return_value = "Windows"
+
+    mock_proc = MagicMock()
+    mock_proc.pid = 5557
+    mock_proc.poll.return_value = 0
+    mock_proc.returncode = 0
+    mock_proc.stdout.read.return_value = b""
+    mock_proc.stderr.read.return_value = b""
+    mock_popen.return_value = mock_proc
+
+    mock_job = MagicMock()
+    mock_job.spawn_process.return_value = mock_proc
+    mock_job.get_active_processes.return_value = 1
+    mock_job.terminate.side_effect = RuntimeError("Kernel termination call crashed")
+
+    supervisor = SubprocessSupervisor(job_factory=lambda: mock_job)
+    cmd = ["quarto", "render", "doc.qmd"]
+
+    res = supervisor.execute(cmd=cmd, cwd=tmp_path)
+
+    assert res.returncode == 0
+    assert "Failed to terminate descendant process tree for PID 5557" in res.stderr
+    mock_job.close.assert_called_once()

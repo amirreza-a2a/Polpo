@@ -155,3 +155,98 @@ def test_job_object_context_manager():
 
     assert job.handle is None
     assert api.jobs[handle]["closed"] is True
+
+
+def test_job_object_query_active_processes_failure_raises():
+    """Verifies that failure in query_active_processes raises OSError."""
+    api = SimulatedWin32Api()
+    api.fail_query_active_processes = True
+    job = WindowsJobObject(win32_api=api)
+
+    with pytest.raises(OSError, match="QueryInformationJobObject failed"):
+        job.get_active_processes()
+
+    job.close()
+
+
+def test_job_object_spawn_process_with_custom_win32_api():
+    """Verifies any custom Win32ApiProtocol implementation routes properly through intercepted creation."""
+    class CustomWin32Api:
+        def __init__(self) -> None:
+            self.ops: List[str] = []
+
+        def create_job_object(self) -> Optional[int]:
+            self.ops.append("create_job")
+            return 4321
+
+        def set_kill_on_close(self, job_handle: int) -> bool:
+            self.ops.append(f"set_kill:{job_handle}")
+            return True
+
+        def assign_process_to_job(self, job_handle: int, proc_handle: int) -> bool:
+            self.ops.append(f"assign:{job_handle}:{proc_handle}")
+            return True
+
+        def resume_thread(self, thread_handle: int) -> int:
+            self.ops.append(f"resume:{thread_handle}")
+            return 1
+
+        def terminate_job_object(self, job_handle: int, exit_code: int = 1) -> bool:
+            return True
+
+        def terminate_process(self, proc_handle: int, exit_code: int = 1) -> bool:
+            return True
+
+        def query_active_processes(self, job_handle: int) -> int:
+            return 0
+
+        def close_handle(self, handle: int) -> bool:
+            self.ops.append(f"close:{handle}")
+            return True
+
+        def get_last_error(self) -> int:
+            return 0
+
+        def create_process(self, *args: Any, **kwargs: Any) -> Tuple[int, int, int, int]:
+            self.ops.append("custom_create")
+            return 111, 222, 333, 444
+
+    custom_api = CustomWin32Api()
+    job = WindowsJobObject(win32_api=custom_api)
+
+    mock_proc = MagicMock()
+    mock_popen = MagicMock(return_value=mock_proc)
+
+    proc = job.spawn_process(["custom.exe"], popen_cls=mock_popen)
+
+    assert proc.pid == 333
+    assert "custom_create" in custom_api.ops
+    assert "assign:4321:111" in custom_api.ops
+    assert "resume:222" in custom_api.ops
+
+    create_idx = custom_api.ops.index("custom_create")
+    assign_idx = custom_api.ops.index("assign:4321:111")
+    resume_idx = custom_api.ops.index("resume:222")
+    assert create_idx < assign_idx < resume_idx
+
+    job.close()
+    assert "close:4321" in custom_api.ops
+
+
+def test_job_object_spawn_process_default_popen_cls_returns_simulated_process():
+    """Verifies that calling spawn_process without popen_cls on non-native platform returns simulated process."""
+    api = SimulatedWin32Api()
+    job = WindowsJobObject(win32_api=api)
+
+    proc = job.spawn_process(["any_cmd.exe"])
+
+    assert proc.pid == 8888
+    assert proc.poll() == 0
+    assert proc.returncode == 0
+    assert proc.stdout.read() == b""
+    assert proc.stderr.read() == b""
+
+    proc.kill()
+    assert proc.poll() == -9
+
+    job.close()
