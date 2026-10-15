@@ -40,6 +40,7 @@ from application.services.export_package_service import (
     derive_document_slug,
 )
 from application.services.metadata_normalizer import normalize_quarto_pdf_metadata
+from core.entities.artifact import resolve_canonical_file_path
 from core.exceptions.domain_exceptions import (
     CanonicalDocumentIntegrityError,
     EntityNotFoundError,
@@ -243,7 +244,7 @@ class QuartoPdfExportService:
             raise PdfExportCancelledError("PDF export was cancelled before starting.")
 
         # 2. Destination pre-flight validation
-        dest = Path(cmd.destination_path).resolve()
+        dest = resolve_canonical_file_path(str(cmd.destination_path)).resolve()
         if not dest.parent.exists() or not dest.parent.is_dir():
             raise DestinationDirectoryNotFoundError(
                 f"Destination directory does not exist: '{dest.parent}'"
@@ -291,7 +292,7 @@ class QuartoPdfExportService:
                 )
 
         # 4. Canonical File Verification & SHA-256 Check
-        doc_file = Path(version_record.output_path).resolve()
+        doc_file = resolve_canonical_file_path(version_record.output_path).resolve()
         if not doc_file.is_file():
             raise ExportSourceNotFoundError(
                 f"Canonical document file does not exist on disk: {version_record.output_path}"

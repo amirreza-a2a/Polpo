@@ -428,6 +428,92 @@ Original canonical text."""
         assert dest_pdf.is_file()
         assert dest_pdf.read_bytes().startswith(b"%PDF-")
 
+    def test_scenario_08_canonical_rfc8089_uri_e2e_orchestration(
+        self, tmp_path: Path, bilingual_doc_content: str
+    ):
+        """
+        Scenario 8 RFC 8089 URI Integration:
+        Verifies end-to-end orchestration when DocumentVersionRecord.output_path is stored
+        as an RFC 8089 file:/// URI (matching DocumentPublicationService production behavior).
+        """
+        job_id = 90
+        version = 1
+        artifacts_dir = tmp_path / "artifacts"
+        job_dir = artifacts_dir / f"job_{job_id}"
+        job_dir.mkdir(parents=True)
+        canonical_md_file = job_dir / f"output_{job_id}_v{version}.md"
+
+        # Provide RFC 8089 file:/// URI in version record
+        raw_bytes = bilingual_doc_content.encode("utf-8")
+        canonical_md_file.write_bytes(raw_bytes)
+        content_hash = hashlib.sha256(raw_bytes).hexdigest()
+
+        job = MagicMock(spec=Job)
+        job.id = job_id
+        job.file_name = f"document_{job_id}.pdf"
+
+        version_record = DocumentVersionRecord(
+            job_id=job_id,
+            version=version,
+            output_path=canonical_md_file.resolve().as_uri(),
+            sha256=content_hash,
+            integrity_status="VALID",
+        )
+
+        mock_uow = MagicMock()
+        mock_uow.publish_intents.get_by_job_id.return_value = None
+        mock_uow.jobs.get_by_id.return_value = job
+        mock_uow.document_versions.get_by_version.return_value = version_record
+        mock_uow.document_versions.get_latest.return_value = version_record
+
+        uow_factory = MagicMock(spec=IUnitOfWorkFactory)
+        uow_factory.create.return_value.__enter__.return_value = mock_uow
+
+        mock_engine = MagicMock(spec=IPdfExportEngine)
+        fake_compiled_pdf = tmp_path / "compiled_uri_doc.pdf"
+        fake_compiled_pdf.write_bytes(b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n%%EOF")
+
+        mock_engine.render_pdf.return_value = PdfExportResult(
+            compiled_pdf_path=fake_compiled_pdf,
+            page_count=2,
+            duration_seconds=0.8,
+            warnings=(),
+        )
+
+        publisher = AtomicPdfPublisher()
+        discovery = MagicMock(spec=IPdfRuntimeDiscovery)
+        discovery.probe_readiness.return_value = EngineReadinessDTO(
+            quarto_available=True,
+            quarto_path="/usr/bin/quarto",
+            is_tinytex=False,
+        )
+
+        service = QuartoPdfExportService(
+            uow_factory=uow_factory,
+            export_engine=mock_engine,
+            publisher=publisher,
+            artifacts_dir=artifacts_dir,
+            discovery=discovery,
+        )
+
+        dest_pdf = tmp_path / "exported" / "uri_persian_test.pdf"
+        dest_pdf.parent.mkdir(parents=True, exist_ok=True)
+        dest_uri = dest_pdf.resolve().as_uri()
+
+        cmd = ExportPdfCommand(
+            job_id=job_id,
+            version=version,
+            destination_path=dest_uri,
+            overwrite=True,
+        )
+
+        result = service.export_pdf(cmd)
+        assert result.destination_path == dest_pdf.resolve()
+        assert result.page_count == 2
+        assert dest_pdf.is_file()
+        assert dest_pdf.read_bytes().startswith(b"%PDF-")
+
+
     @pytest.mark.skipif(not is_quarto_installed(), reason="Quarto or XeLaTeX not available on host")
     def test_scenario_08_bilingual_persian_rtl_and_tikz_live_compilation(
         self, tmp_path: Path, bilingual_doc_content: str

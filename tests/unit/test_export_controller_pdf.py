@@ -339,3 +339,102 @@ def test_export_controller_pdf_compilation_error_sanitization(
     assert not ctrl.isExporting
 
     ctrl.shutdown()
+
+
+def test_export_controller_pdf_with_canonical_uri_service_integration(
+    qapp, mock_export_service, mock_query_service, mock_editor_controller, tmp_path
+):
+    """
+    Verifies ExportController delegates correctly to QuartoPdfExportService when
+    both the canonical version output_path and destination_uri are RFC 8089 URIs.
+    """
+    from application.dto.pdf_publish_dto import PublishResultDTO
+    from application.ports.pdf_export_port import (
+        IPdfArtifactPublisher,
+        IPdfExportEngine,
+        IPdfRuntimeDiscovery,
+        PdfExportResult,
+    )
+    from application.ports.unit_of_work import IUnitOfWorkFactory
+    from application.services.quarto_pdf_export_service import QuartoPdfExportService
+    from core.entities.document_version import DocumentVersionRecord
+    from core.entities.job import Job
+
+    job_id = 42
+    doc_file = tmp_path / "artifacts" / f"job_{job_id}" / "output_42_v1.md"
+    doc_file.parent.mkdir(parents=True, exist_ok=True)
+    raw_content = b"# Document Title\n\nContent body."
+    doc_file.write_bytes(raw_content)
+
+    import hashlib
+    sha = hashlib.sha256(raw_content).hexdigest()
+    canonical_uri = doc_file.resolve().as_uri()
+
+    job = MagicMock(spec=Job)
+    job.id = job_id
+    job.file_name = "test_document.pdf"
+
+    version_record = DocumentVersionRecord(
+        job_id=job_id,
+        version=1,
+        output_path=canonical_uri,
+        sha256=sha,
+        integrity_status="VALID",
+    )
+
+    mock_uow = MagicMock()
+    mock_uow.publish_intents.get_by_job_id.return_value = None
+    mock_uow.jobs.get_by_id.return_value = job
+    mock_uow.document_versions.get_by_version.return_value = version_record
+    mock_uow.document_versions.get_latest.return_value = version_record
+
+    uow_factory = MagicMock(spec=IUnitOfWorkFactory)
+    uow_factory.create.return_value.__enter__.return_value = mock_uow
+
+    dest_file = tmp_path / "output_dest.pdf"
+    dest_uri = dest_file.resolve().as_uri()
+
+    fake_compiled_pdf = tmp_path / "compiled.pdf"
+    fake_compiled_pdf.write_bytes(b"%PDF-1.7")
+
+    mock_engine = MagicMock(spec=IPdfExportEngine)
+    mock_engine.render_pdf.return_value = PdfExportResult(
+        compiled_pdf_path=fake_compiled_pdf,
+        page_count=1,
+        duration_seconds=0.1,
+        warnings=(),
+    )
+
+    mock_publisher = MagicMock(spec=IPdfArtifactPublisher)
+    mock_publisher.publish.return_value = PublishResultDTO(
+        destination_path=dest_file.resolve(),
+        published_bytes=100,
+        cleanup_warning=None,
+    )
+
+    pdf_service = QuartoPdfExportService(
+        uow_factory=uow_factory,
+        export_engine=mock_engine,
+        publisher=mock_publisher,
+        artifacts_dir=tmp_path / "artifacts",
+    )
+
+    ctrl = ExportController(
+        export_service=mock_export_service,
+        editor_controller=mock_editor_controller,
+        query_service=mock_query_service,
+        export_pdf_service=pdf_service,
+    )
+
+    completed_events = []
+    ctrl.exportCompleted.connect(lambda jid, dest: completed_events.append((jid, dest)))
+
+    ctrl.exportPdf(job_id=job_id, destination_uri=dest_uri, version=1)
+
+    assert pump_until(qapp, lambda: len(completed_events) > 0, timeout=2.0)
+    jid, dest = completed_events[0]
+    assert jid == job_id
+    assert dest == str(dest_file.resolve())
+    assert not ctrl.isExporting
+
+    ctrl.shutdown()

@@ -462,3 +462,54 @@ format:
     assert meta["format"]["pdf"]["documentclass"] == "scrartcl"
     assert meta["format"]["pdf"]["toc"] is True
     assert meta["format"]["pdf"]["include-in-header"] == [{"text": "\\newcommand{\\customcmd}{val}"}]
+
+
+def test_export_service_resolves_canonical_file_uri(tmp_path: Path):
+    """
+    Regression test: Canonical document versions saved by DocumentPublicationService
+    store output_path as an RFC 8089 file:/// URI. QuartoPdfExportService must resolve
+    this URI to a filesystem path rather than treating 'file:' as a relative directory.
+    Also verifies destination_path provided as file:/// URI resolves correctly.
+    """
+    env = _setup_test_environment(tmp_path)
+    # Set output_path to real RFC 8089 file:/// URI
+    canonical_uri = env["doc_file"].resolve().as_uri()
+    env["version_record"].output_path = canonical_uri
+
+    fake_compiled_pdf = tmp_path / "compiled.pdf"
+    fake_compiled_pdf.write_bytes(b"%PDF-1.7")
+
+    dest_path = tmp_path / "export" / "output_uri_test.pdf"
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    env["engine"].render_pdf.return_value = PdfExportResult(
+        compiled_pdf_path=fake_compiled_pdf,
+        page_count=2,
+        duration_seconds=0.5,
+        warnings=(),
+    )
+    env["publisher"].publish.return_value = PublishResultDTO(
+        destination_path=dest_path.resolve(),
+        published_bytes=512,
+        cleanup_warning=None,
+    )
+
+    service = QuartoPdfExportService(
+        uow_factory=env["uow_factory"],
+        export_engine=env["engine"],
+        publisher=env["publisher"],
+        artifacts_dir=env["artifacts_dir"],
+    )
+
+    # Test with destination_path as RFC 8089 URI
+    dest_uri = dest_path.resolve().as_uri()
+    cmd = ExportPdfCommand(job_id=env["job_id"], version=env["version"], destination_path=dest_uri)
+    result = service.export_pdf(cmd)
+
+    assert result.destination_path == dest_path.resolve()
+    assert result.canonical_version == env["version"]
+    env["publisher"].publish.assert_called_once_with(
+        source_compiled_pdf=fake_compiled_pdf,
+        destination_path=dest_path.resolve(),
+        overwrite=False,
+    )
