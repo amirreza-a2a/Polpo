@@ -14,6 +14,7 @@ from typing import Optional
 import uuid
 
 from application.dto.pdf_publish_dto import PublishResultDTO
+from application.ports.pdf_export_port import IPdfArtifactPublisher
 from application.services.export_package_service import (
     DestinationAlreadyExistsError,
     DestinationDirectoryNotFoundError,
@@ -25,7 +26,7 @@ from core.exceptions.domain_exceptions import (
 )
 
 
-class AtomicPdfPublisher:
+class AtomicPdfPublisher(IPdfArtifactPublisher):
     """
     Atomic PDF artifact publisher with no-clobber and durable replacement semantics.
 
