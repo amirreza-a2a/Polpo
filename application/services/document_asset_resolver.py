@@ -40,18 +40,18 @@ class DocumentAssetResolutionError(DomainError):
     pass
 
 
-class AssetContainmentError(DocumentAssetResolutionError):
+class AssetAccessError(DocumentAssetResolutionError):
+    """Raised when a referenced asset cannot be accessed (e.g. directory or unreadable)."""
+    pass
+
+
+class AssetContainmentError(AssetAccessError):
     """Raised when an asset reference resolves outside the allowed job artifact boundary."""
     pass
 
 
 class AssetNotFoundError(DocumentAssetResolutionError):
     """Raised when a referenced local asset file does not exist on disk."""
-    pass
-
-
-class AssetAccessError(DocumentAssetResolutionError):
-    """Raised when a referenced asset cannot be accessed (e.g. directory or unreadable)."""
     pass
 
 

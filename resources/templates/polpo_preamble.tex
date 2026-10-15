@@ -1,0 +1,28 @@
+% ============================================================
+%  resources/templates/polpo_preamble.tex
+%  Polpo Publication-Grade Typesetting Preamble
+%  Phase 13 — Quarto + XeLaTeX PDF Export
+% ============================================================
+
+% Mathematical packages
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+% Diagram packages and compatibility level
+\usepackage{etoolbox}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+
+% Bidirectional engine and language configuration
+\usepackage[bidi=default,provide=*]{babel}
+\babelprovide[main,import]{persian}
+\babelprovide[import]{english}
+
+% Font mappings for Persian and Latin scripts
+\babelfont{rm}{FreeSerif}
+\babelfont{sf}{FreeSerif}
+
+% ADR-003 D02: TikZ isolation hook to prevent coordinate or label inversion by ambient RTL
+\AtBeginEnvironment{tikzpicture}{\begin{otherlanguage*}{english}}
+\AtEndEnvironment{tikzpicture}{\end{otherlanguage*}}
