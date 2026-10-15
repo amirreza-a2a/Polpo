@@ -81,6 +81,12 @@ ApplicationWindow {
     Connections {
         target: exportController
         function onExportFailed(jid, msg) { window.globalError = msg; }
+        function onExportCompleted(jid, dest) { window.globalError = ""; }
+        function onExportingChanged() {
+            if (exportController && exportController.isExporting) {
+                window.globalError = "";
+            }
+        }
     }
     Connections {
         target: eventBridge

@@ -60,7 +60,7 @@ Rectangle {
             }
         }
         font.pixelSize: 13
-        wrapMode: Text.Wrap
+        wrapMode: Text.WrapAtWordBoundaryOrAnywhere
         anchors.left: parent.left
         anchors.leftMargin: 16
         anchors.right: dismissButton.left

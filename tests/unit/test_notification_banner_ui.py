@@ -138,6 +138,16 @@ def test_notification_banner_geometry_and_dismissal_lifecycle(qapp):
     assert error_banner.property("visible")
     assert error_banner.property("height") >= 36.0
 
+    # 6. Long unbroken token without spaces (must wrap at character boundary)
+    unbroken_msg = "LaTeX compilation failed: " + "X" * 150
+    win.setProperty("globalError", unbroken_msg)
+    pump_events(qapp, count=5)
+
+    assert error_banner.property("visible")
+    assert text_item.property("paintedWidth") <= text_item.property("width") + 1.0, (
+        f"Text paintedWidth ({text_item.property('paintedWidth')}) exceeded available width ({text_item.property('width')})"
+    )
+
     win.deleteLater()
     engine.deleteLater()
 
@@ -318,7 +328,11 @@ def test_pdf_export_success_ui_flow(qapp, tmp_path):
         if c.property("bannerType") == "error":
             error_banner = c
             break
-    assert error_banner is not None
+    # Pre-populate globalError with previous failure
+    win.setProperty("globalError", "Stale failure message from previous attempt")
+    pump_events(qapp, count=5)
+    assert error_banner.property("visible") is True
+    assert error_banner.property("height") >= 36.0
 
     container.export_controller.exportPdf(
         job_id=1,
@@ -327,8 +341,13 @@ def test_pdf_export_success_ui_flow(qapp, tmp_path):
         overwrite=True,
     )
 
+    # Stale error must be cleared as soon as new export starts
+    assert win.property("globalError") == ""
+    assert not error_banner.property("visible")
+
     assert pump_until(qapp, lambda: not container.export_controller.isExporting, timeout=3.0)
 
+    # Must remain clean after successful completion
     assert win.property("globalError") == ""
     assert not error_banner.property("visible")
     assert error_banner.property("height") == 0.0
