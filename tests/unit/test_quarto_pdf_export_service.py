@@ -47,8 +47,9 @@ def _setup_test_environment(tmp_path: Path, content: str = "# Sample\n\nCanonica
     job_artifacts_dir.mkdir(parents=True)
 
     doc_file = job_artifacts_dir / f"output_{job_id}_v{version}.md"
-    doc_file.write_text(content, encoding="utf-8")
-    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    raw_bytes = content.encode("utf-8")
+    doc_file.write_bytes(raw_bytes)
+    content_hash = hashlib.sha256(raw_bytes).hexdigest()
 
     job = MagicMock(spec=Job)
     job.id = job_id
@@ -161,7 +162,7 @@ def test_export_service_version_mismatch(tmp_path: Path):
     """
     env = _setup_test_environment(tmp_path)
     # Alter file on disk after version record was created
-    env["doc_file"].write_text("# Corrupted Content", encoding="utf-8")
+    env["doc_file"].write_bytes(b"# Corrupted Content")
 
     service = QuartoPdfExportService(
         uow_factory=env["uow_factory"],
