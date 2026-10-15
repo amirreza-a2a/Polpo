@@ -141,7 +141,7 @@ def test_export_controller_pdf_happy_path(
     assert pump_until(qapp, lambda: len(completed_events) > 0, timeout=2.0)
     jid, path = completed_events[0]
     assert jid == 1
-    assert path == "/tmp/exported.pdf"
+    assert Path(path) == Path("/tmp/exported.pdf")
     assert not ctrl.isExporting
 
     mock_export_pdf_service.export_pdf.assert_called_once()
@@ -177,7 +177,7 @@ def test_export_controller_pdf_with_warnings(
     assert pump_until(qapp, lambda: len(completed) > 0, timeout=2.0)
     assert len(warnings) == 1
     assert "Permission denied" in warnings[0][1]
-    assert completed[0][1] == "/tmp/exported.pdf"
+    assert Path(completed[0][1]) == Path("/tmp/exported.pdf")
 
     ctrl.shutdown()
 
@@ -256,7 +256,11 @@ def test_export_controller_pdf_overwrite_flow(
     ctrl.exportPdf(job_id=1, destination_uri="/tmp/output.pdf", version=1)
 
     assert pump_until(qapp, lambda: len(overwrite_events) > 0, timeout=2.0)
-    assert overwrite_events[0] == (1, "pdf", "/tmp/output.pdf", 1)
+    jid, exp_type, path, ver = overwrite_events[0]
+    assert jid == 1
+    assert exp_type == "pdf"
+    assert Path(path) == Path("/tmp/output.pdf")
+    assert ver == 1
 
     # Confirm overwrite
     completed = []
