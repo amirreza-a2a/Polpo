@@ -614,6 +614,103 @@ Original canonical text."""
         assert "LaTeX" in full_text or "TikZ" in full_text or "فارسی" in full_text
         doc.close()
 
+    @pytest.mark.skipif(not is_quarto_installed(), reason="Quarto or XeLaTeX not available on host")
+    def test_scenario_08_katex_style_math_live_compilation(
+        self, tmp_path: Path
+    ):
+        """
+        Verifies that documents containing KaTeX/MathJax extensions such as
+        \\style{font-family:Vazirmatn}{...} in math blocks compile cleanly
+        to valid PDFs via the compatibility macro in polpo_preamble.tex.
+        """
+        import pymupdf as fitz
+
+        job_id = 91
+        version = 1
+        artifacts_dir = tmp_path / "artifacts"
+        job_dir = artifacts_dir / f"job_{job_id}"
+        job_dir.mkdir(parents=True)
+        canonical_md_file = job_dir / f"output_{job_id}_v{version}.md"
+
+        content = (
+            "---\ntitle: \"Math Style Test\"\n---\n\n"
+            "# ریاضی و فرمول\n\n"
+            "تابع پله و ضربه به صورت زیر تعریف می‌شود:\n\n"
+            "$$\\delta(t) \\triangleq \\begin{cases} 0 & t \\neq 0 \\\\ "
+            "\\text{\\style{font-family:Vazirmatn}{تعریف‌نشده}} & t = 0 \\end{cases}$$\n\n"
+            "و رابطه مشتق:\n\n"
+            "$$\\delta(t) = \\frac{d}{dt}u(t) \\quad \\text{\\style{font-family:Vazirmatn}{اثبات:}}$$\n"
+        )
+        raw_bytes = content.encode("utf-8")
+        canonical_md_file.write_bytes(raw_bytes)
+        content_hash = hashlib.sha256(raw_bytes).hexdigest()
+
+        job = MagicMock(spec=Job)
+        job.id = job_id
+        job.file_name = f"document_{job_id}.pdf"
+
+        version_record = DocumentVersionRecord(
+            job_id=job_id,
+            version=version,
+            output_path=canonical_md_file.resolve().as_uri(),
+            sha256=content_hash,
+            integrity_status="VALID",
+        )
+
+        mock_uow = MagicMock()
+        mock_uow.publish_intents.get_by_job_id.return_value = None
+        mock_uow.jobs.get_by_id.return_value = job
+        mock_uow.document_versions.get_by_version.return_value = version_record
+        mock_uow.document_versions.get_latest.return_value = version_record
+
+        uow_factory = MagicMock(spec=IUnitOfWorkFactory)
+        uow_factory.create.return_value.__enter__.return_value = mock_uow
+
+        discovery = QuartoRuntimeDiscovery()
+        supervisor = SubprocessSupervisor()
+        staging = StagingWorkspaceManager()
+        sanitizer = TexLogSanitizer()
+
+        adapter = QuartoPdfAdapter(
+            discovery=discovery,
+            supervisor=supervisor,
+            staging=staging,
+            sanitizer=sanitizer,
+            timeout_seconds=120.0,
+        )
+        publisher = AtomicPdfPublisher()
+
+        service = QuartoPdfExportService(
+            uow_factory=uow_factory,
+            export_engine=adapter,
+            publisher=publisher,
+            artifacts_dir=artifacts_dir,
+            discovery=discovery,
+        )
+
+        dest_pdf = tmp_path / "exported" / "katex_style_test.pdf"
+        dest_pdf.parent.mkdir(parents=True, exist_ok=True)
+        dest_uri = dest_pdf.resolve().as_uri()
+
+        cmd = ExportPdfCommand(
+            job_id=job_id,
+            version=version,
+            destination_path=dest_uri,
+            overwrite=True,
+        )
+
+        result = service.export_pdf(cmd)
+
+        assert result.destination_path == dest_pdf.resolve()
+        assert dest_pdf.is_file()
+        assert dest_pdf.stat().st_size > 1000
+        assert dest_pdf.read_bytes().startswith(b"%PDF-")
+
+        doc = fitz.open(dest_pdf)
+        assert doc.page_count >= 1
+        doc.close()
+
+
     def test_scenario_09_visual_region_crop_embedding(
         self, tmp_path: Path, sample_crop_bytes: bytes
     ):

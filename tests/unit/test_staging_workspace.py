@@ -128,6 +128,8 @@ def test_staging_copies_preamble_template(tmp_path: Path):
         assert "\\babelfont{sf}{FreeSerif}" in preamble_text
         assert "\\AtBeginEnvironment{tikzpicture}{\\begin{otherlanguage*}{english}}" in preamble_text
         assert "\\AtEndEnvironment{tikzpicture}{\\end{otherlanguage*}}" in preamble_text
+        assert "\\providecommand{\\style}[2]{#2}" in preamble_text
+
 
 
 def test_staging_copies_local_assets_with_path_containment(tmp_path: Path):
