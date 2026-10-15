@@ -99,15 +99,21 @@ ApplicationWindow {
         spacing: 0
 
         NotificationBanner {
+            id: globalErrorBanner
+            objectName: "globalErrorBanner"
             Layout.fillWidth: true
             message: window.globalError
             bannerType: "error"
+            onDismissed: window.globalError = ""
         }
 
         NotificationBanner {
+            id: missedScheduleBanner
+            objectName: "missedScheduleBanner"
             Layout.fillWidth: true
             message: window.missedScheduleBanner
             bannerType: "warning"
+            onDismissed: window.missedScheduleBanner = ""
         }
 
         RowLayout {
