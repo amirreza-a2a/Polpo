@@ -548,11 +548,12 @@ def test_export_service_suppresses_fallback_title_for_cover_image_or_h1(tmp_path
 
     # 1. Document starts with cover image
     cover_md = "<!-- Page 1 -->\n![](assets/cover.jpg)\n\n# Document Title\n\nContent here."
+    cover_bytes = cover_md.encode("utf-8")
     doc_path = env["artifacts_dir"] / f"job_{env['job_id']}" / f"output_{env['job_id']}_v{env['version']}.md"
-    doc_path.write_text(cover_md, encoding="utf-8")
+    doc_path.write_bytes(cover_bytes)
     with env["uow_factory"].create() as uow:
         version_rec = uow.document_versions.get_by_version.return_value
-        version_rec.sha256 = hashlib.sha256(cover_md.encode("utf-8")).hexdigest()
+        version_rec.sha256 = hashlib.sha256(cover_bytes).hexdigest()
 
     cmd = ExportPdfCommand(job_id=env["job_id"], version=env["version"], destination_path=dest_path)
     service.export_pdf(cmd)
@@ -563,10 +564,11 @@ def test_export_service_suppresses_fallback_title_for_cover_image_or_h1(tmp_path
     # 2. Document is plain text without leading image or H1
     env["engine"].render_pdf.reset_mock()
     plain_md = "Just plain body text without any headings or images."
-    doc_path.write_text(plain_md, encoding="utf-8")
+    plain_bytes = plain_md.encode("utf-8")
+    doc_path.write_bytes(plain_bytes)
     with env["uow_factory"].create() as uow:
         version_rec = uow.document_versions.get_by_version.return_value
-        version_rec.sha256 = hashlib.sha256(plain_md.encode("utf-8")).hexdigest()
+        version_rec.sha256 = hashlib.sha256(plain_bytes).hexdigest()
 
     service.export_pdf(cmd)
     render_req = env["engine"].render_pdf.call_args[0][0]
