@@ -90,6 +90,7 @@ def _setup_test_environment(tmp_path: Path, content: str = "# Sample\n\nCanonica
         "engine": mock_engine,
         "publisher": mock_publisher,
         "discovery": mock_discovery,
+        "version_record": version_record,
     }
 
 
@@ -402,3 +403,62 @@ def test_export_service_f03_docstring_disclosure():
     assert "F-03" in doc or "Trust Boundary" in doc
     assert "-no-shell-escape" in doc
     assert "privileges" in doc.lower()
+
+
+def test_export_service_version_default_none_fetches_latest(tmp_path: Path):
+    """
+    When version is None or <= 0, service resolves latest canonical document version.
+    """
+    env = _setup_test_environment(tmp_path)
+    # Configure get_by_version to return None, get_latest to return valid record
+    env["uow"].document_versions.get_by_version.return_value = None
+    env["uow"].document_versions.get_latest.return_value = env["version_record"]
+
+    service = QuartoPdfExportService(
+        uow_factory=env["uow_factory"],
+        export_engine=env["engine"],
+        publisher=env["publisher"],
+        artifacts_dir=env["artifacts_dir"],
+    )
+
+    dest_path = tmp_path / "export" / "output.pdf"
+    dest_path.parent.mkdir(parents=True)
+
+    cmd = ExportPdfCommand(job_id=env["job_id"], version=None, destination_path=dest_path)
+    result = service.export_pdf(cmd)
+
+    assert result.canonical_version == env["version"]
+    env["uow"].document_versions.get_latest.assert_called_once_with(env["job_id"])
+
+
+def test_export_service_extract_raw_front_matter_complex_collections():
+    """
+    Verifies _extract_raw_front_matter correctly parses block lists,
+    inline JSON collections, and nested mappings without dropping elements.
+    """
+    from application.services.quarto_pdf_export_service import _extract_raw_front_matter
+
+    qmd = """---
+title: "Document With Lists"
+authors: ["Alice", "Bob"]
+header-includes:
+  - '\\usepackage{booktabs}'
+  - '\\usepackage{microtype}'
+format:
+  pdf:
+    documentclass: scrartcl
+    toc: true
+    include-in-header:
+      - text: '\\newcommand{\\customcmd}{val}'
+---
+
+# Content
+"""
+    meta = _extract_raw_front_matter(qmd)
+    assert meta["title"] == "Document With Lists"
+    assert meta["authors"] == ["Alice", "Bob"]
+    assert meta["header-includes"] == ["\\usepackage{booktabs}", "\\usepackage{microtype}"]
+    assert isinstance(meta["format"], dict)
+    assert meta["format"]["pdf"]["documentclass"] == "scrartcl"
+    assert meta["format"]["pdf"]["toc"] is True
+    assert meta["format"]["pdf"]["include-in-header"] == [{"text": "\\newcommand{\\customcmd}{val}"}]

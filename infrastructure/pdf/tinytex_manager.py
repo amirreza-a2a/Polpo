@@ -190,6 +190,7 @@ class TinyTexManager(ITinyTexManager):
         home = Path.home()
         tinytex_search = [
             home / ".TinyTeX" / "bin",
+            home / "bin",
             home / "AppData" / "Roaming" / "TinyTeX" / "bin",
             home / "AppData" / "Local" / "TinyTeX" / "bin",
             home / "AppData" / "Local" / "Programs" / "TinyTeX" / "bin",

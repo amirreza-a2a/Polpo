@@ -149,3 +149,20 @@ def test_sanitizer_multiple_missing_packages_deduplicated():
 
     # tikz and pgf both map to 'pgf'
     assert diag.missing_packages == ("pgf", "custompkg")
+
+
+def test_sanitizer_extracts_missing_documentclass_cls():
+    """
+    Extracts missing documentclass .cls files and maps them to canonical CTAN package identifiers.
+    e.g. scrartcl.cls -> koma-script.
+    """
+    raw_log = r"""
+! LaTeX Error: File 'scrartcl.cls' not found.
+Type X to quit or <RETURN> to proceed,
+or enter new name. (Default extension: cls)
+"""
+    sanitizer = TexLogSanitizer()
+    diag = sanitizer.sanitize(raw_log)
+
+    assert diag.missing_packages == ("koma-script",)
+    assert "koma-script" in diag.sanitized_message

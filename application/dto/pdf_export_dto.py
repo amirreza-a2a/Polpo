@@ -24,8 +24,8 @@ class ExportPdfCommand:
         is_cancelled: Optional cooperative cancellation callback.
     """
     job_id: int
-    version: int
-    destination_path: Path
+    version: Optional[int] = None
+    destination_path: Path = Path(".")
     overwrite: bool = False
     is_cancelled: Optional[Callable[[], bool]] = None
 

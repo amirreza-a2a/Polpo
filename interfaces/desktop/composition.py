@@ -217,6 +217,7 @@ class DesktopAppContainer:
             supervisor=self.pdf_supervisor,
             staging=self.pdf_staging,
             sanitizer=self.pdf_sanitizer,
+            package_installer=self.tinytex_manager.install_packages,
         )
         self.pdf_publisher = AtomicPdfPublisher()
         self.quarto_pdf_export_service = QuartoPdfExportService(

@@ -188,6 +188,13 @@ class AtomicPdfPublisher(IPdfArtifactPublisher):
         cleanup_warning: Optional[str] = None
         try:
             source_path.unlink()
+            parent = source_path.parent
+            if parent.name == ".pdf_staging" and parent.exists():
+                try:
+                    if not any(parent.iterdir()):
+                        parent.rmdir()
+                except OSError:
+                    pass
         except Exception as e:
             cleanup_warning = f"Failed to delete temporary staging artifact: {e}"
 
