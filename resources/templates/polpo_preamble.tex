@@ -30,3 +30,19 @@
 % ADR-003 D02: TikZ isolation hook to prevent coordinate or label inversion by ambient RTL
 \AtBeginEnvironment{tikzpicture}{\begin{otherlanguage*}{english}}
 \AtEndEnvironment{tikzpicture}{\end{otherlanguage*}}
+
+% Clamps image scaling to available text area, preventing full-height images from creating orphan blank pages
+\makeatletter
+\ifdefined\pandocbounded
+  \ifdefined\pandoc@box\else\newsavebox\pandoc@box\fi
+  \renewcommand*\pandocbounded[1]{%
+    \sbox\pandoc@box{#1}%
+    \Gscale@div\@tempa{\dimexpr\textheight-4\baselineskip\relax}{\dimexpr\ht\pandoc@box+\dp\pandoc@box\relax}%
+    \Gscale@div\@tempb{\linewidth}{\wd\pandoc@box}%
+    \ifdim\@tempb\p@<\@tempa\p@\let\@tempa\@tempb\fi%
+    \ifdim\@tempa\p@<\p@\scalebox{\@tempa}{\usebox\pandoc@box}%
+    \else\usebox{\pandoc@box}%
+    \fi%
+  }
+\fi
+\makeatother

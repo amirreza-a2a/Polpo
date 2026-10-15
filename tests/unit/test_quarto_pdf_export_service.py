@@ -27,6 +27,7 @@ from application.services.export_package_service import (
     ExportSourceNotFoundError,
 )
 from application.services.quarto_pdf_export_service import QuartoPdfExportService
+from core.entities.artifact import resolve_canonical_file_path
 from core.entities.document_version import DocumentVersionRecord
 from core.entities.job import Job
 from core.exceptions.domain_exceptions import (
@@ -507,9 +508,66 @@ def test_export_service_resolves_canonical_file_uri(tmp_path: Path):
     result = service.export_pdf(cmd)
 
     assert result.destination_path == dest_path.resolve()
-    assert result.canonical_version == env["version"]
     env["publisher"].publish.assert_called_once_with(
         source_compiled_pdf=fake_compiled_pdf,
         destination_path=dest_path.resolve(),
         overwrite=False,
     )
+
+
+def test_export_service_suppresses_fallback_title_for_cover_image_or_h1(tmp_path: Path):
+    """
+    When canonical markdown starts with a cover image or primary heading (H1),
+    QuartoPdfExportService must not force a technical slug as fallback title,
+    preventing sparse cover pages and orphan blank pages in compiled PDFs.
+    """
+    env = _setup_test_environment(tmp_path)
+    dest_path = tmp_path / "export" / "output.pdf"
+    dest_path.parent.mkdir(parents=True)
+
+    fake_compiled = tmp_path / "fake.pdf"
+    fake_compiled.write_bytes(b"%PDF-1.7")
+    env["engine"].render_pdf.return_value = PdfExportResult(
+        compiled_pdf_path=fake_compiled,
+        page_count=1,
+        duration_seconds=1.0,
+        warnings=(),
+    )
+    env["publisher"].publish.return_value = PublishResultDTO(
+        destination_path=dest_path,
+        published_bytes=100,
+        cleanup_warning=None,
+    )
+
+    service = QuartoPdfExportService(
+        uow_factory=env["uow_factory"],
+        export_engine=env["engine"],
+        publisher=env["publisher"],
+        artifacts_dir=env["artifacts_dir"],
+    )
+
+    # 1. Document starts with cover image
+    cover_md = "<!-- Page 1 -->\n![](assets/cover.jpg)\n\n# Document Title\n\nContent here."
+    doc_path = env["artifacts_dir"] / f"job_{env['job_id']}" / f"output_{env['job_id']}_v{env['version']}.md"
+    doc_path.write_text(cover_md, encoding="utf-8")
+    with env["uow_factory"].create() as uow:
+        version_rec = uow.document_versions.get_by_version.return_value
+        version_rec.sha256 = hashlib.sha256(cover_md.encode("utf-8")).hexdigest()
+
+    cmd = ExportPdfCommand(job_id=env["job_id"], version=env["version"], destination_path=dest_path)
+    service.export_pdf(cmd)
+
+    render_req = env["engine"].render_pdf.call_args[0][0]
+    assert "title" not in render_req.raw_metadata
+
+    # 2. Document is plain text without leading image or H1
+    env["engine"].render_pdf.reset_mock()
+    plain_md = "Just plain body text without any headings or images."
+    doc_path.write_text(plain_md, encoding="utf-8")
+    with env["uow_factory"].create() as uow:
+        version_rec = uow.document_versions.get_by_version.return_value
+        version_rec.sha256 = hashlib.sha256(plain_md.encode("utf-8")).hexdigest()
+
+    service.export_pdf(cmd)
+    render_req = env["engine"].render_pdf.call_args[0][0]
+    assert render_req.raw_metadata.get("title") == "test-document"

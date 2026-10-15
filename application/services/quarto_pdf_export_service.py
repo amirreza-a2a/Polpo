@@ -321,7 +321,14 @@ class QuartoPdfExportService:
 
         # 5. Metadata Extraction & Fallback Title
         raw_metadata = _extract_raw_front_matter(canonical_markdown)
-        fallback_title = derive_document_slug(job, cmd.job_id)
+        has_leading_image_or_h1 = bool(
+            re.search(
+                r"^\s*(?:<!--.*?-->\s*)*(?:!\[.*?\]\(.*?\)|!\[\[.*?\]\]|#\s+)",
+                canonical_markdown,
+                re.DOTALL,
+            )
+        )
+        fallback_title = "" if has_leading_image_or_h1 else derive_document_slug(job, cmd.job_id)
 
         # 6. TeX Distribution Readiness Check
         is_tinytex = False

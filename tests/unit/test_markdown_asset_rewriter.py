@@ -339,3 +339,98 @@ def test_visual_token_mutator_opaque_helpers_exported():
 
     assert callable(vtm.find_opaque_spans)
     assert callable(vtm.is_opaque_span)
+
+
+def test_scan_wikilink_image_embed_simple():
+    """Scans simple Obsidian-style wikilink image reference ![[crop_1.jpg]]."""
+    from core.markdown.asset_rewriter import scan_asset_references
+
+    text = "Intro\n\n![[crop_30_p4_1.jpg]]\n\nOutro"
+    refs = scan_asset_references(text)
+    assert len(refs) == 1
+    ref = refs[0]
+    assert ref.is_wikilink is True
+    assert ref.destination == "crop_30_p4_1.jpg"
+    assert ref.alt_text == ""
+    assert ref.start == 7
+    assert ref.end == 28
+    assert text[ref.start:ref.end] == "![[crop_30_p4_1.jpg]]"
+
+
+def test_scan_wikilink_image_embed_with_alt_text():
+    """Scans Obsidian-style wikilink with caption/alt pipe syntax ![[crop_1.jpg|Figure 1: Diagram]]."""
+    from core.markdown.asset_rewriter import scan_asset_references
+
+    text = "![[crop_30_p4_1.jpg|Figure 1: Diagram]]"
+    refs = scan_asset_references(text)
+    assert len(refs) == 1
+    ref = refs[0]
+    assert ref.is_wikilink is True
+    assert ref.destination == "crop_30_p4_1.jpg"
+    assert ref.alt_text == "Figure 1: Diagram"
+    assert ref.start == 0
+    assert ref.end == len(text)
+
+
+def test_scan_wikilink_preserves_standard_markdown_image_with_bracket_alt():
+    """Verifies that ![[bracketed]](uri) is parsed as standard Markdown, not a wikilink."""
+    from core.markdown.asset_rewriter import scan_asset_references
+
+    text = "![[bracketed]](file:///path/image.png)"
+    refs = scan_asset_references(text)
+    assert len(refs) == 1
+    ref = refs[0]
+    assert ref.is_wikilink is False
+    assert ref.destination == "file:///path/image.png"
+    assert ref.alt_text == "[bracketed]"
+
+
+def test_rewrite_wikilink_image_embed_to_standard_markdown():
+    """Rewrites ![[crop_1.jpg]] to ![](assets/crop_1.jpg) when mapped."""
+    from core.markdown.asset_rewriter import rewrite_asset_references
+
+    text = "Before\n\n![[crop_30_p4_1.jpg]]\n\nAfter"
+    mapping = {"crop_30_p4_1.jpg": "assets/crop_30_p4_1.jpg"}
+    expected = "Before\n\n![](assets/crop_30_p4_1.jpg)\n\nAfter"
+    assert rewrite_asset_references(text, mapping) == expected
+
+
+def test_rewrite_wikilink_image_embed_with_alt_to_standard_markdown():
+    """Rewrites ![[crop_1.jpg|Caption]] to ![Caption](assets/crop_1.jpg) when mapped."""
+    from core.markdown.asset_rewriter import rewrite_asset_references
+
+    text = "Before\n\n![[crop_30_p4_1.jpg|Figure 1: Schematic]]\n\nAfter"
+    mapping = {"crop_30_p4_1.jpg": "assets/crop_30_p4_1.jpg"}
+    expected = "Before\n\n![Figure 1: Schematic](assets/crop_30_p4_1.jpg)\n\nAfter"
+    assert rewrite_asset_references(text, mapping) == expected
+
+
+def test_rewrite_mixed_wikilink_and_standard_markdown_images():
+    """Rewrites both wikilink and standard Markdown image references in same document."""
+    from core.markdown.asset_rewriter import rewrite_asset_references
+
+    text = (
+        "1. ![[crop_30_p4_1.jpg|First]]\n"
+        "2. ![Second](file:///local/crop_30_p4_2.jpg \"title\")\n"
+        "3. ![[crop_30_p4_3.jpg]]\n"
+    )
+    mapping = {
+        "crop_30_p4_1.jpg": "assets/crop_30_p4_1.jpg",
+        "file:///local/crop_30_p4_2.jpg": "assets/crop_30_p4_2.jpg",
+        "crop_30_p4_3.jpg": "assets/crop_30_p4_3.jpg",
+    }
+    expected = (
+        "1. ![First](assets/crop_30_p4_1.jpg)\n"
+        "2. ![Second](assets/crop_30_p4_2.jpg \"title\")\n"
+        "3. ![](assets/crop_30_p4_3.jpg)\n"
+    )
+    assert rewrite_asset_references(text, mapping) == expected
+
+
+def test_wikilink_inside_code_block_is_preserved():
+    """Wikilink image syntax inside fenced code blocks is not rewritten."""
+    from core.markdown.asset_rewriter import rewrite_asset_references
+
+    text = "```markdown\n![[crop_30_p4_1.jpg]]\n```"
+    mapping = {"crop_30_p4_1.jpg": "assets/crop_30_p4_1.jpg"}
+    assert rewrite_asset_references(text, mapping) == text

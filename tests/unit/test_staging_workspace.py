@@ -94,12 +94,13 @@ def test_staging_writes_project_barrier(tmp_path: Path):
         assert "-no-shell-escape" in quarto_yml_content
         assert "-interaction=nonstopmode" in quarto_yml_content
         assert "-halt-on-error" in quarto_yml_content
+        assert "from: markdown-simple_tables-multiline_tables" in quarto_yml_content
 
 
 def test_staging_copies_preamble_template(tmp_path: Path):
     """
     Preamble polpo_preamble.tex is placed in staging with math, TikZ, Babel bidi,
-    FreeSerif fonts, and ADR-003 D02 TikZ LTR hooks.
+    FreeSerif fonts, ADR-003 D02 TikZ LTR hooks, and clamped pandocbounded image bounds.
     """
     job_artifacts_dir = tmp_path / "artifacts" / "job_3"
     job_artifacts_dir.mkdir(parents=True)
@@ -129,6 +130,8 @@ def test_staging_copies_preamble_template(tmp_path: Path):
         assert "\\AtBeginEnvironment{tikzpicture}{\\begin{otherlanguage*}{english}}" in preamble_text
         assert "\\AtEndEnvironment{tikzpicture}{\\end{otherlanguage*}}" in preamble_text
         assert "\\providecommand{\\style}[2]{#2}" in preamble_text
+        assert "\\pandocbounded" in preamble_text
+        assert "\\textheight-4\\baselineskip" in preamble_text
 
 
 
@@ -607,3 +610,91 @@ def test_staging_markdown_leading_horizontal_rule_preservation(tmp_path: Path):
         assert "# Section 2" in qmd_content
         assert "More text." in qmd_content
         assert "---\n\n# Introduction" in qmd_content
+
+
+def test_staging_converts_github_alerts_to_quarto_callouts(tmp_path: Path):
+    """
+    GitHub markdown alert syntax (> [!NOTE], > [!IMPORTANT], etc.) is converted to
+    native Quarto callouts (::: {.callout-...}) in the staged document.qmd.
+    Alerts inside code blocks are preserved intact.
+    """
+    job_artifacts_dir = tmp_path / "artifacts" / "job_17"
+    job_artifacts_dir.mkdir(parents=True)
+
+    manager = StagingWorkspaceManager()
+    resolver = DocumentAssetResolver()
+
+    canonical_body = (
+        "# Title\n\n"
+        "> [!NOTE]\n"
+        "> Claude Shannon quote\n"
+        "> Second line of quote\n\n"
+        "Paragraph.\n\n"
+        "> [!IMPORTANT] Notice Title\n"
+        "> Important student warning.\n\n"
+        "```markdown\n"
+        "> [!NOTE]\n"
+        "> Inside code block should remain unchanged\n"
+        "```\n"
+    )
+
+    with manager.create_session(
+        job_artifacts_dir=job_artifacts_dir,
+        job_id=17,
+        raw_metadata={"title": "Alert Test"},
+        canonical_markdown=canonical_body,
+        asset_resolver=resolver,
+    ) as session:
+        qmd_content = session.qmd_path.read_text(encoding="utf-8")
+
+        # Native Quarto callouts generated
+        assert "::: {.callout-note}\nClaude Shannon quote\nSecond line of quote\n:::" in qmd_content
+        assert "::: {.callout-important}\n## Notice Title\nImportant student warning.\n:::" in qmd_content
+
+        # No raw unescaped alert syntax remains in body
+        assert "> [!NOTE]\n> Claude Shannon" not in qmd_content
+
+        # Preserved inside code blocks
+        assert "```markdown\n> [!NOTE]\n> Inside code block should remain unchanged\n```" in qmd_content
+
+
+def test_staging_sanitizes_uncropped_bounding_box_tags(tmp_path: Path, caplog: pytest.LogCaptureFixture):
+    """
+    Uncropped bounding box tags ([[ymin=..., ...]] or [[100, ...]]) remaining in canonical
+    markdown are stripped from staged document.qmd and log a diagnostic warning.
+    """
+    job_artifacts_dir = tmp_path / "artifacts" / "job_18"
+    job_artifacts_dir.mkdir(parents=True)
+
+    manager = StagingWorkspaceManager()
+    resolver = DocumentAssetResolver()
+
+    canonical_body = (
+        "# Signals\n\n"
+        "Here is continuous signal:\n"
+        "[[ymin=254, xmin=98, ymax=334, xmax=243]]\n"
+        "Discrete signal:\n"
+        "[[100, 200, 300, 400]]\n"
+        "Final text.\n"
+    )
+
+    import logging
+    with caplog.at_level(logging.WARNING):
+        with manager.create_session(
+            job_artifacts_dir=job_artifacts_dir,
+            job_id=18,
+            raw_metadata={"title": "Bounding Box Sanitization"},
+            canonical_markdown=canonical_body,
+            asset_resolver=resolver,
+        ) as session:
+            qmd_content = session.qmd_path.read_text(encoding="utf-8")
+
+            # Raw tags stripped
+            assert "[[ymin=254, xmin=98, ymax=334, xmax=243]]" not in qmd_content
+            assert "[[100, 200, 300, 400]]" not in qmd_content
+            assert "Here is continuous signal:" in qmd_content
+            assert "Discrete signal:" in qmd_content
+            assert "Final text." in qmd_content
+
+    # Warning logged
+    assert any("Uncropped bounding box coordinate" in record.message for record in caplog.records)

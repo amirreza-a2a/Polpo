@@ -143,6 +143,26 @@ class TestImageExtractionPipeline(unittest.TestCase):
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0].box, BoundingBox(100, 100, 300, 300))
 
+    def test_parser_valid_keyed_coordinates(self):
+        """Verifies parser handles keyed bounding box coordinates ([[ymin=..., xmin=..., ...]]) in standard and reordered forms."""
+        md = (
+            "Standard keyed: [[ymin=254, xmin=98, ymax=334, xmax=243]]\n"
+            "Reordered keys: [[xmin=98, ymin=254, xmax=243, ymax=334]]\n"
+            "Uppercase keys with spaces: [[ YMIN = 100 , XMIN = 50 , YMAX = 300 , XMAX = 400 ]]\n"
+            "Keyed decimals: [[ymin=50.4, xmin=60.6, ymax=250.2, xmax=350.8]]\n"
+        )
+        matches = BoundingBoxParser.parse_matches(md)
+        self.assertEqual(len(matches), 4)
+
+        # Standard keyed: [[ymin=254, xmin=98, ymax=334, xmax=243]]
+        self.assertEqual(matches[0].box, BoundingBox(254, 98, 334, 243))
+        # Reordered keys should map properly to ymin, xmin, ymax, xmax
+        self.assertEqual(matches[1].box, BoundingBox(254, 98, 334, 243))
+        # Uppercase keys with spaces
+        self.assertEqual(matches[2].box, BoundingBox(100, 50, 300, 400))
+        # Keyed decimals rounded: 50.4 -> 50, 60.6 -> 61, 250.2 -> 250, 350.8 -> 351
+        self.assertEqual(matches[3].box, BoundingBox(50, 61, 250, 351))
+
     # -------------------------------------------------------------
     # Phase 9B: Positional Markdown Substitution
     # -------------------------------------------------------------

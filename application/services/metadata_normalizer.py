@@ -472,7 +472,7 @@ def normalize_quarto_pdf_metadata(
         staged_meta[k] = v
 
     # Ensure title
-    if not staged_meta.get("title"):
+    if not staged_meta.get("title") and default_title:
         staged_meta["title"] = default_title
 
     # Assemble format.pdf

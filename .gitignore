@@ -38,3 +38,6 @@ resources/bin/**
 resources/mathjax/node
 resources/mathjax/node.exe
 node_modules/
+
+/.quarto/
+**/*.quarto_ipynb

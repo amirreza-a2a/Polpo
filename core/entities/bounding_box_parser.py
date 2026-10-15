@@ -27,7 +27,7 @@ class BoundingBoxParser:
     """
 
     TAG_PATTERN = re.compile(
-        r"\[\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]\]"
+        r"\[\[\s*(?:([a-zA-Z_]+)\s*=\s*)?(-?\d+(?:\.\d+)?)\s*,\s*(?:([a-zA-Z_]+)\s*=\s*)?(-?\d+(?:\.\d+)?)\s*,\s*(?:([a-zA-Z_]+)\s*=\s*)?(-?\d+(?:\.\d+)?)\s*,\s*(?:([a-zA-Z_]+)\s*=\s*)?(-?\d+(?:\.\d+)?)\s*\]\]"
     )
 
     @classmethod
@@ -40,6 +40,8 @@ class BoundingBoxParser:
           - Negative coordinates (< 0) or out-of-range coordinates (> 1000) are skipped.
           - Inverted coordinates (ymin > ymax or xmin > xmax) are skipped.
           - Zero-area boxes (ymin == ymax or xmin == xmax) are skipped.
+          - Handles both positional [[ymin, xmin, ymax, xmax]] and keyed
+            [[ymin=..., xmin=..., ymax=..., xmax=...]] formats (case-insensitive, arbitrary order).
         """
         if not markdown_text:
             return []
@@ -48,7 +50,24 @@ class BoundingBoxParser:
 
         for match in cls.TAG_PATTERN.finditer(markdown_text):
             try:
-                raw_y1, raw_x1, raw_y2, raw_x2 = match.groups()
+                k1, v1, k2, v2, k3, v3, k4, v4 = match.groups()
+
+                if all(k is not None for k in (k1, k2, k3, k4)):
+                    key_dict = {
+                        k1.lower(): v1,
+                        k2.lower(): v2,
+                        k3.lower(): v3,
+                        k4.lower(): v4,
+                    }
+                    if {"ymin", "xmin", "ymax", "xmax"} <= set(key_dict.keys()):
+                        raw_y1 = key_dict["ymin"]
+                        raw_x1 = key_dict["xmin"]
+                        raw_y2 = key_dict["ymax"]
+                        raw_x2 = key_dict["xmax"]
+                    else:
+                        raw_y1, raw_x1, raw_y2, raw_x2 = v1, v2, v3, v4
+                else:
+                    raw_y1, raw_x1, raw_y2, raw_x2 = v1, v2, v3, v4
 
                 ymin = int(round(float(raw_y1)))
                 xmin = int(round(float(raw_x1)))
