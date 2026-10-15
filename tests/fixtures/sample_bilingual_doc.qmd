@@ -1,0 +1,39 @@
+---
+title: "سند دو زبانه آزمایشی"
+subtitle: "Bilingual Test Document"
+author: "Polpo Team"
+date: "2026-10-15"
+documentclass: scrartcl
+format:
+  pdf:
+    keep-tex: true
+    toc: true
+    number-sections: true
+---
+
+# مقدمه (Introduction)
+
+این یک سند آزمایشی به زبان فارسی است که برای سنجش درستی حروف‌چینی دو زبانه در موتور Quarto و XeLaTeX طراحی شده است.
+
+This is an English paragraph verifying bilingual font isolation and typesetting.
+
+## فرمول ریاضی (Mathematical Formula)
+
+فرمول زیر رابطه معروف انیشتین را نشان می‌دهد:
+
+$$E = mc^2$$
+
+$$\int_{-\infty}^{\infty} e^{-x^2} dx = \sqrt{\pi}$$
+
+## نمودار TikZ (TikZ Schematic)
+
+```tex
+\begin{tikzpicture}[scale=1.0]
+  \draw[->] (-0.5,0) -- (3,0) node[right] {$x$};
+  \draw[->] (0,-0.5) -- (0,2) node[above] {$y$};
+  \draw[thick,blue] (0,0) parabola (2,2);
+  \node[anchor=south west] at (1,1) {$y = x^2$};
+\end{tikzpicture}
+```
+
+پایان سند دو زبانه.
