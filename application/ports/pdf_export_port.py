@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
+from application.dto.pdf_publish_dto import PublishResultDTO
 from application.dto.pdf_readiness_dto import EngineReadinessDTO
 
 
@@ -129,5 +130,29 @@ class IPdfRuntimeDiscovery(ABC):
 
         Returns:
             EngineReadinessDTO containing availability, versions, and diagnostics.
+        """
+        raise NotImplementedError
+
+
+class IPdfArtifactPublisher(ABC):
+    """Port interface for atomically publishing compiled PDF artifacts."""
+
+    @abstractmethod
+    def publish(
+        self,
+        source_compiled_pdf: Path,
+        destination_path: Path,
+        overwrite: bool = False,
+    ) -> PublishResultDTO:
+        """
+        Atomically publishes compiled PDF artifact to destination.
+
+        Args:
+            source_compiled_pdf: Path to compiled PDF artifact.
+            destination_path: Target path requested by user.
+            overwrite: When True, atomically replaces destination; when False, enforces no-clobber.
+
+        Returns:
+            PublishResultDTO with target path, persisted byte count, and optional cleanup warning.
         """
         raise NotImplementedError
