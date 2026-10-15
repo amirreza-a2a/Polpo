@@ -1,6 +1,6 @@
-# ============================================================
-#  core/exceptions/domain_exceptions.py
-# ============================================================
+from __future__ import annotations
+
+from typing import Optional, Sequence, Tuple
 
 class DomainError(Exception):
     """Base exception for all domain logic errors."""
@@ -132,4 +132,42 @@ class UnsupportedFilesystemError(DomainError):
 class ExportPermissionError(DomainError):
     """Raised when user lacks write permission to destination directory."""
     def __init__(self, message: str = "Permission denied while writing to destination directory."):
+        super().__init__(message)
+
+
+class PdfExportError(DomainError):
+    """Base exception for PDF export domain errors."""
+    pass
+
+
+class MissingLatexPackageError(PdfExportError):
+    """Raised when LaTeX compilation fails due to missing packages."""
+    def __init__(self, package_names: Sequence[str], sanitized_message: str = ""):
+        super().__init__(sanitized_message or f"Missing LaTeX packages: {', '.join(package_names)}")
+        self.package_names: Tuple[str, ...] = tuple(package_names)
+        self.sanitized_message = sanitized_message
+
+
+class PdfCompilationError(PdfExportError):
+    """Raised when Quarto/XeLaTeX compilation fails with a compiler error."""
+    def __init__(self, sanitized_message: str, line_number: Optional[int] = None):
+        msg = (
+            f"LaTeX compilation failed at line {line_number}: {sanitized_message}"
+            if line_number
+            else f"LaTeX compilation failed: {sanitized_message}"
+        )
+        super().__init__(msg)
+        self.sanitized_message = sanitized_message
+        self.line_number = line_number
+
+
+class PdfCompilationTimeoutError(PdfExportError):
+    """Raised when PDF compilation exceeds the configured timeout."""
+    def __init__(self, message: str = "PDF compilation timed out."):
+        super().__init__(message)
+
+
+class PdfExportCancelledError(PdfExportError):
+    """Raised when PDF export is cooperatively cancelled by user."""
+    def __init__(self, message: str = "PDF export was cancelled."):
         super().__init__(message)
