@@ -130,9 +130,16 @@ class QuartoPdfAdapter(IPdfExportEngine):
                 )
 
             # Command assembly
-            cmd = [quarto_path, "render", "document.qmd", "--to", "pdf", "--no-execute"]
-            if request.raw_metadata.get("keep-tex"):
-                cmd.append("--keep-tex")
+            cmd = [
+                quarto_path,
+                "render",
+                "document.qmd",
+                "--to",
+                "pdf",
+                "--pdf-engine",
+                "xelatex",
+                "--no-execute",
+            ]
 
             # Subprocess execution
             start_time = time.monotonic()
