@@ -39,6 +39,12 @@ KNOWN_PACKAGE_MAP: Dict[str, str] = {
     "environ": "environ",
     "unicode-math": "unicode-math",
     "luacolor": "luacolor",
+    "scrartcl": "koma-script",
+    "scrreprt": "koma-script",
+    "scrbook": "koma-script",
+    "koma-script": "koma-script",
+    "standalone": "standalone",
+    "beamer": "beamer",
 }
 
 
@@ -73,9 +79,11 @@ class TexLogSanitizer:
             self._package_map.update(package_map)
 
     def resolve_ctan_package(self, stem: str) -> str:
-        """Resolves a .sty stem name to its installable CTAN package identifier."""
+        """Resolves a .sty or .cls stem name to its installable CTAN package identifier."""
         clean_stem = stem.strip().lower()
         if clean_stem.endswith(".sty"):
+            clean_stem = clean_stem[:-4]
+        elif clean_stem.endswith(".cls"):
             clean_stem = clean_stem[:-4]
         return self._package_map.get(clean_stem, clean_stem)
 
@@ -101,8 +109,9 @@ class TexLogSanitizer:
         # e.g.: ! LaTeX Error: File 'tikz.sty' not found.
         # e.g.: ! LaTeX Error: File `amssymb.sty' not found.
         # e.g.: ! LaTeX Error: File "pgf.sty" not found.
+        # e.g.: ! LaTeX Error: File 'scrartcl.cls' not found.
         pkg_pattern = re.compile(
-            r"! LaTeX Error: File [`'\"]([^'\"`\s]+\.sty)[`'\"] not found",
+            r"! LaTeX Error: File [`'\"]([^'\"`\s]+\.(?:sty|cls))[`'\"] not found",
             re.IGNORECASE,
         )
         for match in pkg_pattern.finditer(raw_log):

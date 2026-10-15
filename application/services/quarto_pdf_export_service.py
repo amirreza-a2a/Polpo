@@ -23,7 +23,7 @@ import json
 import logging
 from pathlib import Path
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from application.dto.pdf_export_dto import ExportPdfCommand, PdfExportResultDTO
 from application.ports.pdf_export_port import (
@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_yaml_scalar(val_str: str) -> Any:
-    """Parses scalar YAML string into typed Python primitives (bool, int, float, str)."""
+    """Parses scalar or inline YAML/JSON string into typed Python primitives (bool, int, float, list, dict, str)."""
     s = val_str.strip()
     if not s:
         return ""
@@ -61,6 +61,12 @@ def _parse_yaml_scalar(val_str: str) -> Any:
         return False
     if s.lower() in ("null", "~"):
         return None
+    # Inline JSON list or dict
+    if (s.startswith("[") and s.endswith("]")) or (s.startswith("{") and s.endswith("}")):
+        try:
+            return json.loads(s)
+        except Exception:
+            pass
     # Quoted string
     if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
         try:
@@ -82,7 +88,7 @@ def _parse_yaml_scalar(val_str: str) -> Any:
 def _extract_raw_front_matter(markdown: str) -> Dict[str, Any]:
     """
     Extracts raw YAML front matter mapping from canonical Markdown source text.
-    Handles nested sections and list elements without third-party dependencies.
+    Handles nested sections, block lists, and inline collections without third-party dependencies.
     """
     if not (markdown.startswith("---\n") or markdown.startswith("---\r\n")):
         return {}
@@ -101,12 +107,9 @@ def _extract_raw_front_matter(markdown: str) -> Dict[str, Any]:
         return {}
 
     yaml_lines = lines[1:closing_index]
-    result: Dict[str, Any] = {}
-
-    # Simple hierarchical line parser
-    current_key: Optional[str] = None
-    sub_key: Optional[str] = None
-    current_list: Optional[List[Any]] = None
+    root: Dict[str, Any] = {}
+    # stack: list of (indent, target_container, active_key)
+    stack: List[Tuple[int, Any, Optional[str]]] = [(-1, root, None)]
 
     for raw_line in yaml_lines:
         line = raw_line.rstrip()
@@ -116,40 +119,77 @@ def _extract_raw_front_matter(markdown: str) -> Dict[str, Any]:
         indent = len(line) - len(line.lstrip(" "))
         stripped = line.strip()
 
-        # List item
+        # Pop stack while top level indent is >= current indent
+        while len(stack) > 1 and stack[-1][0] >= indent:
+            stack.pop()
+
+        parent_indent, parent_container, parent_key = stack[-1]
+
         if stripped.startswith("- "):
-            item_val = stripped[2:].strip()
-            if current_list is not None:
-                current_list.append(_parse_yaml_scalar(item_val))
-            continue
-
-        # Key-value pair: key: value
-        colon_pos = stripped.find(":")
-        if colon_pos != -1:
-            k = stripped[:colon_pos].strip()
-            v = stripped[colon_pos + 1 :].strip()
-
-            if indent == 0:
-                current_key = k
-                sub_key = None
-                current_list = None
-                if not v:
-                    result[k] = {}
+            item_str = stripped[2:].strip()
+            # If parent_container under parent_key is not a list, convert to list
+            if isinstance(parent_container, dict):
+                if (
+                    parent_key is not None
+                    and isinstance(parent_container.get(parent_key), dict)
+                    and not parent_container.get(parent_key)
+                ):
+                    parent_container[parent_key] = []
+                    target_list = parent_container[parent_key]
+                elif parent_key is not None and isinstance(parent_container.get(parent_key), list):
+                    target_list = parent_container[parent_key]
                 else:
-                    result[k] = _parse_yaml_scalar(v)
-            elif indent == 2 and current_key:
-                if isinstance(result.get(current_key), dict):
-                    sub_key = k
-                    if not v:
-                        result[current_key][k] = {}
-                    else:
-                        result[current_key][k] = _parse_yaml_scalar(v)
-            elif indent >= 4 and current_key and sub_key:
-                parent_map = result.get(current_key, {})
-                if isinstance(parent_map, dict) and isinstance(parent_map.get(sub_key), dict):
-                    parent_map[sub_key][k] = _parse_yaml_scalar(v)
+                    target_list = []
+                    if parent_key is not None:
+                        parent_container[parent_key] = target_list
+            else:
+                target_list = parent_container
 
-    return result
+            # Check if list item is a dict entry: - key: value
+            is_kv = False
+            if item_str.endswith(":"):
+                is_kv = True
+                k = item_str[:-1].strip()
+                v = ""
+            elif ": " in item_str and not (item_str.startswith('"') or item_str.startswith("'")):
+                is_kv = True
+                k, v = item_str.split(": ", 1)
+                k = k.strip()
+                v = v.strip()
+
+            if is_kv:
+                dict_item = {k: _parse_yaml_scalar(v) if v else {}}
+                target_list.append(dict_item)
+                stack.append((indent, dict_item, k))
+            else:
+                target_list.append(_parse_yaml_scalar(item_str))
+                stack.append((indent, target_list, len(target_list) - 1))
+        else:
+            is_kv = False
+            if stripped.endswith(":"):
+                is_kv = True
+                k = stripped[:-1].strip()
+                v = ""
+            elif ": " in stripped:
+                is_kv = True
+                k, v = stripped.split(": ", 1)
+                k = k.strip()
+                v = v.strip()
+
+            if is_kv:
+                val = _parse_yaml_scalar(v) if v else {}
+                if isinstance(parent_container, dict):
+                    target_dict = parent_container
+                    if parent_key is not None and isinstance(parent_container.get(parent_key), dict):
+                        target_dict = parent_container[parent_key]
+                    target_dict[k] = val
+                    stack.append((indent, target_dict, k))
+                elif isinstance(parent_container, list):
+                    new_dict = {k: val}
+                    parent_container.append(new_dict)
+                    stack.append((indent, new_dict, k))
+
+    return root
 
 
 class QuartoPdfExportService:
@@ -230,10 +270,19 @@ class QuartoPdfExportService:
             if not job:
                 raise EntityNotFoundError("Job", cmd.job_id)
 
-            version_record = uow.document_versions.get_by_version(cmd.job_id, cmd.version)
+            if cmd.version is not None and cmd.version > 0:
+                version_record = uow.document_versions.get_by_version(cmd.job_id, cmd.version)
+            else:
+                version_record = uow.document_versions.get_latest(cmd.job_id)
+
             if not version_record:
+                ver_msg = (
+                    f"version {cmd.version}"
+                    if (cmd.version is not None and cmd.version > 0)
+                    else "latest version"
+                )
                 raise ExportSourceNotFoundError(
-                    f"No canonical document version found for job {cmd.job_id} (version {cmd.version})."
+                    f"No canonical document version found for job {cmd.job_id} ({ver_msg})."
                 )
 
             if version_record.integrity_status == "QUARANTINED":
@@ -318,7 +367,7 @@ class QuartoPdfExportService:
 
         return PdfExportResultDTO(
             destination_path=publish_result.destination_path,
-            canonical_version=cmd.version,
+            canonical_version=version_record.version,
             page_count=render_result.page_count,
             file_size_bytes=publish_result.published_bytes,
             duration_seconds=render_result.duration_seconds,

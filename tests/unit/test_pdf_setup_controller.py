@@ -198,8 +198,44 @@ def test_pdf_setup_controller_shutdown_ignores_further_calls(qapp, mock_discover
     )
     ctrl.shutdown()
     assert ctrl._is_shutdown is True
-
     # Should not crash or submit tasks after shutdown
     ctrl.probeEnvironment()
     ctrl.setCustomQuartoPath("/some/path")
     ctrl.installMissingPackages(["pkg"])
+
+
+def test_pdf_setup_controller_is_recovering_and_is_probing_lifecycle(
+    qapp, mock_discovery, mock_recovery_service
+):
+    ctrl = PdfSetupController(
+        runtime_discovery=mock_discovery,
+        package_recovery_service=mock_recovery_service,
+        auto_probe=False,
+    )
+
+    recovering_history = []
+    probing_history = []
+    ctrl.isRecoveringChanged.connect(lambda: recovering_history.append(ctrl.isRecovering))
+    ctrl.isProbingChanged.connect(lambda: probing_history.append(ctrl.isProbing))
+
+    assert ctrl.isRecovering is False
+    assert ctrl.isProbing is False
+
+    # Trigger install
+    ctrl.installMissingPackages(["amsmath"])
+    assert ctrl.isRecovering is True
+    assert True in recovering_history
+
+    # Wait for completion
+    assert pump_until(qapp, lambda: ctrl.isRecovering is False, timeout=2.0)
+    assert recovering_history[-1] is False
+
+    # Trigger probe
+    ctrl.probeEnvironment()
+    assert ctrl.isProbing is True
+    assert True in probing_history
+
+    assert pump_until(qapp, lambda: ctrl.isProbing is False, timeout=2.0)
+    assert probing_history[-1] is False
+
+    ctrl.shutdown()

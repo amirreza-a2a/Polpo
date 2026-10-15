@@ -20,6 +20,8 @@ class PdfSetupController(QObject):
 
     readinessChanged = Signal()
     recoveryStatusChanged = Signal(bool, str)
+    isRecoveringChanged = Signal()
+    isProbingChanged = Signal()
 
     _internalReadinessUpdated = Signal(bool, str, bool, str, str)
     _internalRecoveryStatusChanged = Signal(bool, str)
@@ -101,6 +103,16 @@ class PdfSetupController(QObject):
 
     customQuartoPath = Property(str, custom_quarto_path, notify=readinessChanged)
 
+    def is_recovering(self) -> bool:
+        return self._is_recovering
+
+    isRecovering = Property(bool, is_recovering, notify=isRecoveringChanged)
+
+    def is_probing(self) -> bool:
+        return self._is_probing
+
+    isProbing = Property(bool, is_probing, notify=isProbingChanged)
+
     # --- Slots ---
 
     @Slot()
@@ -109,6 +121,7 @@ class PdfSetupController(QObject):
         if self._is_shutdown:
             return
         self._is_probing = True
+        self.isProbingChanged.emit()
         self._executor.submit(self._run_probe_worker)
 
     @Slot(str)
@@ -137,6 +150,7 @@ class PdfSetupController(QObject):
         if self._is_shutdown:
             return
         self._is_recovering = True
+        self.isRecoveringChanged.emit()
         self._executor.submit(self._run_install_worker, list(packages))
 
     @Slot()
@@ -218,6 +232,7 @@ class PdfSetupController(QObject):
         self._xelatex_available = xelatex_available
         self._tex_distribution = tex_dist_name
         self._setup_instructions = instructions
+        self.isProbingChanged.emit()
         self.readinessChanged.emit()
 
     @Slot(bool, str)
@@ -226,4 +241,5 @@ class PdfSetupController(QObject):
         if self._is_shutdown:
             return
         self._is_recovering = False
+        self.isRecoveringChanged.emit()
         self.recoveryStatusChanged.emit(success, message)
