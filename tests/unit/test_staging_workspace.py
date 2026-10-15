@@ -12,6 +12,7 @@ from application.services.document_asset_resolver import (
     DocumentAssetResolver,
 )
 from infrastructure.pdf.staging_workspace import (
+    StagingCleanupError,
     StagingSession,
     StagingWorkspaceManager,
 )
@@ -399,3 +400,203 @@ def test_staging_positional_arguments_compatibility(tmp_path: Path):
         assert session.qmd_path.is_file()
 
     assert not session.staging_dir.exists()
+
+
+def test_staging_yaml_empty_collections_semantic_preservation(tmp_path: Path):
+    """
+    Empty sequences and mappings in normalized metadata (e.g. authors: [], keywords: [],
+    geometry: [], classoption: []) must be serialized as empty YAML collections,
+    not stringified or omitted.
+    """
+    job_artifacts_dir = tmp_path / "artifacts" / "job_12"
+    job_artifacts_dir.mkdir(parents=True)
+
+    manager = StagingWorkspaceManager()
+    resolver = DocumentAssetResolver()
+
+    raw_meta = {
+        "title": "Empty Collection Test",
+        "authors": [],
+        "keywords": [],
+        "geometry": [],
+        "classoption": [],
+        "format": {
+            "pdf": {
+                "toc": True,
+            }
+        },
+    }
+
+    with manager.create_session(
+        job_artifacts_dir=job_artifacts_dir,
+        job_id=12,
+        raw_metadata=raw_meta,
+        canonical_markdown="Body",
+        asset_resolver=resolver,
+    ) as session:
+        qmd_content = session.qmd_path.read_text(encoding="utf-8")
+        assert "authors: []" in qmd_content
+        assert 'authors: "[]"' not in qmd_content
+        assert "keywords: []" in qmd_content
+        assert 'keywords: "[]"' not in qmd_content
+        assert "geometry: []" in qmd_content
+        assert 'geometry: "[]"' not in qmd_content
+        assert "classoption: []" in qmd_content
+        assert 'classoption: "[]"' not in qmd_content
+
+        # Parse generated front matter with Pandoc to assert resulting Python types
+        try:
+            import json
+            import subprocess
+            proc = subprocess.run(
+                ["pandoc", "-f", "markdown", "-t", "json"],
+                input=qmd_content,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            ast = json.loads(proc.stdout)
+            meta = ast.get("meta", {})
+            assert meta["authors"]["t"] == "MetaList"
+            assert meta["authors"]["c"] == []
+            assert meta["keywords"]["t"] == "MetaList"
+            assert meta["keywords"]["c"] == []
+            assert meta["geometry"]["t"] == "MetaList"
+            assert meta["geometry"]["c"] == []
+            assert meta["classoption"]["t"] == "MetaList"
+            assert meta["classoption"]["c"] == []
+            assert meta["format"]["t"] == "MetaMap"
+        except (FileNotFoundError, subprocess.SubprocessError):
+            pass
+
+
+def test_staging_cleanup_failure_observable_on_normal_exit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """
+    If staging workspace removal fails during normal context exit,
+    StagingCleanupError must be raised to make the failure observable.
+    """
+    job_artifacts_dir = tmp_path / "artifacts" / "job_13"
+    job_artifacts_dir.mkdir(parents=True)
+
+    manager = StagingWorkspaceManager()
+    resolver = DocumentAssetResolver()
+
+    import shutil
+    def failing_rmtree(path, *args, **kwargs):
+        raise PermissionError(f"Simulated cleanup permission error for {path}")
+
+    monkeypatch.setattr(shutil, "rmtree", failing_rmtree)
+
+    with pytest.raises(StagingCleanupError, match="Failed to remove staging workspace"):
+        with manager.create_session(
+            job_artifacts_dir=job_artifacts_dir,
+            job_id=13,
+            raw_metadata={},
+            canonical_markdown="Body",
+            asset_resolver=resolver,
+        ):
+            pass
+
+
+def test_staging_cleanup_failure_preserves_primary_exception(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """
+    If a primary exception is propagating from the context block, a secondary
+    cleanup failure must NOT mask the original exception.
+    """
+    job_artifacts_dir = tmp_path / "artifacts" / "job_14"
+    job_artifacts_dir.mkdir(parents=True)
+
+    manager = StagingWorkspaceManager()
+    resolver = DocumentAssetResolver()
+
+    import shutil
+    def failing_rmtree(path, *args, **kwargs):
+        raise PermissionError(f"Simulated cleanup permission error for {path}")
+
+    monkeypatch.setattr(shutil, "rmtree", failing_rmtree)
+
+    with pytest.raises(RuntimeError, match="Primary execution error"):
+        with manager.create_session(
+            job_artifacts_dir=job_artifacts_dir,
+            job_id=14,
+            raw_metadata={},
+            canonical_markdown="Body",
+            asset_resolver=resolver,
+        ):
+            raise RuntimeError("Primary execution error")
+
+
+def test_staging_concurrent_sessions_safety(tmp_path: Path):
+    """
+    Two concurrent staging sessions under the same job_artifacts_dir must remain
+    isolated. Exiting session A must not remove session B's workspace or prematurely
+    remove .pdf_staging while session B is active.
+    """
+    job_artifacts_dir = tmp_path / "artifacts" / "job_15"
+    job_artifacts_dir.mkdir(parents=True)
+
+    manager = StagingWorkspaceManager()
+    resolver = DocumentAssetResolver()
+
+    cm_a = manager.create_session(
+        job_artifacts_dir=job_artifacts_dir,
+        job_id=15,
+        raw_metadata={"title": "Session A"},
+        canonical_markdown="Body A",
+        asset_resolver=resolver,
+    )
+    cm_b = manager.create_session(
+        job_artifacts_dir=job_artifacts_dir,
+        job_id=15,
+        raw_metadata={"title": "Session B"},
+        canonical_markdown="Body B",
+        asset_resolver=resolver,
+    )
+
+    session_a = cm_a.__enter__()
+    session_b = cm_b.__enter__()
+
+    assert session_a.staging_dir.exists()
+    assert session_b.staging_dir.exists()
+    assert session_a.staging_dir != session_b.staging_dir
+    assert (job_artifacts_dir / ".pdf_staging").exists()
+
+    # Session A exits
+    cm_a.__exit__(None, None, None)
+    assert not session_a.staging_dir.exists()
+    assert session_b.staging_dir.exists()
+    assert (job_artifacts_dir / ".pdf_staging").exists()
+
+    # Session B exits
+    cm_b.__exit__(None, None, None)
+    assert not session_b.staging_dir.exists()
+    assert not (job_artifacts_dir / ".pdf_staging").exists()
+
+
+def test_staging_markdown_leading_horizontal_rule_preservation(tmp_path: Path):
+    """
+    A canonical Markdown body starting with a horizontal rule '---' and containing
+    subsequent horizontal rules must not be mistaken for YAML front matter.
+    All body sections and horizontal rules must be preserved.
+    """
+    job_artifacts_dir = tmp_path / "artifacts" / "job_16"
+    job_artifacts_dir.mkdir(parents=True)
+
+    manager = StagingWorkspaceManager()
+    resolver = DocumentAssetResolver()
+
+    canonical_body = "---\n\n# Introduction\n\nLegitimate body paragraph.\n\n---\n\n# Section 2\n\nMore text.\n"
+
+    with manager.create_session(
+        job_artifacts_dir=job_artifacts_dir,
+        job_id=16,
+        raw_metadata={"title": "HR Preservation"},
+        canonical_markdown=canonical_body,
+        asset_resolver=resolver,
+    ) as session:
+        qmd_content = session.qmd_path.read_text(encoding="utf-8")
+        assert "# Introduction" in qmd_content
+        assert "Legitimate body paragraph." in qmd_content
+        assert "# Section 2" in qmd_content
+        assert "More text." in qmd_content
+        assert "---\n\n# Introduction" in qmd_content

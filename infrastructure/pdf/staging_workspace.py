@@ -23,7 +23,9 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+import errno
 import json
+import logging
 from pathlib import Path
 import re
 import secrets
@@ -36,6 +38,14 @@ from application.services.document_asset_resolver import (
     DocumentAssetResolver,
 )
 from application.services.metadata_normalizer import normalize_quarto_pdf_metadata
+
+logger = logging.getLogger(__name__)
+
+
+class StagingCleanupError(OSError):
+    """Raised when removing an ephemeral staging workspace fails on normal exit."""
+    pass
+
 
 # Quarto project barrier configuration to isolate ephemeral export sessions
 # from any ambient _quarto.yml settings in ancestor directories.
@@ -80,21 +90,30 @@ def _format_yaml_scalar(val: Any) -> str:
         return str(val)
     if isinstance(val, str):
         return json.dumps(val, ensure_ascii=False)
+    if isinstance(val, list) and not val:
+        return "[]"
+    if isinstance(val, dict) and not val:
+        return "{}"
     return json.dumps(str(val), ensure_ascii=False)
 
 
 def _dump_yaml(obj: Any, indent_level: int = 0) -> str:
     """
     Serializes normalized metadata dictionaries into clean, indented YAML front matter.
-    Preserves lists of dicts (such as include-in-header: [{"file": "polpo_preamble.tex"}])
-    and multi-line strings deterministically.
+    Preserves empty sequences (e.g. []), empty mappings ({}), lists of dicts
+    (such as include-in-header: [{"file": "polpo_preamble.tex"}]), and multi-line
+    strings deterministically.
     """
     lines: List[str] = []
     prefix = "  " * indent_level
 
     if isinstance(obj, dict):
         for k, v in obj.items():
-            if isinstance(v, (dict, list)) and v:
+            if isinstance(v, dict) and not v:
+                lines.append(f"{prefix}{k}: {{}}")
+            elif isinstance(v, list) and not v:
+                lines.append(f"{prefix}{k}: []")
+            elif isinstance(v, (dict, list)) and v:
                 lines.append(f"{prefix}{k}:")
                 lines.append(_dump_yaml(v, indent_level + 1))
             elif isinstance(v, str) and "\n" in v:
@@ -107,10 +126,17 @@ def _dump_yaml(obj: Any, indent_level: int = 0) -> str:
     elif isinstance(obj, list):
         for item in obj:
             if isinstance(item, dict):
+                if not item:
+                    lines.append(f"{prefix}- {{}}")
+                    continue
                 first = True
                 for k, v in item.items():
                     if first:
-                        if isinstance(v, (dict, list)) and v:
+                        if isinstance(v, dict) and not v:
+                            lines.append(f"{prefix}- {k}: {{}}")
+                        elif isinstance(v, list) and not v:
+                            lines.append(f"{prefix}- {k}: []")
+                        elif isinstance(v, (dict, list)) and v:
                             lines.append(f"{prefix}- {k}:")
                             lines.append(_dump_yaml(v, indent_level + 2))
                         elif isinstance(v, str) and "\n" in v:
@@ -122,7 +148,11 @@ def _dump_yaml(obj: Any, indent_level: int = 0) -> str:
                         first = False
                     else:
                         item_prefix = prefix + "  "
-                        if isinstance(v, (dict, list)) and v:
+                        if isinstance(v, dict) and not v:
+                            lines.append(f"{item_prefix}{k}: {{}}")
+                        elif isinstance(v, list) and not v:
+                            lines.append(f"{item_prefix}{k}: []")
+                        elif isinstance(v, (dict, list)) and v:
                             lines.append(f"{item_prefix}{k}:")
                             lines.append(_dump_yaml(v, indent_level + 2))
                         elif isinstance(v, str) and "\n" in v:
@@ -132,8 +162,11 @@ def _dump_yaml(obj: Any, indent_level: int = 0) -> str:
                         else:
                             lines.append(f"{item_prefix}{k}: {_format_yaml_scalar(v)}")
             elif isinstance(item, list):
-                lines.append(f"{prefix}-")
-                lines.append(_dump_yaml(item, indent_level + 1))
+                if not item:
+                    lines.append(f"{prefix}- []")
+                else:
+                    lines.append(f"{prefix}-")
+                    lines.append(_dump_yaml(item, indent_level + 1))
             elif isinstance(item, str) and "\n" in item:
                 lines.append(f"{prefix}- |")
                 for line in item.splitlines():
@@ -145,9 +178,54 @@ def _dump_yaml(obj: Any, indent_level: int = 0) -> str:
 
 
 def _strip_existing_front_matter(markdown: str) -> str:
-    """Removes any leading YAML front matter block from canonical markdown if present."""
-    pattern = r"^---\r?\n.*?\r?\n---\r?\n?"
-    return re.sub(pattern, "", markdown, count=1, flags=re.DOTALL)
+    """Removes any leading YAML front matter block from canonical markdown if present.
+
+    A valid YAML metadata block:
+    - Must start on line 1 with '---' followed immediately by non-empty YAML content.
+    - Must contain at least one valid top-level YAML key (e.g. 'key:').
+    - Must not contain un-indented non-YAML paragraph text.
+    - Must be closed by '---' or '...' on its own line.
+
+    If the text begins with a thematic break / horizontal rule rather than a recognized
+    YAML metadata block, the content is preserved intact.
+    """
+    if not (markdown.startswith("---\n") or markdown.startswith("---\r\n")):
+        return markdown
+
+    lines = markdown.splitlines(keepends=True)
+    if len(lines) < 3:
+        return markdown
+
+    # Line 2 cannot be empty (in Pandoc, an empty line after '---' indicates a thematic break)
+    if not lines[1].strip():
+        return markdown
+
+    closing_index = -1
+    has_yaml_key = False
+    valid_yaml_block = True
+
+    for i in range(1, len(lines)):
+        line_stripped = lines[i].rstrip("\r\n")
+        if line_stripped in ("---", "..."):
+            closing_index = i
+            break
+
+        trimmed = line_stripped.strip()
+        if not trimmed or trimmed.startswith("#"):
+            continue
+
+        if re.match(r"^[a-zA-Z0-9_.-]+:\s*", line_stripped):
+            has_yaml_key = True
+        elif line_stripped.startswith(" ") or line_stripped.startswith("\t") or line_stripped.startswith("- "):
+            continue
+        else:
+            valid_yaml_block = False
+            break
+
+    if closing_index != -1 and has_yaml_key and valid_yaml_block:
+        return "".join(lines[closing_index + 1 :])
+
+    return markdown
 
 
 class StagingWorkspaceManager:
@@ -201,6 +279,7 @@ class StagingWorkspaceManager:
             AssetAccessError: If a referenced asset violates containment or is unreadable.
             FileNotFoundError: If the preamble template cannot be found.
             MalformedMetadataError: If metadata violates allowlist schema validation.
+            StagingCleanupError: If removing the staging workspace fails on normal exit.
         """
         # Validate preamble template existence before workspace allocation
         preamble_template = self.templates_dir / "polpo_preamble.tex"
@@ -217,6 +296,7 @@ class StagingWorkspaceManager:
         staging_dir = pdf_staging_parent / f"{job_id}_{token}"
         staging_dir.mkdir(parents=True, exist_ok=False)
 
+        has_primary_exception = False
         try:
             # 1. Project Barrier Injection
             quarto_yml_path = staging_dir / "_quarto.yml"
@@ -272,14 +352,34 @@ class StagingWorkspaceManager:
 
             yield session
 
+        except BaseException:
+            has_primary_exception = True
+            raise
         finally:
             # Deterministic workspace cleanup on normal exit, exception, or cancellation
             if staging_dir.exists():
-                shutil.rmtree(staging_dir, ignore_errors=True)
+                try:
+                    shutil.rmtree(staging_dir)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to remove staging workspace '%s': %s",
+                        staging_dir,
+                        e,
+                    )
+                    if not has_primary_exception:
+                        raise StagingCleanupError(
+                            f"Failed to remove staging workspace at '{staging_dir}': {e}"
+                        ) from e
 
             try:
                 if pdf_staging_parent.exists() and not any(pdf_staging_parent.iterdir()):
                     pdf_staging_parent.rmdir()
-            except OSError:
+            except OSError as e:
                 # Retain parent directory silently if another concurrent job session is active
-                pass
+                # or if the directory cannot be removed immediately
+                if e.errno not in (errno.ENOTEMPTY, errno.EEXIST, errno.ENOENT):
+                    logger.warning(
+                        "Failed to remove empty parent staging directory '%s': %s",
+                        pdf_staging_parent,
+                        e,
+                    )
