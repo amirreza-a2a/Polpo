@@ -4,7 +4,11 @@
 #  Phase 13 — Ticket #100
 # ============================================================
 
+import json
 from pathlib import Path
+import shutil
+import subprocess
+
 import pytest
 
 from application.services.document_asset_resolver import (
@@ -444,30 +448,31 @@ def test_staging_yaml_empty_collections_semantic_preservation(tmp_path: Path):
         assert "classoption: []" in qmd_content
         assert 'classoption: "[]"' not in qmd_content
 
-        # Parse generated front matter with Pandoc to assert resulting Python types
-        try:
-            import json
-            import subprocess
-            proc = subprocess.run(
-                ["pandoc", "-f", "markdown", "-t", "json"],
-                input=qmd_content,
-                text=True,
-                capture_output=True,
-                check=True,
-            )
-            ast = json.loads(proc.stdout)
-            meta = ast.get("meta", {})
-            assert meta["authors"]["t"] == "MetaList"
-            assert meta["authors"]["c"] == []
-            assert meta["keywords"]["t"] == "MetaList"
-            assert meta["keywords"]["c"] == []
-            assert meta["geometry"]["t"] == "MetaList"
-            assert meta["geometry"]["c"] == []
-            assert meta["classoption"]["t"] == "MetaList"
-            assert meta["classoption"]["c"] == []
-            assert meta["format"]["t"] == "MetaMap"
-        except (FileNotFoundError, subprocess.SubprocessError):
-            pass
+        # Semantic AST verification via Pandoc (when available in environment)
+        pandoc_bin = shutil.which("pandoc")
+        if not pandoc_bin:
+            # Skip only the AST verification sub-check if Pandoc is unavailable in PATH;
+            # direct YAML-output assertions above remain active and validated.
+            return
+
+        proc = subprocess.run(
+            [pandoc_bin, "-f", "markdown", "-t", "json"],
+            input=qmd_content,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        ast = json.loads(proc.stdout)
+        meta = ast.get("meta", {})
+        assert meta["authors"]["t"] == "MetaList"
+        assert meta["authors"]["c"] == []
+        assert meta["keywords"]["t"] == "MetaList"
+        assert meta["keywords"]["c"] == []
+        assert meta["geometry"]["t"] == "MetaList"
+        assert meta["geometry"]["c"] == []
+        assert meta["classoption"]["t"] == "MetaList"
+        assert meta["classoption"]["c"] == []
+        assert meta["format"]["t"] == "MetaMap"
 
 
 def test_staging_cleanup_failure_observable_on_normal_exit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
