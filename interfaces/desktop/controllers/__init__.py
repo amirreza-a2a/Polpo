@@ -11,6 +11,7 @@ from interfaces.desktop.controllers.document_viewer_controller import DocumentVi
 from interfaces.desktop.controllers.markdown_viewer_controller import MarkdownViewerController
 from interfaces.desktop.controllers.markdown_editor_controller import MarkdownEditorController
 from interfaces.desktop.controllers.export_controller import ExportController
+from interfaces.desktop.controllers.pdf_setup_controller import PdfSetupController
 from interfaces.desktop.controllers.theme_controller import ThemeController
 
 __all__ = [
@@ -23,5 +24,6 @@ __all__ = [
     "MarkdownViewerController",
     "MarkdownEditorController",
     "ExportController",
+    "PdfSetupController",
     "ThemeController",
 ]

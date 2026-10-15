@@ -20,6 +20,7 @@ from interfaces.desktop.controllers import (
     MarkdownViewerController,
     MarkdownEditorController,
     ExportController,
+    PdfSetupController,
     ThemeController,
 )
 from interfaces.desktop.theme import create_qt_palette
@@ -300,10 +301,17 @@ def create_app(
         markdown_editor_controller.set_syntax_theme
     )
     markdown_editor_controller.set_syntax_theme(theme_controller.resolvedTheme)
+    pdf_setup_controller = PdfSetupController(
+        runtime_discovery=container.pdf_runtime_discovery,
+        package_recovery_service=container.package_recovery_service,
+        settings_service=container.settings_service,
+    )
     export_controller = ExportController(
         export_service=container.export_package_service,
         editor_controller=markdown_editor_controller,
         query_service=container.job_query_service,
+        export_pdf_service=container.quarto_pdf_export_service,
+        package_recovery_service=container.package_recovery_service,
     )
 
     # Wire Bidirectional Synchronization between Document Viewer, Markdown Viewer, and Markdown Editor
@@ -343,6 +351,7 @@ def create_app(
     container.markdown_viewer_controller = markdown_viewer_controller
     container.markdown_editor_controller = markdown_editor_controller
     container.export_controller = export_controller
+    container.pdf_setup_controller = pdf_setup_controller
     container.sync_coordinator = sync_coordinator
     container.job_queue_model = job_queue_model
     container.job_history_model = job_history_model
@@ -366,6 +375,7 @@ def create_app(
     ctx.setContextProperty("markdownViewerController", markdown_viewer_controller)
     ctx.setContextProperty("markdownEditorController", markdown_editor_controller)
     ctx.setContextProperty("exportController", export_controller)
+    ctx.setContextProperty("pdfSetupController", pdf_setup_controller)
     if sync_coordinator is not None:
         ctx.setContextProperty("reviewWorkspaceSyncCoordinator", sync_coordinator)
     ctx.setContextProperty("jobQueueModel", job_queue_model)

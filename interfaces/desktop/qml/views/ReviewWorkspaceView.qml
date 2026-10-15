@@ -8,6 +8,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
 import "../components"
+import "../dialogs"
 
 Item {
     id: reviewWorkspaceRoot
@@ -215,9 +216,26 @@ Item {
                                 objectName: "exportPackageButton"
                                 text: "Export Package (ZIP)"
                                 implicitHeight: 26
-                                highlighted: true
                                 enabled: typeof exportController !== "undefined" && exportController && !exportController.isExporting && reviewWorkspaceRoot.getActiveJobId() > 0
                                 onClicked: reviewWorkspaceRoot.handleExportClicked("package")
+                            }
+
+                            Button {
+                                id: exportPdfBtn
+                                objectName: "exportPdfButton"
+                                text: "Export PDF"
+                                implicitHeight: 26
+                                highlighted: true
+                                enabled: typeof exportController !== "undefined" && exportController && !exportController.isExporting && reviewWorkspaceRoot.getActiveJobId() > 0
+                                onClicked: reviewWorkspaceRoot.handleExportClicked("pdf")
+                            }
+
+                            Button {
+                                id: pdfSetupBtn
+                                objectName: "pdfSetupButton"
+                                text: "PDF Setup"
+                                implicitHeight: 26
+                                onClicked: pdfSetupAssistantModal.open()
                             }
                         }
                     }
@@ -383,6 +401,31 @@ Item {
         }
     }
 
+    FileDialog {
+        id: exportPdfFileDialog
+        objectName: "exportPdfFileDialog"
+        title: "Export Publication-Grade PDF"
+        fileMode: FileDialog.SaveFile
+        nameFilters: ["PDF Files (*.pdf)", "All Files (*)"]
+        defaultSuffix: "pdf"
+        onAccepted: {
+            var jid = reviewWorkspaceRoot.getActiveJobId();
+            if (jid > 0 && typeof exportController !== "undefined" && exportController) {
+                exportController.exportPdf(jid, selectedFile.toString(), reviewWorkspaceRoot.exportVersion, false);
+            }
+        }
+    }
+
+    PdfSetupAssistantDialog {
+        id: pdfSetupAssistantModal
+        objectName: "pdfSetupAssistantModal"
+    }
+
+    MissingPackageRecoveryDialog {
+        id: missingPackageRecoveryModal
+        objectName: "missingPackageRecoveryModal"
+    }
+
     ModalDialog {
         id: saveBeforeExportModal
         objectName: "saveBeforeExportModal"
@@ -511,7 +554,11 @@ Item {
         function onReadyForDestination(jid, expType, ver) {
             reviewWorkspaceRoot.exportVersion = ver;
             var suggested = exportController.getSuggestedFileName(jid, expType, ver);
-            if (expType === "markdown") {
+            if (expType === "pdf") {
+                var basePdf = exportPdfFileDialog.currentFolder.toString();
+                exportPdfFileDialog.currentFile = (basePdf ? basePdf + (basePdf.endsWith("/") ? "" : "/") : "") + suggested;
+                exportPdfFileDialog.open();
+            } else if (expType === "markdown") {
                 var baseMd = exportMarkdownFileDialog.currentFolder.toString();
                 exportMarkdownFileDialog.currentFile = (baseMd ? baseMd + (baseMd.endsWith("/") ? "" : "/") : "") + suggested;
                 exportMarkdownFileDialog.open();
@@ -524,6 +571,13 @@ Item {
         function onOverwriteRequired(jid, expType, destPath, ver) {
             overwriteConfirmModal.destinationPath = destPath;
             overwriteConfirmModal.open();
+        }
+        function onPackageRecoveryRequired(jid, pkgs, canAuto, inst) {
+            missingPackageRecoveryModal.jobId = jid;
+            missingPackageRecoveryModal.missingPackages = pkgs;
+            missingPackageRecoveryModal.canAutoRecover = canAuto;
+            missingPackageRecoveryModal.instructions = inst;
+            missingPackageRecoveryModal.open();
         }
     }
 
