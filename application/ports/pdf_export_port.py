@@ -156,3 +156,25 @@ class IPdfArtifactPublisher(ABC):
             PublishResultDTO with target path, persisted byte count, and optional cleanup warning.
         """
         raise NotImplementedError
+
+
+class ITinyTexManager(ABC):
+    """Port interface for TinyTeX package installation and management."""
+
+    @abstractmethod
+    def install_packages(
+        self,
+        package_names: Sequence[str],
+        is_cancelled: Optional[Callable[[], bool]] = None,
+    ) -> PackageInstallResult:
+        """
+        Installs missing LaTeX packages into the active TeX distribution.
+
+        Args:
+            package_names: Sequence of package names to install.
+            is_cancelled: Optional cooperative cancellation callback.
+
+        Returns:
+            PackageInstallResult indicating outcome.
+        """
+        raise NotImplementedError

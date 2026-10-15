@@ -171,3 +171,9 @@ class PdfExportCancelledError(PdfExportError):
     """Raised when PDF export is cooperatively cancelled by user."""
     def __init__(self, message: str = "PDF export was cancelled."):
         super().__init__(message)
+
+
+class OfflineRecoveryError(PdfExportError):
+    """Raised when LaTeX package recovery fails due to lack of network connectivity or CTAN unreachability."""
+    def __init__(self, message: str = "LaTeX package recovery failed due to lack of network connectivity."):
+        super().__init__(message)
