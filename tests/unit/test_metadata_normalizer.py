@@ -360,3 +360,42 @@ def test_metadata_normalizer_allowlist_completeness():
     """Verify allowlist sizes match specification."""
     assert len(ALLOWED_ROOT_KEYS_V1) == 35
     assert len(ALLOWED_PDF_KEYS_V1) == 26
+
+
+def test_metadata_normalizer_idempotence():
+    """
+    Verify normalize_quarto_pdf_metadata is idempotent.
+    - Normalizing already-normalized metadata succeeds without error.
+    - Internal polpo_preamble.tex is recognized and does not trigger UntrustedDocumentExtensionError.
+    - External file references continue to raise UntrustedDocumentExtensionError.
+    """
+    raw_meta = {
+        "title": "Initial Title",
+        "documentclass": "scrartcl",
+        "header-includes": ["\\usepackage{booktabs}"],
+        "format": {
+            "pdf": {
+                "include-in-header": [{"text": "\\newcommand{\\cmd}{val}"}],
+                "include-before-body": [{"text": "\\section{Intro}"}],
+            }
+        },
+    }
+
+    staged_once = normalize_quarto_pdf_metadata(raw_meta, is_tinytex=False, default_title="Fallback")
+    staged_twice = normalize_quarto_pdf_metadata(staged_once, is_tinytex=False, default_title="Fallback")
+    staged_thrice = normalize_quarto_pdf_metadata(staged_twice, is_tinytex=False, default_title="Fallback")
+
+    assert staged_once == staged_twice == staged_thrice
+    assert staged_twice["format"]["pdf"]["include-in-header"] == [{"file": "polpo_preamble.tex"}]
+
+    # External file inclusion must still be rejected
+    malicious_meta = {
+        "title": "Malicious Doc",
+        "format": {
+            "pdf": {
+                "include-in-header": [{"file": "external_exploit.tex"}],
+            }
+        },
+    }
+    with pytest.raises(UntrustedDocumentExtensionError, match="external_exploit.tex"):
+        normalize_quarto_pdf_metadata(malicious_meta, is_tinytex=False, default_title="Doc")

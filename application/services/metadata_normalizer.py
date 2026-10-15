@@ -332,6 +332,9 @@ def _extract_include_items(
                     f"External file inclusion via '{field_name}' ('{item}') is not permitted."
                 )
             if isinstance(item, dict):
+                if item.get("file") == "polpo_preamble.tex":
+                    # Internal Polpo preamble template is trusted and managed by staging workspace
+                    continue
                 if "file" in item and not allow_files:
                     raise UntrustedDocumentExtensionError(
                         f"External file inclusion via '{field_name}' ('{item['file']}') is not permitted."
