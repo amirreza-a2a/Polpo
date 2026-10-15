@@ -1,15 +1,23 @@
-"""Presentation controller for document exports (Standalone Markdown and Package ZIP)."""
+"""Presentation controller for document exports (Markdown, ZIP Package, and PDF)."""
 
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
+from application.dto.pdf_export_dto import ExportPdfCommand
 from application.sanitizer import sanitize_error_message
 from application.services.export_package_service import (
     DestinationAlreadyExistsError,
     ExportPackageService,
     derive_document_slug,
+)
+from application.services.package_recovery_service import PackageRecoveryService
+from application.services.quarto_pdf_export_service import QuartoPdfExportService
+from core.exceptions.domain_exceptions import (
+    MissingLatexPackageError,
+    PdfCompilationError,
+    PdfExportError,
 )
 from interfaces.desktop.qt_compat import Property, QObject, QUrl, Signal, Slot
 
@@ -33,21 +41,25 @@ class _JobFileHolder:
 
 class ExportController(QObject):
     """
-    Presentation controller for document exports (Standalone Markdown and Package ZIP).
+    Presentation controller for document exports (Standalone Markdown, Package ZIP, and PDF).
     Coordinates background execution, dirty-editor save guards, overwrite confirmation,
-    error presentation, and clean executor shutdown.
+    error presentation, package recovery interception, and clean executor shutdown.
     """
 
     exportingChanged = Signal()
     errorChanged = Signal()
     exportCompleted = Signal(int, str)             # (job_id, destination_path)
     exportFailed = Signal(int, str)                # (job_id, error_message)
+    exportWarning = Signal(int, str)               # (job_id, warning_message)
     overwriteRequired = Signal(int, str, str, int) # (job_id, export_type, destination_path, version)
     saveBeforeExportRequired = Signal(int, str, int)  # (job_id, export_type, current_version)
     readyForDestination = Signal(int, str, int)    # (job_id, export_type, resolved_version)
+    packageRecoveryRequired = Signal(int, list, bool, str)  # (job_id, pkgs, can_auto, instructions)
 
     _internalExportCompleted = Signal(int, int, str)
     _internalExportError = Signal(int, int, str, bool, str, str, int)
+    _internalExportWarning = Signal(int, int, str)
+    _internalPackageRecoveryRequired = Signal(int, int, list, bool, str)
 
     def __init__(
         self,
@@ -55,11 +67,15 @@ class ExportController(QObject):
         editor_controller: Optional[QObject] = None,
         query_service: Optional[Any] = None,
         parent: Optional[QObject] = None,
+        export_pdf_service: Optional[QuartoPdfExportService] = None,
+        package_recovery_service: Optional[PackageRecoveryService] = None,
     ):
         super().__init__(parent)
         self.export_service = export_service
         self.editor_controller = editor_controller
         self.query_service = query_service
+        self.export_pdf_service = export_pdf_service
+        self.package_recovery_service = package_recovery_service
 
         self._is_exporting: bool = False
         self._error_message: str = ""
@@ -74,6 +90,8 @@ class ExportController(QObject):
 
         self._internalExportCompleted.connect(self._on_internal_export_completed)
         self._internalExportError.connect(self._on_internal_export_error)
+        self._internalExportWarning.connect(self._on_internal_export_warning)
+        self._internalPackageRecoveryRequired.connect(self._on_internal_package_recovery_required)
 
     def is_exporting(self) -> bool:
         return self._is_exporting
@@ -124,7 +142,12 @@ class ExportController(QObject):
     @Slot(int, str, result=str)
     def getSuggestedFileName(self, job_id: int, export_type: str, version: int = 0) -> str:
         """Generates a cross-platform clean default filename for the export."""
-        ext = "zip" if export_type == "package" else "md"
+        if export_type == "pdf":
+            ext = "pdf"
+        elif export_type == "package":
+            ext = "zip"
+        else:
+            ext = "md"
         file_name = None
         if self.query_service is not None:
             try:
@@ -238,6 +261,13 @@ class ExportController(QObject):
                 version=pending["version"],
                 overwrite=True,
             )
+        elif pending["export_type"] == "pdf":
+            self.exportPdf(
+                job_id=pending["job_id"],
+                destination_uri=pending["destination_path"],
+                version=pending["version"],
+                overwrite=True,
+            )
         else:
             self.exportPackage(
                 job_id=pending["job_id"],
@@ -250,6 +280,45 @@ class ExportController(QObject):
     def cancelOverwrite(self) -> None:
         """User cancelled overwrite prompt."""
         self._pending_overwrite = None
+
+    @Slot(int, str, str, int, bool)
+    @Slot(int, str, str, int)
+    @Slot(int, str, str)
+    def start_export(
+        self,
+        job_id: int,
+        export_type: str,
+        destination_path: str,
+        version: int = 0,
+        overwrite: bool = False,
+    ) -> None:
+        """Unified export dispatcher supporting 'markdown', 'package', and 'pdf'."""
+        self._dispatch_export(
+            job_id=job_id,
+            export_type=export_type,
+            destination_uri=destination_path,
+            version=version,
+            overwrite=overwrite,
+        )
+
+    @Slot(int, str, int, bool)
+    @Slot(int, str, int)
+    @Slot(int, str)
+    def exportPdf(
+        self,
+        job_id: int,
+        destination_uri: str,
+        version: int = 0,
+        overwrite: bool = False,
+    ) -> None:
+        """Exports publication-grade PDF asynchronously."""
+        self._dispatch_export(
+            job_id=job_id,
+            export_type="pdf",
+            destination_uri=destination_uri,
+            version=version,
+            overwrite=overwrite,
+        )
 
     @Slot(int, str, int, bool)
     @Slot(int, str, int)
@@ -327,13 +396,31 @@ class ExportController(QObject):
 
         def _worker_task():
             try:
-                if export_type == "markdown":
+                if export_type == "pdf":
+                    if self.export_pdf_service is None:
+                        raise RuntimeError("PDF export service is not configured.")
+                    command = ExportPdfCommand(
+                        job_id=job_id,
+                        destination_path=local_path,
+                        version=req_ver,
+                        overwrite=overwrite,
+                    )
+                    res = self.export_pdf_service.export_pdf(command)
+                    if getattr(res, "cleanup_warning", None):
+                        self._internalExportWarning.emit(req_id, job_id, str(res.cleanup_warning))
+                    elif hasattr(res, "warnings") and res.warnings:
+                        for w in res.warnings:
+                            self._internalExportWarning.emit(req_id, job_id, str(w))
+                    dest_path = getattr(res, "destination_path", getattr(res, "published_path", str(local_path)))
+                    self._internalExportCompleted.emit(req_id, job_id, str(dest_path))
+                elif export_type == "markdown":
                     res = self.export_service.export_markdown(
                         job_id=job_id,
                         destination_path=local_path,
                         version=req_ver,
                         overwrite=overwrite,
                     )
+                    self._internalExportCompleted.emit(req_id, job_id, str(res.destination_path))
                 else:
                     res = self.export_service.export_package(
                         job_id=job_id,
@@ -341,7 +428,24 @@ class ExportController(QObject):
                         version=req_ver,
                         overwrite=overwrite,
                     )
-                self._internalExportCompleted.emit(req_id, job_id, str(res.destination_path))
+                    self._internalExportCompleted.emit(req_id, job_id, str(res.destination_path))
+            except MissingLatexPackageError as mlpe:
+                can_auto = False
+                instructions = ""
+                missing_pkgs = list(mlpe.package_names)
+                if self.package_recovery_service is not None:
+                    try:
+                        plan = self.package_recovery_service.create_recovery_plan(mlpe.package_names)
+                        can_auto = plan.can_auto_recover
+                        instructions = plan.manual_command or plan.diagnostic_summary
+                        missing_pkgs = list(plan.missing_packages)
+                    except Exception as plan_err:
+                        instructions = str(plan_err)
+                else:
+                    instructions = mlpe.sanitized_message or str(mlpe)
+                self._internalPackageRecoveryRequired.emit(
+                    req_id, job_id, missing_pkgs, can_auto, instructions
+                )
             except DestinationAlreadyExistsError as dae:
                 self._internalExportError.emit(
                     req_id, job_id, str(dae), True, export_type, str(local_path), version
@@ -475,6 +579,22 @@ class ExportController(QObject):
             self._pending_overwrite = None
             self.errorChanged.emit()
             self.exportFailed.emit(job_id, sanitized)
+
+    @Slot(int, int, str)
+    def _on_internal_export_warning(self, req_id: int, job_id: int, warning_msg: str) -> None:
+        if req_id != self._request_id or self._is_shutdown:
+            return
+        self.exportWarning.emit(job_id, warning_msg)
+
+    @Slot(int, int, list, bool, str)
+    def _on_internal_package_recovery_required(
+        self, req_id: int, job_id: int, pkgs: list, can_auto: bool, instructions: str
+    ) -> None:
+        if req_id != self._request_id or self._is_shutdown:
+            return
+        self._is_exporting = False
+        self.exportingChanged.emit()
+        self.packageRecoveryRequired.emit(job_id, pkgs, can_auto, instructions)
 
     @Slot()
     def shutdown(self) -> None:

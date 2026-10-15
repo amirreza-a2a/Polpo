@@ -39,6 +39,15 @@ from application.services.document_publication_service import DocumentPublicatio
 from application.services.crop_artifact_staging_service import CropArtifactStagingService
 from application.services.visual_region_publication_service import VisualRegionPublicationService
 from application.services.export_package_service import ExportPackageService
+from application.services.quarto_pdf_export_service import QuartoPdfExportService
+from application.services.package_recovery_service import PackageRecoveryService
+from infrastructure.pdf.runtime_discovery import QuartoRuntimeDiscovery
+from infrastructure.pdf.tinytex_manager import TinyTexManager
+from infrastructure.pdf.subprocess_supervisor import SubprocessSupervisor
+from infrastructure.pdf.staging_workspace import StagingWorkspaceManager
+from infrastructure.pdf.tex_log_sanitizer import TexLogSanitizer
+from infrastructure.pdf.quarto_adapter import QuartoPdfAdapter
+from infrastructure.pdf.atomic_publisher import AtomicPdfPublisher
 from infrastructure.markdown.pandoc_parser import PandocParser
 from infrastructure.math import MathSvgCache, MathJaxProcessSupervisor, MathJaxClient
 from interfaces.desktop.workers.runtime import DesktopJobRuntime
@@ -194,6 +203,30 @@ class DesktopAppContainer:
             artifacts_dir=artifacts_dir,
         )
 
+        self.pdf_runtime_discovery = QuartoRuntimeDiscovery()
+        self.tinytex_manager = TinyTexManager(discovery=self.pdf_runtime_discovery)
+        self.package_recovery_service = PackageRecoveryService(
+            discovery=self.pdf_runtime_discovery,
+            tinytex_manager=self.tinytex_manager,
+        )
+        self.pdf_supervisor = SubprocessSupervisor()
+        self.pdf_staging = StagingWorkspaceManager()
+        self.pdf_sanitizer = TexLogSanitizer()
+        self.pdf_adapter = QuartoPdfAdapter(
+            discovery=self.pdf_runtime_discovery,
+            supervisor=self.pdf_supervisor,
+            staging=self.pdf_staging,
+            sanitizer=self.pdf_sanitizer,
+        )
+        self.pdf_publisher = AtomicPdfPublisher()
+        self.quarto_pdf_export_service = QuartoPdfExportService(
+            uow_factory=self.uow_factory,
+            export_engine=self.pdf_adapter,
+            publisher=self.pdf_publisher,
+            artifacts_dir=artifacts_dir,
+            discovery=self.pdf_runtime_discovery,
+        )
+
         # 6. Desktop Concurrent Runtime & Persistent Scheduler
         self.runtime = DesktopJobRuntime(
             uow_factory=self.uow_factory,
@@ -269,5 +302,7 @@ class DesktopAppContainer:
             self.document_viewer_controller.shutdown()
         if hasattr(self, "export_controller") and self.export_controller:
             self.export_controller.shutdown()
+        if hasattr(self, "pdf_setup_controller") and self.pdf_setup_controller:
+            self.pdf_setup_controller.shutdown()
         self.scheduler.shutdown()
         self.runtime.shutdown()
