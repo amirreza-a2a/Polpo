@@ -50,6 +50,7 @@ from infrastructure.pdf.quarto_adapter import QuartoPdfAdapter
 from infrastructure.pdf.atomic_publisher import AtomicPdfPublisher
 from infrastructure.markdown.pandoc_parser import PandocParser
 from infrastructure.math import MathSvgCache, MathJaxProcessSupervisor, MathJaxClient
+from infrastructure.paths import get_user_data_dir, migrate_legacy_user_data_if_needed
 from interfaces.desktop.workers.runtime import DesktopJobRuntime
 from interfaces.desktop.workers.scheduler import DesktopJobScheduler
 
@@ -76,9 +77,9 @@ class DesktopAppContainer:
 
         # 1. Platform-appropriate default paths if not provided
         if db_path is None:
-            data_home = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
-            base_data = Path(data_home) / "polpot"
+            base_data = get_user_data_dir()
             base_data.mkdir(parents=True, exist_ok=True)
+            migrate_legacy_user_data_if_needed(target_dir=base_data)
             db_path = base_data / "polpot.db"
             if artifacts_dir is None:
                 artifacts_dir = base_data / "artifacts"

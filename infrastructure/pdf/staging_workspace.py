@@ -38,6 +38,7 @@ from application.services.document_asset_resolver import (
     DocumentAssetResolver,
 )
 from application.services.metadata_normalizer import normalize_quarto_pdf_metadata
+from infrastructure.paths import get_runtime_resource_path
 
 logger = logging.getLogger(__name__)
 
@@ -430,9 +431,7 @@ class StagingWorkspaceManager:
         if templates_dir is not None:
             self.templates_dir = Path(templates_dir).resolve()
         else:
-            self.templates_dir = (
-                Path(__file__).resolve().parent.parent.parent / "resources" / "templates"
-            )
+            self.templates_dir = get_runtime_resource_path("resources/templates")
 
     @contextmanager
     def create_session(

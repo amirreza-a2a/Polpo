@@ -100,3 +100,98 @@ def test_runtimes_json_manifest_structure_and_hashes():
         assert info["url"].startswith("https://")
         assert len(info["sha256"]) == 64
         int(info["sha256"], 16)  # must be valid hex
+
+
+def test_critical_packaged_assets_dev_mode():
+    """Verify all critical packaged assets resolve to existing readable files in dev mode."""
+    main_qml = get_runtime_resource_path("interfaces/desktop/qml/Main.qml")
+    assert main_qml.is_file()
+    assert "ApplicationWindow" in main_qml.read_text(encoding="utf-8")
+
+    preamble = get_runtime_resource_path("resources/templates/polpo_preamble.tex")
+    assert preamble.is_file()
+    assert "usepackage" in preamble.read_text(encoding="utf-8")
+
+    migrations_dir = get_runtime_resource_path("infrastructure/persistence/sqlite/migrations")
+    assert migrations_dir.is_dir()
+    sql_files = list(migrations_dir.glob("*.sql"))
+    assert len(sql_files) >= 4
+
+
+def test_frozen_mode_critical_assets_resolution(tmp_path: Path):
+    """Simulate PyInstaller bundle layout at sys._MEIPASS and verify resource resolution."""
+    bundle_dir = tmp_path / "mock_pyinstaller_bundle"
+    bundle_dir.mkdir()
+
+    # Stage mock assets inside bundle
+    mock_qml = bundle_dir / "interfaces" / "desktop" / "qml" / "Main.qml"
+    mock_qml.parent.mkdir(parents=True)
+    mock_qml.write_text("Mock Main QML", encoding="utf-8")
+
+    mock_preamble = bundle_dir / "resources" / "templates" / "polpo_preamble.tex"
+    mock_preamble.parent.mkdir(parents=True)
+    mock_preamble.write_text("Mock Preamble", encoding="utf-8")
+
+    with patch.object(sys, "frozen", True, create=True), \
+         patch.object(sys, "_MEIPASS", str(bundle_dir), create=True):
+        resolved_qml = get_runtime_resource_path("interfaces/desktop/qml/Main.qml")
+        assert resolved_qml == mock_qml
+        assert resolved_qml.is_file()
+
+        resolved_preamble = get_runtime_resource_path("resources/templates/polpo_preamble.tex")
+        assert resolved_preamble == mock_preamble
+        assert resolved_preamble.is_file()
+
+
+def test_staging_workspace_manager_frozen_resolution(tmp_path: Path):
+    """Verify StagingWorkspaceManager defaults to sys._MEIPASS templates in frozen mode."""
+    from infrastructure.pdf.staging_workspace import StagingWorkspaceManager
+
+    bundle_dir = tmp_path / "mock_bundle"
+    mock_templates = bundle_dir / "resources" / "templates"
+    mock_templates.mkdir(parents=True)
+    (mock_templates / "polpo_preamble.tex").write_text("% Mock", encoding="utf-8")
+
+    with patch.object(sys, "frozen", True, create=True), \
+         patch.object(sys, "_MEIPASS", str(bundle_dir), create=True):
+        manager = StagingWorkspaceManager()
+        assert manager.templates_dir == mock_templates
+        assert (manager.templates_dir / "polpo_preamble.tex").is_file()
+
+
+def test_sqlite_migration_runner_frozen_resolution(tmp_path: Path):
+    """Verify SQLiteMigrationRunner defaults to sys._MEIPASS migrations in frozen mode."""
+    from infrastructure.persistence.sqlite.connection import SQLiteDatabaseManager
+    from infrastructure.persistence.sqlite.migration_runner import SQLiteMigrationRunner
+
+    bundle_dir = tmp_path / "mock_bundle"
+    mock_migrations = bundle_dir / "infrastructure" / "persistence" / "sqlite" / "migrations"
+    mock_migrations.mkdir(parents=True)
+    (mock_migrations / "001_initial_schema.sql").write_text("CREATE TABLE test (id INT);", encoding="utf-8")
+
+    db_manager = SQLiteDatabaseManager.create_in_memory()
+
+    with patch.object(sys, "frozen", True, create=True), \
+         patch.object(sys, "_MEIPASS", str(bundle_dir), create=True):
+        runner = SQLiteMigrationRunner(db_manager)
+        assert runner.migrations_dir == mock_migrations
+        assert (runner.migrations_dir / "001_initial_schema.sql").is_file()
+
+
+def test_runtime_paths_working_directory_independent(tmp_path: Path, monkeypatch):
+    """Resolution of runtime resources must NOT depend on current working directory."""
+    expected_qml = get_runtime_resource_path("interfaces/desktop/qml/Main.qml")
+    expected_preamble = get_runtime_resource_path("resources/templates/polpo_preamble.tex")
+
+    # Change working directory to isolated empty directory
+    foreign_dir = tmp_path / "unrelated_dir"
+    foreign_dir.mkdir()
+    monkeypatch.chdir(foreign_dir)
+
+    resolved_qml = get_runtime_resource_path("interfaces/desktop/qml/Main.qml")
+    resolved_preamble = get_runtime_resource_path("resources/templates/polpo_preamble.tex")
+
+    assert resolved_qml == expected_qml
+    assert resolved_qml.is_file()
+    assert resolved_preamble == expected_preamble
+    assert resolved_preamble.is_file()
