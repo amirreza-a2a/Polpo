@@ -550,3 +550,57 @@ def test_percent_encoded_local_uri_resolves(tmp_path: Path):
     assert len(result.assets) == 1
     assert result.assets[0].relative_dest_path == "assets/my chart.png"
     assert result.resolved_markdown == "![Chart](assets/my chart.png)"
+
+
+def test_wikilink_image_embed_resolves_and_stages(tmp_path: Path):
+    """Obsidian-style ![[crop_1.jpg]] resolves from job artifacts and rewrites to standard markdown."""
+    job_dir = tmp_path / "artifacts" / "job_30"
+    job_dir.mkdir(parents=True)
+    crop_file = job_dir / "crop_30_p4_1.jpg"
+    crop_file.write_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"fake jpeg data")
+
+    markdown = "# Page Title\n\n![[crop_30_p4_1.jpg]]\n\nSome body text."
+    result = resolve_document_assets(
+        job_id=30,
+        canonical_markdown=markdown,
+        job_artifacts_dir=job_dir,
+    )
+
+    assert len(result.assets) == 1
+    assert result.assets[0].relative_dest_path == "assets/crop_30_p4_1.jpg"
+    assert result.assets[0].source_path == crop_file.resolve()
+    assert result.resolved_markdown == "# Page Title\n\n![](assets/crop_30_p4_1.jpg)\n\nSome body text."
+
+
+def test_wikilink_image_embed_with_caption_resolves_and_rewrites(tmp_path: Path):
+    """Obsidian-style ![[crop_1.jpg|Caption]] resolves and preserves caption as alt text."""
+    job_dir = tmp_path / "artifacts" / "job_30"
+    job_dir.mkdir(parents=True)
+    crop_file = job_dir / "crop_30_p4_2.jpg"
+    crop_file.write_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"fake jpeg data")
+
+    markdown = "![[crop_30_p4_2.jpg|Figure 2: Circuit schematic]]"
+    result = resolve_document_assets(
+        job_id=30,
+        canonical_markdown=markdown,
+        job_artifacts_dir=job_dir,
+    )
+
+    assert len(result.assets) == 1
+    assert result.assets[0].relative_dest_path == "assets/crop_30_p4_2.jpg"
+    assert result.resolved_markdown == "![Figure 2: Circuit schematic](assets/crop_30_p4_2.jpg)"
+
+
+def test_wikilink_image_embed_missing_raises_asset_not_found_error(tmp_path: Path):
+    """A missing Obsidian wikilink image reference raises AssetNotFoundError."""
+    job_dir = tmp_path / "artifacts" / "job_30"
+    job_dir.mkdir(parents=True)
+
+    markdown = "![[non_existent_crop.jpg]]"
+    with pytest.raises(AssetNotFoundError) as exc_info:
+        resolve_document_assets(
+            job_id=30,
+            canonical_markdown=markdown,
+            job_artifacts_dir=job_dir,
+        )
+    assert "non_existent_crop.jpg" in str(exc_info.value)

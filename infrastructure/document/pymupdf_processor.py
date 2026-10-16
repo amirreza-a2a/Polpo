@@ -114,7 +114,7 @@ class PyMuPDFDocumentProcessor(IDocumentProcessor):
         - Normalizes consecutive blank lines
         """
         page_header_pattern = re.compile(r"^##\s*صفحه\s*\d+\s*$", re.MULTILINE)
-        separator_pattern = re.compile(r"^\s*---\s*$", re.MULTILINE)
+        separator_pattern = re.compile(r"^\s*-{3,}\s*$", re.MULTILINE)
 
         text = page_header_pattern.sub("", raw_text)
         text = separator_pattern.sub("", text)

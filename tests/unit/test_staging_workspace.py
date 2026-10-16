@@ -94,12 +94,13 @@ def test_staging_writes_project_barrier(tmp_path: Path):
         assert "-no-shell-escape" in quarto_yml_content
         assert "-interaction=nonstopmode" in quarto_yml_content
         assert "-halt-on-error" in quarto_yml_content
+        assert "from: markdown-multiline_tables-simple_tables" in quarto_yml_content
 
 
 def test_staging_copies_preamble_template(tmp_path: Path):
     """
     Preamble polpo_preamble.tex is placed in staging with math, TikZ, Babel bidi,
-    FreeSerif fonts, and ADR-003 D02 TikZ LTR hooks.
+    FreeSerif fonts, ADR-003 D02 TikZ LTR hooks, and clamped pandocbounded image bounds.
     """
     job_artifacts_dir = tmp_path / "artifacts" / "job_3"
     job_artifacts_dir.mkdir(parents=True)
@@ -128,6 +129,14 @@ def test_staging_copies_preamble_template(tmp_path: Path):
         assert "\\babelfont{sf}{FreeSerif}" in preamble_text
         assert "\\AtBeginEnvironment{tikzpicture}{\\begin{otherlanguage*}{english}}" in preamble_text
         assert "\\AtEndEnvironment{tikzpicture}{\\end{otherlanguage*}}" in preamble_text
+        assert "\\providecommand{\\style}[2]{#2}" in preamble_text
+        assert "\\newcommand{\\persiantext}[1]" in preamble_text
+        assert "\\RenewDocumentCommand{\\includegraphics}" in preamble_text
+        assert "\\renewcommand{\\pgfpicture}" in preamble_text
+        assert "\\renewcommand{\\maketag@@@}" in preamble_text
+        assert "\\pandocbounded" in preamble_text
+        assert "\\textheight-4\\baselineskip" in preamble_text
+
 
 
 def test_staging_copies_local_assets_with_path_containment(tmp_path: Path):
@@ -605,3 +614,188 @@ def test_staging_markdown_leading_horizontal_rule_preservation(tmp_path: Path):
         assert "# Section 2" in qmd_content
         assert "More text." in qmd_content
         assert "---\n\n# Introduction" in qmd_content
+
+
+def test_staging_converts_github_alerts_to_quarto_callouts(tmp_path: Path):
+    """
+    GitHub markdown alert syntax (> [!NOTE], > [!IMPORTANT], etc.) is converted to
+    native Quarto callouts (::: {.callout-...}) in the staged document.qmd.
+    Alerts inside code blocks are preserved intact.
+    """
+    job_artifacts_dir = tmp_path / "artifacts" / "job_17"
+    job_artifacts_dir.mkdir(parents=True)
+
+    manager = StagingWorkspaceManager()
+    resolver = DocumentAssetResolver()
+
+    canonical_body = (
+        "# Title\n\n"
+        "> [!NOTE]\n"
+        "> Claude Shannon quote\n"
+        "> Second line of quote\n\n"
+        "Paragraph.\n\n"
+        "> [!IMPORTANT] Notice Title\n"
+        "> Important student warning.\n\n"
+        "```markdown\n"
+        "> [!NOTE]\n"
+        "> Inside code block should remain unchanged\n"
+        "```\n"
+    )
+
+    with manager.create_session(
+        job_artifacts_dir=job_artifacts_dir,
+        job_id=17,
+        raw_metadata={"title": "Alert Test"},
+        canonical_markdown=canonical_body,
+        asset_resolver=resolver,
+    ) as session:
+        qmd_content = session.qmd_path.read_text(encoding="utf-8")
+
+        # Native Quarto callouts generated
+        assert "::: {.callout-note}\nClaude Shannon quote\nSecond line of quote\n:::" in qmd_content
+        assert "::: {.callout-important}\n## Notice Title\nImportant student warning.\n:::" in qmd_content
+
+        # No raw unescaped alert syntax remains in body
+        assert "> [!NOTE]\n> Claude Shannon" not in qmd_content
+
+        # Preserved inside code blocks
+        assert "```markdown\n> [!NOTE]\n> Inside code block should remain unchanged\n```" in qmd_content
+
+
+def test_staging_sanitizes_uncropped_bounding_box_tags(tmp_path: Path, caplog: pytest.LogCaptureFixture):
+    """
+    Uncropped bounding box tags ([[ymin=..., ...]] or [[100, ...]]) remaining in canonical
+    markdown are stripped from staged document.qmd and log a diagnostic warning.
+    """
+    job_artifacts_dir = tmp_path / "artifacts" / "job_18"
+    job_artifacts_dir.mkdir(parents=True)
+
+    manager = StagingWorkspaceManager()
+    resolver = DocumentAssetResolver()
+
+    canonical_body = (
+        "# Signals\n\n"
+        "Here is continuous signal:\n"
+        "[[ymin=254, xmin=98, ymax=334, xmax=243]]\n"
+        "Discrete signal:\n"
+        "[[100, 200, 300, 400]]\n"
+        "Final text.\n"
+    )
+
+    import logging
+    with caplog.at_level(logging.WARNING):
+        with manager.create_session(
+            job_artifacts_dir=job_artifacts_dir,
+            job_id=18,
+            raw_metadata={"title": "Bounding Box Sanitization"},
+            canonical_markdown=canonical_body,
+            asset_resolver=resolver,
+        ) as session:
+            qmd_content = session.qmd_path.read_text(encoding="utf-8")
+
+            # Raw tags stripped
+            assert "[[ymin=254, xmin=98, ymax=334, xmax=243]]" not in qmd_content
+            assert "[[100, 200, 300, 400]]" not in qmd_content
+            assert "Here is continuous signal:" in qmd_content
+            assert "Discrete signal:" in qmd_content
+            assert "Final text." in qmd_content
+
+    # Warning logged
+    assert any("Uncropped bounding box coordinate" in record.message for record in caplog.records)
+
+
+def test_staging_sanitizes_four_dash_rules_preventing_multiline_tables(tmp_path: Path):
+    """
+    Four-dash rules (----) without trailing blank lines are normalized to standard
+    horizontal rules (---) with surrounding blank lines, preventing Pandoc multiline_tables.
+    """
+    job_artifacts_dir = tmp_path / "artifacts" / "job_19"
+    job_artifacts_dir.mkdir(parents=True)
+
+    manager = StagingWorkspaceManager()
+    resolver = DocumentAssetResolver()
+
+    canonical_body = "Line A\n----\n.\n# فهرست مطالب\n---\nLine B"
+    with manager.create_session(
+        job_artifacts_dir=job_artifacts_dir,
+        job_id=19,
+        raw_metadata={"title": "Table Prevention Test"},
+        canonical_markdown=canonical_body,
+        asset_resolver=resolver,
+    ) as session:
+        qmd_content = session.qmd_path.read_text(encoding="utf-8")
+        assert "\n\n---\n\n.\n" in qmd_content
+        assert "----" not in qmd_content
+
+
+def test_staging_preserves_dashes_inside_fenced_code_blocks(tmp_path: Path):
+    """
+    Fenced code blocks containing four-dash rules or tildes are preserved verbatim.
+    """
+    job_artifacts_dir = tmp_path / "artifacts" / "job_20"
+    job_artifacts_dir.mkdir(parents=True)
+
+    manager = StagingWorkspaceManager()
+    resolver = DocumentAssetResolver()
+
+    canonical_body = "# Code Test\n\n```markdown\n----\n```\n"
+    with manager.create_session(
+        job_artifacts_dir=job_artifacts_dir,
+        job_id=20,
+        raw_metadata={"title": "Fence Test"},
+        canonical_markdown=canonical_body,
+        asset_resolver=resolver,
+    ) as session:
+        qmd_content = session.qmd_path.read_text(encoding="utf-8")
+        assert "```markdown\n----\n```" in qmd_content
+
+
+def test_staging_sanitizes_mathjax_style_and_persian_tilde_in_math(tmp_path: Path):
+    r"""
+    MathJax \style macros are unwrapped and Persian math text with tildes
+    is normalized to \persiantext{...} with regular spaces.
+    """
+    job_artifacts_dir = tmp_path / "artifacts" / "job_21"
+    job_artifacts_dir.mkdir(parents=True)
+
+    manager = StagingWorkspaceManager()
+    resolver = DocumentAssetResolver()
+
+    canonical_body = (
+        "$$\\style{font-family:Vazirmatn}{\\text{با~تغییر~متغیر}} = "
+        "\\text{\\style{font-family:Vazirmatn}{تعریف~نشده}}$$"
+    )
+    with manager.create_session(
+        job_artifacts_dir=job_artifacts_dir,
+        job_id=21,
+        raw_metadata={"title": "Math Sanitization Test"},
+        canonical_markdown=canonical_body,
+        asset_resolver=resolver,
+    ) as session:
+        qmd_content = session.qmd_path.read_text(encoding="utf-8")
+        assert (
+            "$$\\persiantext{با تغییر متغیر} = \\persiantext{تعریف نشده}$$"
+            in qmd_content
+        )
+
+
+def test_staging_repairs_broken_negative_thin_space_before_left_delimiter(tmp_path: Path):
+    r"""
+    Repairs dropped backslashes on negative thin spaces (\!) before \left delimiters.
+    """
+    job_artifacts_dir = tmp_path / "artifacts" / "job_22"
+    job_artifacts_dir.mkdir(parents=True)
+
+    manager = StagingWorkspaceManager()
+    resolver = DocumentAssetResolver()
+
+    canonical_body = "$\\cos!\\left(t\\right) + x!\\left(t\\right)$"
+    with manager.create_session(
+        job_artifacts_dir=job_artifacts_dir,
+        job_id=22,
+        raw_metadata={"title": "Thin Space Repair Test"},
+        canonical_markdown=canonical_body,
+        asset_resolver=resolver,
+    ) as session:
+        qmd_content = session.qmd_path.read_text(encoding="utf-8")
+        assert "$\\cos\\!\\left(t\\right) + x\\!\\left(t\\right)$" in qmd_content

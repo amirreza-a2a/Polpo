@@ -428,17 +428,134 @@ Original canonical text."""
         assert dest_pdf.is_file()
         assert dest_pdf.read_bytes().startswith(b"%PDF-")
 
+    def test_scenario_08_canonical_rfc8089_uri_e2e_orchestration(
+        self, tmp_path: Path, bilingual_doc_content: str
+    ):
+        """
+        Scenario 8 RFC 8089 URI Integration:
+        Verifies end-to-end orchestration when DocumentVersionRecord.output_path is stored
+        as an RFC 8089 file:/// URI (matching DocumentPublicationService production behavior).
+        """
+        job_id = 90
+        version = 1
+        artifacts_dir = tmp_path / "artifacts"
+        job_dir = artifacts_dir / f"job_{job_id}"
+        job_dir.mkdir(parents=True)
+        canonical_md_file = job_dir / f"output_{job_id}_v{version}.md"
+
+        # Provide RFC 8089 file:/// URI in version record
+        raw_bytes = bilingual_doc_content.encode("utf-8")
+        canonical_md_file.write_bytes(raw_bytes)
+        content_hash = hashlib.sha256(raw_bytes).hexdigest()
+
+        job = MagicMock(spec=Job)
+        job.id = job_id
+        job.file_name = f"document_{job_id}.pdf"
+
+        version_record = DocumentVersionRecord(
+            job_id=job_id,
+            version=version,
+            output_path=canonical_md_file.resolve().as_uri(),
+            sha256=content_hash,
+            integrity_status="VALID",
+        )
+
+        mock_uow = MagicMock()
+        mock_uow.publish_intents.get_by_job_id.return_value = None
+        mock_uow.jobs.get_by_id.return_value = job
+        mock_uow.document_versions.get_by_version.return_value = version_record
+        mock_uow.document_versions.get_latest.return_value = version_record
+
+        uow_factory = MagicMock(spec=IUnitOfWorkFactory)
+        uow_factory.create.return_value.__enter__.return_value = mock_uow
+
+        mock_engine = MagicMock(spec=IPdfExportEngine)
+        fake_compiled_pdf = tmp_path / "compiled_uri_doc.pdf"
+        fake_compiled_pdf.write_bytes(b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n%%EOF")
+
+        mock_engine.render_pdf.return_value = PdfExportResult(
+            compiled_pdf_path=fake_compiled_pdf,
+            page_count=2,
+            duration_seconds=0.8,
+            warnings=(),
+        )
+
+        publisher = AtomicPdfPublisher()
+        discovery = MagicMock(spec=IPdfRuntimeDiscovery)
+        discovery.probe_readiness.return_value = EngineReadinessDTO(
+            quarto_available=True,
+            quarto_path="/usr/bin/quarto",
+            is_tinytex=False,
+        )
+
+        service = QuartoPdfExportService(
+            uow_factory=uow_factory,
+            export_engine=mock_engine,
+            publisher=publisher,
+            artifacts_dir=artifacts_dir,
+            discovery=discovery,
+        )
+
+        dest_pdf = tmp_path / "exported" / "uri_persian_test.pdf"
+        dest_pdf.parent.mkdir(parents=True, exist_ok=True)
+        dest_uri = dest_pdf.resolve().as_uri()
+
+        cmd = ExportPdfCommand(
+            job_id=job_id,
+            version=version,
+            destination_path=dest_uri,
+            overwrite=True,
+        )
+
+        result = service.export_pdf(cmd)
+        assert result.destination_path == dest_pdf.resolve()
+        assert result.page_count == 2
+        assert dest_pdf.is_file()
+        assert dest_pdf.read_bytes().startswith(b"%PDF-")
+
+
     @pytest.mark.skipif(not is_quarto_installed(), reason="Quarto or XeLaTeX not available on host")
     def test_scenario_08_bilingual_persian_rtl_and_tikz_live_compilation(
         self, tmp_path: Path, bilingual_doc_content: str
     ):
         """
         Scenario 8 Live Compilation (requires Quarto & XeLaTeX):
-        Compiles sample_bilingual_doc.qmd to real publication-grade PDF using native toolchain.
+        Compiles sample_bilingual_doc.qmd to real publication-grade PDF using native toolchain
+        through QuartoPdfExportService, verifying RFC 8089 URI canonical source & destination resolution.
         """
+        import pymupdf as fitz
+
         job_id = 89
-        artifacts_dir = tmp_path / "artifacts" / f"job_{job_id}"
-        artifacts_dir.mkdir(parents=True)
+        version = 1
+        artifacts_dir = tmp_path / "artifacts"
+        job_dir = artifacts_dir / f"job_{job_id}"
+        job_dir.mkdir(parents=True)
+        canonical_md_file = job_dir / f"output_{job_id}_v{version}.md"
+
+        raw_bytes = bilingual_doc_content.encode("utf-8")
+        canonical_md_file.write_bytes(raw_bytes)
+        content_hash = hashlib.sha256(raw_bytes).hexdigest()
+
+        job = MagicMock(spec=Job)
+        job.id = job_id
+        job.file_name = f"document_{job_id}.pdf"
+
+        version_record = DocumentVersionRecord(
+            job_id=job_id,
+            version=version,
+            output_path=canonical_md_file.resolve().as_uri(),
+            sha256=content_hash,
+            integrity_status="VALID",
+        )
+
+        mock_uow = MagicMock()
+        mock_uow.publish_intents.get_by_job_id.return_value = None
+        mock_uow.jobs.get_by_id.return_value = job
+        mock_uow.document_versions.get_by_version.return_value = version_record
+        mock_uow.document_versions.get_latest.return_value = version_record
+
+        uow_factory = MagicMock(spec=IUnitOfWorkFactory)
+        uow_factory.create.return_value.__enter__.return_value = mock_uow
 
         discovery = QuartoRuntimeDiscovery()
         supervisor = SubprocessSupervisor()
@@ -452,24 +569,147 @@ Original canonical text."""
             sanitizer=sanitizer,
             timeout_seconds=120.0,
         )
+        publisher = AtomicPdfPublisher()
 
-        request = PdfExportRequest(
-            job_id=job_id,
-            canonical_markdown=bilingual_doc_content,
-            raw_metadata={
-                "title": "سند دو زبانه آزمایشی",
-                "documentclass": "scrartcl",
-                "keep-tex": True,
-            },
-            job_artifacts_dir=artifacts_dir,
+        service = QuartoPdfExportService(
+            uow_factory=uow_factory,
+            export_engine=adapter,
+            publisher=publisher,
+            artifacts_dir=artifacts_dir,
+            discovery=discovery,
         )
 
-        result = adapter.render_pdf(request)
-        assert result.compiled_pdf_path.is_file()
-        assert result.compiled_pdf_path.stat().st_size > 0
-        pdf_bytes = result.compiled_pdf_path.read_bytes()
+        dest_pdf = tmp_path / "exported" / "live_persian_test.pdf"
+        dest_pdf.parent.mkdir(parents=True, exist_ok=True)
+        dest_uri = dest_pdf.resolve().as_uri()
+
+        cmd = ExportPdfCommand(
+            job_id=job_id,
+            version=version,
+            destination_path=dest_uri,
+            overwrite=True,
+        )
+
+        result = service.export_pdf(cmd)
+
+        # 1. Target artifact exists at destination
+        assert result.destination_path == dest_pdf.resolve()
+        assert dest_pdf.is_file()
+
+        # 2. File size is non-zero (real compilation artifact > 10KB, not a 31-byte mock)
+        assert dest_pdf.stat().st_size > 1000
+        assert result.file_size_bytes == dest_pdf.stat().st_size
+
+        # 3. Header begins with %PDF-
+        pdf_bytes = dest_pdf.read_bytes()
         assert pdf_bytes.startswith(b"%PDF-")
-        assert result.page_count >= 1
+
+        # 4. Parsable by real PDF reader with valid page count
+        doc = fitz.open(dest_pdf)
+        assert doc.page_count >= 1
+        assert result.page_count == doc.page_count
+
+        # 5. Rendered document contains expected Persian and English content
+        full_text = "".join(page.get_text() for page in doc)
+        assert "LaTeX" in full_text or "TikZ" in full_text or "فارسی" in full_text
+        doc.close()
+
+    @pytest.mark.skipif(not is_quarto_installed(), reason="Quarto or XeLaTeX not available on host")
+    def test_scenario_08_katex_style_math_live_compilation(
+        self, tmp_path: Path
+    ):
+        """
+        Verifies that documents containing KaTeX/MathJax extensions such as
+        \\style{font-family:Vazirmatn}{...} in math blocks compile cleanly
+        to valid PDFs via the compatibility macro in polpo_preamble.tex.
+        """
+        import pymupdf as fitz
+
+        job_id = 91
+        version = 1
+        artifacts_dir = tmp_path / "artifacts"
+        job_dir = artifacts_dir / f"job_{job_id}"
+        job_dir.mkdir(parents=True)
+        canonical_md_file = job_dir / f"output_{job_id}_v{version}.md"
+
+        content = (
+            "---\ntitle: \"Math Style Test\"\n---\n\n"
+            "# ریاضی و فرمول\n\n"
+            "تابع پله و ضربه به صورت زیر تعریف می‌شود:\n\n"
+            "$$\\delta(t) \\triangleq \\begin{cases} 0 & t \\neq 0 \\\\ "
+            "\\text{\\style{font-family:Vazirmatn}{تعریف‌نشده}} & t = 0 \\end{cases}$$\n\n"
+            "و رابطه مشتق:\n\n"
+            "$$\\delta(t) = \\frac{d}{dt}u(t) \\quad \\text{\\style{font-family:Vazirmatn}{اثبات:}}$$\n"
+        )
+        raw_bytes = content.encode("utf-8")
+        canonical_md_file.write_bytes(raw_bytes)
+        content_hash = hashlib.sha256(raw_bytes).hexdigest()
+
+        job = MagicMock(spec=Job)
+        job.id = job_id
+        job.file_name = f"document_{job_id}.pdf"
+
+        version_record = DocumentVersionRecord(
+            job_id=job_id,
+            version=version,
+            output_path=canonical_md_file.resolve().as_uri(),
+            sha256=content_hash,
+            integrity_status="VALID",
+        )
+
+        mock_uow = MagicMock()
+        mock_uow.publish_intents.get_by_job_id.return_value = None
+        mock_uow.jobs.get_by_id.return_value = job
+        mock_uow.document_versions.get_by_version.return_value = version_record
+        mock_uow.document_versions.get_latest.return_value = version_record
+
+        uow_factory = MagicMock(spec=IUnitOfWorkFactory)
+        uow_factory.create.return_value.__enter__.return_value = mock_uow
+
+        discovery = QuartoRuntimeDiscovery()
+        supervisor = SubprocessSupervisor()
+        staging = StagingWorkspaceManager()
+        sanitizer = TexLogSanitizer()
+
+        adapter = QuartoPdfAdapter(
+            discovery=discovery,
+            supervisor=supervisor,
+            staging=staging,
+            sanitizer=sanitizer,
+            timeout_seconds=120.0,
+        )
+        publisher = AtomicPdfPublisher()
+
+        service = QuartoPdfExportService(
+            uow_factory=uow_factory,
+            export_engine=adapter,
+            publisher=publisher,
+            artifacts_dir=artifacts_dir,
+            discovery=discovery,
+        )
+
+        dest_pdf = tmp_path / "exported" / "katex_style_test.pdf"
+        dest_pdf.parent.mkdir(parents=True, exist_ok=True)
+        dest_uri = dest_pdf.resolve().as_uri()
+
+        cmd = ExportPdfCommand(
+            job_id=job_id,
+            version=version,
+            destination_path=dest_uri,
+            overwrite=True,
+        )
+
+        result = service.export_pdf(cmd)
+
+        assert result.destination_path == dest_pdf.resolve()
+        assert dest_pdf.is_file()
+        assert dest_pdf.stat().st_size > 1000
+        assert dest_pdf.read_bytes().startswith(b"%PDF-")
+
+        doc = fitz.open(dest_pdf)
+        assert doc.page_count >= 1
+        doc.close()
+
 
     def test_scenario_09_visual_region_crop_embedding(
         self, tmp_path: Path, sample_crop_bytes: bytes
@@ -613,3 +853,66 @@ End of document."""
         # Verify CREATE_NO_WINDOW constant availability
         from infrastructure.pdf.subprocess_supervisor import _WIN32_CREATE_NO_WINDOW
         assert _WIN32_CREATE_NO_WINDOW == 0x08000000
+
+    @pytest.mark.skipif(not is_quarto_installed(), reason="Quarto or XeLaTeX not available on host")
+    def test_scenario_11_persian_rtl_callouts_images_and_four_dash_regression(
+        self, tmp_path: Path, sample_crop_bytes: bytes
+    ):
+        """
+        Scenario 11: Persian RTL Callouts, Images, and Four-Dash Table Prevention Regression:
+        Compiles a Persian RTL document containing four dashes, Quarto callouts, an embedded image,
+        and display equations with MathJax style macros, asserting successful PDF generation.
+        """
+        job_id = 111
+        artifacts_dir = tmp_path / "artifacts" / f"job_{job_id}"
+        artifacts_dir.mkdir(parents=True)
+
+        crop_path = artifacts_dir / "crop_101.png"
+        crop_path.write_bytes(sample_crop_bytes)
+
+        persian_markdown = (
+            "Line A\n"
+            "----\n"
+            ".\n"
+            "# فهرست مطالب\n"
+            "---\n"
+            "Line B\n\n"
+            "> [!NOTE]\n"
+            "> این یک یادداشت فارسی است.\n\n"
+            "::: {.callout-important}\n"
+            "این یک هشدار مهم با تیکالباکس است.\n"
+            ":::\n\n"
+            "تصویر استخراج شده:\n\n"
+            "![](crop_101.png)\n\n"
+            "فرمول ریاضی:\n\n"
+            "\\begin{align}\n"
+            "x(t) &= \\style{font-family:Vazirmatn}{\\text{با~تغییر~متغیر}} \\\\\n"
+            "y(t) &= \\cos\\!\\left(t\\right)\n"
+            "\\end{align}\n"
+        )
+
+        staging_manager = StagingWorkspaceManager()
+        supervisor = SubprocessSupervisor()
+        sanitizer = TexLogSanitizer()
+        discovery = QuartoRuntimeDiscovery()
+        adapter = QuartoPdfAdapter(
+            discovery=discovery,
+            supervisor=supervisor,
+            staging=staging_manager,
+            sanitizer=sanitizer,
+        )
+
+        request = PdfExportRequest(
+            job_id=job_id,
+            canonical_markdown=persian_markdown,
+            raw_metadata={"title": "Persian RTL Integration Test"},
+            job_artifacts_dir=artifacts_dir,
+            is_cancelled=None,
+        )
+
+        result = adapter.render_pdf(request)
+        assert result.compiled_pdf_path.is_file()
+        assert result.page_count > 0
+        pdf_bytes = result.compiled_pdf_path.read_bytes()
+        assert len(pdf_bytes) > 0
+        assert pdf_bytes.startswith(b"%PDF-")

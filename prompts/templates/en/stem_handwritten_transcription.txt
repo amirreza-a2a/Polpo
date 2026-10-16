@@ -134,8 +134,10 @@ $$
 
 ### Persian Text Inside LaTeX (MANDATORY)
 
-Whenever Persian text appears inside a LaTeX formula, it MUST be written using the following format:
-\style{font-family:Vazirmatn}{\text{متن فارسی}}
+- Keep Persian prose outside math environments (`$ ... $` or `$$ ... $$`) whenever possible. If Persian text is strictly necessary inside math mode, wrap it in standard `\text{...}` using regular spaces between words. NEVER use `\style{font-family:Vazirmatn}` and NEVER use tilde (`~`) between Persian words inside `\text{...}` (as `~` reverses RTL word order in XeLaTeX).
+- Correct example: `$$\text{پاسخ نهایی} = 5$$`
+- Preserve backslashes on LaTeX math spacing commands (such as `\,dt` and `\cos\!\left(`); never emit bare `!` or `,` where `\!` or `\,` is intended.
+
 Example:
 
 $$
@@ -145,14 +147,14 @@ v(r)=
 &
 r>R
 \quad
-\style{font-family:Vazirmatn}{\text{خارج پوسته}}
+\text{خارج پوسته}
 \\
 \\
 \frac{\sigma_0 R}{\epsilon_0}
 &
 r<R
 \quad
-\style{font-family:Vazirmatn}{\text{داخل پوسته}}
+\text{داخل پوسته}
 \end{cases}
 $$
 
@@ -160,7 +162,7 @@ Never use raw Persian text directly inside mathematical environments.
 
 Always wrap Persian labels, conditions, annotations, descriptions, and comments using:
 
-\style{font-family:Vazirmatn}{\text{...}}
+\text{...}
 
 This rule applies to:
 
@@ -243,12 +245,10 @@ Your response MUST:
 - NOT repeat previous outputs.
 - Start immediately with the content.
 - End immediately with the content.
-- Include bounding box coordinates in the format `[[ymin, xmin, ymax, xmax]]` wherever a graph, waveform, circuit, block diagram, or visual drawing appears.
+- Include bounding box coordinates strictly as four raw numbers in the format `[[ymin, xmin, ymax, xmax]]` (never use labels like `ymin=`) wherever a graph, waveform, circuit, block diagram, or visual drawing appears. Never crop handwritten text boxes that are transcribed.
 - Include `(عبارت خوانا نیست)` where needed.
 - Contain no explanations about what you did.
-- All Persian text appearing inside LaTeX formulas MUST use:
-
-  \style{font-family:Vazirmatn}{\text{...}}
+- All Persian text appearing inside LaTeX formulas MUST use standard `\text{...}` with spaces (never `\style{font-family:Vazirmatn}` and never tildes `~`).
 
 - In Electromagnetics, use:
 

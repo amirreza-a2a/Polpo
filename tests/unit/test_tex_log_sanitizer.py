@@ -166,3 +166,38 @@ or enter new name. (Default extension: cls)
 
     assert diag.missing_packages == ("koma-script",)
     assert "koma-script" in diag.sanitized_message
+
+
+def test_sanitizer_ignores_package_info_not_found_and_captures_real_error_context():
+    """
+    TexLogSanitizer must ignore informational package lines containing 'not found'
+    (such as 'Package pdftexcmds Info: \\pdfdraftmode not found.') and informational
+    line numbers, capturing the real undefined control sequence context and source line.
+    """
+    raw_log = r"""
+Package: infwarerr 2019/12/03 v1.5 Providing info/warning/error messages (HO)
+)
+Package pdftexcmds Info: \pdf@primitive is available.
+Package pdftexcmds Info: \pdf@ifprimitive is available.
+Package pdftexcmds Info: \pdfdraftmode not found.
+)) (/usr/share/texlive/texmf-dist/tex/latex/hycolor/hycolor.sty
+Package: hycolor 2020-01-27 v1.10 Color options for hyperref/bookmark (HO)
+)
+(babel)             Reported on input line 4.
+[1] [2] [3]
+! Undefined control sequence.
+<argument> \style
+                  {font-family:Vazirmatn}{تعریف‌نشده}
+l.400 ...style{font-family:Vazirmatn}{تعریف‌نشده}}
+                                                   & t = 0 \end{cases}
+Here is how much of TeX's memory you used:
+"""
+    sanitizer = TexLogSanitizer()
+    diag = sanitizer.sanitize(raw_log)
+
+    assert diag.line_number == 400
+    assert "pdftexcmds" not in diag.sanitized_message
+    assert r"\pdfdraftmode" not in diag.sanitized_message
+    assert "Undefined control sequence" in diag.sanitized_message
+    assert r"\style" in diag.sanitized_message
+    assert "l.400" in diag.sanitized_message

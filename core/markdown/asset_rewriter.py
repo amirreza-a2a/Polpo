@@ -25,6 +25,7 @@ class AssetReference:
         alt_text: Semantic alt text with CommonMark escapes removed.
         title: Optional title attribute string value.
         is_angle_bracketed: True if the destination was enclosed in '<...>'.
+        is_wikilink: True if the reference uses Obsidian wikilink syntax (![[...]]).
     """
     start: int
     end: int
@@ -34,6 +35,7 @@ class AssetReference:
     alt_text: str = ""
     title: Optional[str] = None
     is_angle_bracketed: bool = False
+    is_wikilink: bool = False
 
 
 def scan_asset_references(text: str) -> List[AssetReference]:
@@ -44,6 +46,8 @@ def scan_asset_references(text: str) -> List[AssetReference]:
     - ![alt](<destination>)
     - ![alt](<destination> "title")
     - ![alt](destination 'title')
+    - ![[target]] (Obsidian wikilink embed)
+    - ![[target|alt]] (Obsidian wikilink embed with caption/alt)
 
     Handles escaped brackets, escaped quotes, balanced parentheses, and opaque code/comment contexts.
     """
@@ -70,12 +74,66 @@ def scan_asset_references(text: str) -> List[AssetReference]:
                 i += 2
                 continue
 
+            # Check for possible Obsidian wikilink embed: ![[target]] or ![[target|alt]]
+            if i + 2 < n and text[i + 2] == "[":
+                close_pos = -1
+                j = i + 3
+                while j + 1 < n and text[j] not in ("\n", "\r"):
+                    if text[j] == "]" and text[j + 1] == "]":
+                        close_pos = j
+                        break
+                    j += 1
+
+                if close_pos != -1:
+                    # Check if immediately followed by '(' (ignoring whitespace).
+                    # If followed by '(', it is a standard Markdown image with bracketed alt: ![[alt]](dest)
+                    after_close = close_pos + 2
+                    is_standard_md = False
+                    p = after_close
+                    while p < n and text[p] in (" ", "\t"):
+                        p += 1
+                    if p < n and text[p] == "(":
+                        is_standard_md = True
+
+                    if not is_standard_md:
+                        token_end = close_pos + 2
+                        raw_inner = text[i + 3 : close_pos]
+                        if "|" in raw_inner:
+                            raw_dest, raw_alt = raw_inner.split("|", 1)
+                        else:
+                            raw_dest, raw_alt = raw_inner, ""
+
+                        dest_val = raw_dest.strip()
+                        alt_val = raw_alt.strip()
+
+                        lead_spaces = len(raw_dest) - len(raw_dest.lstrip())
+                        d_start = i + 3 + lead_spaces
+                        d_end = d_start + len(dest_val)
+
+                        if dest_val and not is_opaque_span(token_start, token_end, opaque_spans):
+                            references.append(
+                                AssetReference(
+                                    start=token_start,
+                                    end=token_end,
+                                    dest_start=d_start,
+                                    dest_end=d_end,
+                                    destination=dest_val,
+                                    alt_text=alt_val,
+                                    title=None,
+                                    is_angle_bracketed=False,
+                                    is_wikilink=True,
+                                )
+                            )
+                        i = token_end
+                        continue
+
             i += 2
 
-            # Scan ALT text until unescaped ']'
+            # Scan ALT text until unescaped ']' matching balanced brackets
             alt_chars: List[str] = []
             alt_escaped = False
             alt_closed = False
+            bracket_depth = 0
 
             while i < n:
                 c = text[i]
@@ -87,10 +145,19 @@ def scan_asset_references(text: str) -> List[AssetReference]:
                     alt_escaped = True
                     alt_chars.append(c)
                     i += 1
-                elif c == "]":
-                    alt_closed = True
+                elif c == "[":
+                    bracket_depth += 1
+                    alt_chars.append(c)
                     i += 1
-                    break
+                elif c == "]":
+                    if bracket_depth > 0:
+                        bracket_depth -= 1
+                        alt_chars.append(c)
+                        i += 1
+                    else:
+                        alt_closed = True
+                        i += 1
+                        break
                 else:
                     alt_chars.append(c)
                     i += 1
@@ -289,16 +356,20 @@ def rewrite_asset_references(
     if not refs:
         return markdown
 
-    # Sort in descending order of destination character position so in-place edits do not invalidate preceding character offsets
+    # Sort in descending order of token start character position so in-place edits do not invalidate preceding character offsets
     refs_to_rewrite = [ref for ref in refs if ref.destination in uri_mapping]
     if not refs_to_rewrite:
         return markdown
 
-    refs_to_rewrite.sort(key=lambda r: r.dest_start, reverse=True)
+    refs_to_rewrite.sort(key=lambda r: r.start, reverse=True)
 
     result_chars = list(markdown)
     for ref in refs_to_rewrite:
         new_dest = uri_mapping[ref.destination]
-        result_chars[ref.dest_start : ref.dest_end] = list(new_dest)
+        if ref.is_wikilink:
+            replacement = f"![{ref.alt_text}]({new_dest})"
+            result_chars[ref.start : ref.end] = list(replacement)
+        else:
+            result_chars[ref.dest_start : ref.dest_end] = list(new_dest)
 
     return "".join(result_chars)

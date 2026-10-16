@@ -53,6 +53,7 @@ _QUARTO_PROJECT_BARRIER_YML: str = """project:
   type: default
 format:
   pdf:
+    from: markdown-multiline_tables-simple_tables
     pdf-engine: xelatex
     pdf-engine-opts:
       - "-no-shell-escape"
@@ -228,6 +229,190 @@ def _strip_existing_front_matter(markdown: str) -> str:
     return markdown
 
 
+_ALERT_START_PATTERN = re.compile(
+    r"^\s*>\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?:\s+(.*))?$",
+    re.IGNORECASE,
+)
+
+
+def _convert_github_alerts_to_callouts(markdown: str) -> str:
+    """
+    Transforms GitHub-style alert blockquotes (> [!NOTE], > [!IMPORTANT], etc.)
+    into native Quarto callout blocks (::: {.callout-...}) for publication-grade typesetting.
+    Preserves all code blocks (fenced by ``` or ~~~) untouched.
+    """
+    if "[!" not in markdown:
+        return markdown
+
+    lines = markdown.splitlines(keepends=True)
+    result: List[str] = []
+    i = 0
+    n = len(lines)
+    in_code_block = False
+    fence = ""
+
+    while i < n:
+        line = lines[i]
+        stripped = line.strip()
+
+        # Check for code block fences
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            f = stripped[:3]
+            if not in_code_block:
+                in_code_block = True
+                fence = f
+            elif f == fence:
+                in_code_block = False
+                fence = ""
+            result.append(line)
+            i += 1
+            continue
+
+        if in_code_block:
+            result.append(line)
+            i += 1
+            continue
+
+        m = _ALERT_START_PATTERN.match(line.rstrip("\r\n"))
+        if m:
+            alert_type = m.group(1).lower()
+            title = m.group(2).strip() if m.group(2) else None
+            callout_lines: List[str] = []
+            if title:
+                callout_lines.append(f"## {title}\n")
+
+            i += 1
+            while i < n:
+                next_line = lines[i]
+                stripped_next = next_line.lstrip()
+                if stripped_next.startswith(">"):
+                    content = stripped_next[1:]
+                    if content.startswith(" "):
+                        content = content[1:]
+                    callout_lines.append(content)
+                    i += 1
+                else:
+                    break
+
+            result.append(f"::: {{.callout-{alert_type}}}\n")
+            result.extend(callout_lines)
+            if not result[-1].endswith("\n"):
+                result.append("\n")
+            result.append(":::\n")
+            continue
+
+        result.append(line)
+        i += 1
+
+    return "".join(result)
+
+
+def _sanitize_uncropped_bounding_boxes(markdown: str) -> str:
+    """
+    Detects any remaining bounding box coordinate tags ([[ymin=..., ...]] or [[100, ...]])
+    that were not converted to image crops during document ingestion.
+    Strips them from the staged export document to prevent raw coordinate leaks,
+    and logs a diagnostic warning.
+    """
+    if "[[" not in markdown:
+        return markdown
+
+    from core.entities.bounding_box_parser import BoundingBoxParser
+
+    def _replace_box(match: re.Match[str]) -> str:
+        logger.warning(
+            "Uncropped bounding box coordinate tag '%s' detected during PDF export; "
+            "stripping to prevent layout leak.",
+            match.group(0),
+        )
+        return ""
+
+    return BoundingBoxParser.TAG_PATTERN.sub(_replace_box, markdown)
+
+
+_FENCE_PATTERN = re.compile(r"^[ \t]*(`{3,}|~{3,})")
+_HR_LINE_PATTERN = re.compile(r"^[ \t]*-{3,}[ \t]*$")
+_STYLE_MACRO_PATTERN = re.compile(
+    r"\\style\s*\{\s*font-family\s*:[^}]*\}\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}"
+)
+_PERSIAN_CHAR_PATTERN = re.compile(r"[\u0600-\u06FF]")
+_TEXT_MACRO_PATTERN = re.compile(r"\\text\s*\{([^{}]*)\}")
+_BROKEN_OP_NEG_SPACE_PATTERN = re.compile(
+    r"(\\(?:cos|sin|tan|cot|sec|csc|arcsin|arccos|arctan|sinh|cosh|tanh|ln|log|exp|lim|det|min|max|sup|inf))!\\left"
+)
+_BROKEN_FUNC_NEG_SPACE_PATTERN = re.compile(r"\b([a-zA-Z0-9_]+)!\\left")
+
+
+def _normalize_persian_text_macro(match: re.Match[str]) -> str:
+    inner = match.group(1)
+    if not _PERSIAN_CHAR_PATTERN.search(inner):
+        return match.group(0)
+    cleaned = inner.replace("~", " ").replace(r"\ ", " ")
+    return f"\\persiantext{{{cleaned}}}"
+
+
+def _sanitize_markdown_body(markdown: str) -> str:
+    """Sanitizes AI transcription quirks in staged Markdown body outside fenced code blocks."""
+    if not markdown:
+        return markdown
+
+    lines = markdown.splitlines()
+    out_lines: List[str] = []
+    in_fence = False
+    fence_marker = ""
+    pending_blank_after_hr = False
+
+    for line in lines:
+        fence_match = _FENCE_PATTERN.match(line)
+        if fence_match:
+            if pending_blank_after_hr:
+                if out_lines and out_lines[-1].strip() != "":
+                    out_lines.append("")
+                pending_blank_after_hr = False
+            marker = fence_match.group(1)
+            if not in_fence:
+                in_fence = True
+                fence_marker = marker[0] * len(marker)
+            elif line.lstrip().startswith(fence_marker):
+                in_fence = False
+                fence_marker = ""
+            out_lines.append(line)
+            continue
+
+        if in_fence:
+            out_lines.append(line)
+            continue
+
+        if _HR_LINE_PATTERN.match(line):
+            if out_lines and out_lines[-1].strip() != "":
+                out_lines.append("")
+            out_lines.append("---")
+            pending_blank_after_hr = True
+            continue
+
+        if pending_blank_after_hr:
+            if line.strip() != "":
+                out_lines.append("")
+            pending_blank_after_hr = False
+
+        prev = None
+        curr = line
+        while prev != curr:
+            prev = curr
+            curr = _STYLE_MACRO_PATTERN.sub(r"\1", curr)
+
+        curr = _TEXT_MACRO_PATTERN.sub(_normalize_persian_text_macro, curr)
+        curr = _BROKEN_OP_NEG_SPACE_PATTERN.sub(r"\1\\!\\left", curr)
+        curr = _BROKEN_FUNC_NEG_SPACE_PATTERN.sub(r"\1\\!\\left", curr)
+
+        out_lines.append(curr)
+
+    result = "\n".join(out_lines)
+    if markdown.endswith("\n"):
+        result += "\n"
+    return result
+
+
 class StagingWorkspaceManager:
     """
     Allocates and deterministically purges ephemeral workspaces for Quarto PDF compilation.
@@ -258,7 +443,7 @@ class StagingWorkspaceManager:
         canonical_markdown: str,
         asset_resolver: DocumentAssetResolver,
         is_tinytex: bool = False,
-        default_title: str = "Document",
+        default_title: str = "",
     ) -> Iterator[StagingSession]:
         """
         Allocates an isolated staging workspace and deterministically purges it on exit.
@@ -337,6 +522,9 @@ class StagingWorkspaceManager:
 
             yaml_front_matter = _dump_yaml(normalized_meta)
             body_markdown = _strip_existing_front_matter(resolved_set.resolved_markdown)
+            body_markdown = _sanitize_markdown_body(body_markdown)
+            body_markdown = _convert_github_alerts_to_callouts(body_markdown)
+            body_markdown = _sanitize_uncropped_bounding_boxes(body_markdown)
 
             qmd_path = staging_dir / "document.qmd"
             qmd_content = f"---\n{yaml_front_matter}\n---\n\n{body_markdown.lstrip('\r\n')}"

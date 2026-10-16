@@ -81,6 +81,12 @@ ApplicationWindow {
     Connections {
         target: exportController
         function onExportFailed(jid, msg) { window.globalError = msg; }
+        function onExportCompleted(jid, dest) { window.globalError = ""; }
+        function onExportingChanged() {
+            if (exportController && exportController.isExporting) {
+                window.globalError = "";
+            }
+        }
     }
     Connections {
         target: eventBridge
@@ -99,15 +105,21 @@ ApplicationWindow {
         spacing: 0
 
         NotificationBanner {
+            id: globalErrorBanner
+            objectName: "globalErrorBanner"
             Layout.fillWidth: true
             message: window.globalError
             bannerType: "error"
+            onDismissed: window.globalError = ""
         }
 
         NotificationBanner {
+            id: missedScheduleBanner
+            objectName: "missedScheduleBanner"
             Layout.fillWidth: true
             message: window.missedScheduleBanner
             bannerType: "warning"
+            onDismissed: window.missedScheduleBanner = ""
         }
 
         RowLayout {
