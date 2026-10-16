@@ -37,18 +37,22 @@ class TestPipeline2Characterization(unittest.TestCase):
 
     def test_unify_markdown_strips_horizontal_rules(self):
         """
-        Characterization: unify_markdown removes '---' separators.
+        Characterization: unify_markdown removes '---' and '----' separators.
         """
         raw_text = (
             "Page 1 Content\n"
             "---\n"
-            "Page 2 Content"
+            "Page 2 Content\n"
+            "----\n"
+            "Page 3 Content"
         )
         unified = self.doc_processor.unify_markdown(raw_text)
 
         self.assertNotIn("---", unified)
+        self.assertNotIn("----", unified)
         self.assertIn("Page 1 Content", unified)
         self.assertIn("Page 2 Content", unified)
+        self.assertIn("Page 3 Content", unified)
 
     def test_unify_markdown_normalizes_excessive_newlines(self):
         """

@@ -853,3 +853,66 @@ End of document."""
         # Verify CREATE_NO_WINDOW constant availability
         from infrastructure.pdf.subprocess_supervisor import _WIN32_CREATE_NO_WINDOW
         assert _WIN32_CREATE_NO_WINDOW == 0x08000000
+
+    @pytest.mark.skipif(not is_quarto_installed(), reason="Quarto or XeLaTeX not available on host")
+    def test_scenario_11_persian_rtl_callouts_images_and_four_dash_regression(
+        self, tmp_path: Path, sample_crop_bytes: bytes
+    ):
+        """
+        Scenario 11: Persian RTL Callouts, Images, and Four-Dash Table Prevention Regression:
+        Compiles a Persian RTL document containing four dashes, Quarto callouts, an embedded image,
+        and display equations with MathJax style macros, asserting successful PDF generation.
+        """
+        job_id = 111
+        artifacts_dir = tmp_path / "artifacts" / f"job_{job_id}"
+        artifacts_dir.mkdir(parents=True)
+
+        crop_path = artifacts_dir / "crop_101.png"
+        crop_path.write_bytes(sample_crop_bytes)
+
+        persian_markdown = (
+            "Line A\n"
+            "----\n"
+            ".\n"
+            "# فهرست مطالب\n"
+            "---\n"
+            "Line B\n\n"
+            "> [!NOTE]\n"
+            "> این یک یادداشت فارسی است.\n\n"
+            "::: {.callout-important}\n"
+            "این یک هشدار مهم با تیکالباکس است.\n"
+            ":::\n\n"
+            "تصویر استخراج شده:\n\n"
+            "![](crop_101.png)\n\n"
+            "فرمول ریاضی:\n\n"
+            "\\begin{align}\n"
+            "x(t) &= \\style{font-family:Vazirmatn}{\\text{با~تغییر~متغیر}} \\\\\n"
+            "y(t) &= \\cos\\!\\left(t\\right)\n"
+            "\\end{align}\n"
+        )
+
+        staging_manager = StagingWorkspaceManager()
+        supervisor = SubprocessSupervisor()
+        sanitizer = TexLogSanitizer()
+        discovery = QuartoRuntimeDiscovery()
+        adapter = QuartoPdfAdapter(
+            discovery=discovery,
+            supervisor=supervisor,
+            staging=staging_manager,
+            sanitizer=sanitizer,
+        )
+
+        request = PdfExportRequest(
+            job_id=job_id,
+            canonical_markdown=persian_markdown,
+            raw_metadata={"title": "Persian RTL Integration Test"},
+            job_artifacts_dir=artifacts_dir,
+            is_cancelled=None,
+        )
+
+        result = adapter.render_pdf(request)
+        assert result.compiled_pdf_path.is_file()
+        assert result.page_count > 0
+        pdf_bytes = result.compiled_pdf_path.read_bytes()
+        assert len(pdf_bytes) > 0
+        assert pdf_bytes.startswith(b"%PDF-")

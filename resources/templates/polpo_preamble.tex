@@ -4,13 +4,12 @@
 %  Phase 13 — Quarto + XeLaTeX PDF Export
 % ============================================================
 
+\usepackage{iftex}
+
 % Mathematical packages
 \usepackage{amsmath}
 \usepackage{amssymb}
-
-% KaTeX / MathJax compatibility macros for math blocks
-\providecommand{\style}[2]{#2}
-
+\usepackage{graphicx}
 
 % Diagram packages and compatibility level
 \usepackage{etoolbox}
@@ -26,10 +25,21 @@
 % Font mappings for Persian and Latin scripts
 \babelfont{rm}{FreeSerif}
 \babelfont{sf}{FreeSerif}
+\babelfont{tt}{FreeMono}
+\ifPDFTeX
+\else
+  \IfFontExistsTF{Vazirmatn}{%
+    \babelfont{rm}[Renderer=HarfBuzz,Script=Arabic]{Vazirmatn}
+    \babelfont{sf}[Renderer=HarfBuzz,Script=Arabic]{Vazirmatn}
+  }{}
+\fi
 
-% ADR-003 D02: TikZ isolation hook to prevent coordinate or label inversion by ambient RTL
-\AtBeginEnvironment{tikzpicture}{\begin{otherlanguage*}{english}}
-\AtEndEnvironment{tikzpicture}{\end{otherlanguage*}}
+% Constrain oversized images to text block bounds while preserving aspect ratio
+\makeatletter
+\def\polpoMaxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
+\def\polpoMaxheight{\ifdim\Gin@nat@height>0.75\textheight 0.75\textheight\else\Gin@nat@height\fi}
+\makeatother
+\setkeys{Gin}{width=\polpoMaxwidth,height=\polpoMaxheight,keepaspectratio}
 
 % Clamps image scaling to available text area, preventing full-height images from creating orphan blank pages
 \makeatletter
@@ -46,3 +56,42 @@
   }
 \fi
 \makeatother
+
+% MathJax compatibility and RTL Persian text inside math mode
+\providecommand{\style}[2]{#2}
+\newcommand{\persiantext}[1]{\text{\foreignlanguage{persian}{#1}}}
+
+% XeLaTeX TeX--XeT RTL guards for xdvipdfmx \special nodes
+\ifXeTeX
+  % 1. Prevent TeX--XeT from reversing \special{x:gsave/scale} and \special{x:grestore} in \includegraphics
+  \NewCommandCopy{\polpoOrigIncludegraphics}{\includegraphics}
+  \RenewDocumentCommand{\includegraphics}{s O{} m}{%
+    \leavevmode\hbox{\beginL
+      \IfBooleanTF{#1}{%
+        \polpoOrigIncludegraphics*[#2]{#3}%
+      }{%
+        \polpoOrigIncludegraphics[#2]{#3}%
+      }%
+    \endL}%
+  }
+
+  % 2. Prevent TeX--XeT from reversing PGF \special{pdf:code ...} streams in tcolorbox/callouts and pgfpicture
+  \makeatletter
+  \NewCommandCopy{\polpoOrigPgfpicture}{\pgfpicture}
+  \NewCommandCopy{\polpoOrigEndpgfpicture}{\endpgfpicture}
+  \renewcommand{\pgfpicture}{\ifvmode\leavevmode\fi\hbox\bgroup\beginL\polpoOrigPgfpicture}
+  \renewcommand{\endpgfpicture}{\polpoOrigEndpgfpicture\endL\egroup}
+
+  % 3. Prevent TeX--XeT from mirroring parentheses in amsmath equation numbers and \tag{...}
+  \ifdef{\maketag@@@}{%
+    \NewCommandCopy{\polpoOrigMaketag}{\maketag@@@}%
+    \renewcommand{\maketag@@@}[1]{\hbox{\beginL\polpoOrigMaketag{#1}\endL}}%
+  }{}
+  \makeatother
+\fi
+
+% ADR-003 D02: TikZ isolation hook to prevent coordinate or label inversion by ambient RTL
+\AtBeginEnvironment{tikzpicture}{\begin{otherlanguage*}{english}}
+\AtEndEnvironment{tikzpicture}{\end{otherlanguage*}}
+\AtBeginEnvironment{circuitikz}{\begin{otherlanguage*}{english}}
+\AtEndEnvironment{circuitikz}{\end{otherlanguage*}}

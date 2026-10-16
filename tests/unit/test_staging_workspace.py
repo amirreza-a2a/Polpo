@@ -94,7 +94,7 @@ def test_staging_writes_project_barrier(tmp_path: Path):
         assert "-no-shell-escape" in quarto_yml_content
         assert "-interaction=nonstopmode" in quarto_yml_content
         assert "-halt-on-error" in quarto_yml_content
-        assert "from: markdown-simple_tables-multiline_tables" in quarto_yml_content
+        assert "from: markdown-multiline_tables-simple_tables" in quarto_yml_content
 
 
 def test_staging_copies_preamble_template(tmp_path: Path):
@@ -130,6 +130,10 @@ def test_staging_copies_preamble_template(tmp_path: Path):
         assert "\\AtBeginEnvironment{tikzpicture}{\\begin{otherlanguage*}{english}}" in preamble_text
         assert "\\AtEndEnvironment{tikzpicture}{\\end{otherlanguage*}}" in preamble_text
         assert "\\providecommand{\\style}[2]{#2}" in preamble_text
+        assert "\\newcommand{\\persiantext}[1]" in preamble_text
+        assert "\\RenewDocumentCommand{\\includegraphics}" in preamble_text
+        assert "\\renewcommand{\\pgfpicture}" in preamble_text
+        assert "\\renewcommand{\\maketag@@@}" in preamble_text
         assert "\\pandocbounded" in preamble_text
         assert "\\textheight-4\\baselineskip" in preamble_text
 
@@ -698,3 +702,100 @@ def test_staging_sanitizes_uncropped_bounding_box_tags(tmp_path: Path, caplog: p
 
     # Warning logged
     assert any("Uncropped bounding box coordinate" in record.message for record in caplog.records)
+
+
+def test_staging_sanitizes_four_dash_rules_preventing_multiline_tables(tmp_path: Path):
+    """
+    Four-dash rules (----) without trailing blank lines are normalized to standard
+    horizontal rules (---) with surrounding blank lines, preventing Pandoc multiline_tables.
+    """
+    job_artifacts_dir = tmp_path / "artifacts" / "job_19"
+    job_artifacts_dir.mkdir(parents=True)
+
+    manager = StagingWorkspaceManager()
+    resolver = DocumentAssetResolver()
+
+    canonical_body = "Line A\n----\n.\n# فهرست مطالب\n---\nLine B"
+    with manager.create_session(
+        job_artifacts_dir=job_artifacts_dir,
+        job_id=19,
+        raw_metadata={"title": "Table Prevention Test"},
+        canonical_markdown=canonical_body,
+        asset_resolver=resolver,
+    ) as session:
+        qmd_content = session.qmd_path.read_text(encoding="utf-8")
+        assert "\n\n---\n\n.\n" in qmd_content
+        assert "----" not in qmd_content
+
+
+def test_staging_preserves_dashes_inside_fenced_code_blocks(tmp_path: Path):
+    """
+    Fenced code blocks containing four-dash rules or tildes are preserved verbatim.
+    """
+    job_artifacts_dir = tmp_path / "artifacts" / "job_20"
+    job_artifacts_dir.mkdir(parents=True)
+
+    manager = StagingWorkspaceManager()
+    resolver = DocumentAssetResolver()
+
+    canonical_body = "# Code Test\n\n```markdown\n----\n```\n"
+    with manager.create_session(
+        job_artifacts_dir=job_artifacts_dir,
+        job_id=20,
+        raw_metadata={"title": "Fence Test"},
+        canonical_markdown=canonical_body,
+        asset_resolver=resolver,
+    ) as session:
+        qmd_content = session.qmd_path.read_text(encoding="utf-8")
+        assert "```markdown\n----\n```" in qmd_content
+
+
+def test_staging_sanitizes_mathjax_style_and_persian_tilde_in_math(tmp_path: Path):
+    r"""
+    MathJax \style macros are unwrapped and Persian math text with tildes
+    is normalized to \persiantext{...} with regular spaces.
+    """
+    job_artifacts_dir = tmp_path / "artifacts" / "job_21"
+    job_artifacts_dir.mkdir(parents=True)
+
+    manager = StagingWorkspaceManager()
+    resolver = DocumentAssetResolver()
+
+    canonical_body = (
+        "$$\\style{font-family:Vazirmatn}{\\text{با~تغییر~متغیر}} = "
+        "\\text{\\style{font-family:Vazirmatn}{تعریف~نشده}}$$"
+    )
+    with manager.create_session(
+        job_artifacts_dir=job_artifacts_dir,
+        job_id=21,
+        raw_metadata={"title": "Math Sanitization Test"},
+        canonical_markdown=canonical_body,
+        asset_resolver=resolver,
+    ) as session:
+        qmd_content = session.qmd_path.read_text(encoding="utf-8")
+        assert (
+            "$$\\persiantext{با تغییر متغیر} = \\persiantext{تعریف نشده}$$"
+            in qmd_content
+        )
+
+
+def test_staging_repairs_broken_negative_thin_space_before_left_delimiter(tmp_path: Path):
+    r"""
+    Repairs dropped backslashes on negative thin spaces (\!) before \left delimiters.
+    """
+    job_artifacts_dir = tmp_path / "artifacts" / "job_22"
+    job_artifacts_dir.mkdir(parents=True)
+
+    manager = StagingWorkspaceManager()
+    resolver = DocumentAssetResolver()
+
+    canonical_body = "$\\cos!\\left(t\\right) + x!\\left(t\\right)$"
+    with manager.create_session(
+        job_artifacts_dir=job_artifacts_dir,
+        job_id=22,
+        raw_metadata={"title": "Thin Space Repair Test"},
+        canonical_markdown=canonical_body,
+        asset_resolver=resolver,
+    ) as session:
+        qmd_content = session.qmd_path.read_text(encoding="utf-8")
+        assert "$\\cos\\!\\left(t\\right) + x\\!\\left(t\\right)$" in qmd_content

@@ -163,6 +163,20 @@ class TestImageExtractionPipeline(unittest.TestCase):
         # Keyed decimals rounded: 50.4 -> 50, 60.6 -> 61, 250.2 -> 250, 350.8 -> 351
         self.assertEqual(matches[3].box, BoundingBox(50, 61, 250, 351))
 
+    def test_parser_keyed_ymin_xmin_ymax_xmax_coordinates(self):
+        """Verifies parser handles [[ymin=..., xmin=..., ymax=..., xmax=...]] tags from AI output."""
+        md = (
+            "Figure A:\n[[ymin=254, xmin=98, ymax=334, xmax=243]]\n"
+            "Figure B:\n[[ymin=254, xmin=568, ymax=342, xmax=722]]\n"
+            "Figure C with colons and uppercase:\n[[ YMIN : 100 , XMIN : 150 , YMAX : 400 , XMAX : 600 ]]\n"
+        )
+        matches = BoundingBoxParser.parse_matches(md)
+        self.assertEqual(len(matches), 3)
+        self.assertEqual(matches[0].box, BoundingBox(254, 98, 334, 243))
+        self.assertEqual(matches[0].raw_match, "[[ymin=254, xmin=98, ymax=334, xmax=243]]")
+        self.assertEqual(matches[1].box, BoundingBox(254, 568, 342, 722))
+        self.assertEqual(matches[2].box, BoundingBox(100, 150, 400, 600))
+
     # -------------------------------------------------------------
     # Phase 9B: Positional Markdown Substitution
     # -------------------------------------------------------------

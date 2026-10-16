@@ -51,9 +51,9 @@ class StagingCleanupError(OSError):
 # from any ambient _quarto.yml settings in ancestor directories.
 _QUARTO_PROJECT_BARRIER_YML: str = """project:
   type: default
-from: markdown-simple_tables-multiline_tables
 format:
   pdf:
+    from: markdown-multiline_tables-simple_tables
     pdf-engine: xelatex
     pdf-engine-opts:
       - "-no-shell-escape"
@@ -330,6 +330,89 @@ def _sanitize_uncropped_bounding_boxes(markdown: str) -> str:
     return BoundingBoxParser.TAG_PATTERN.sub(_replace_box, markdown)
 
 
+_FENCE_PATTERN = re.compile(r"^[ \t]*(`{3,}|~{3,})")
+_HR_LINE_PATTERN = re.compile(r"^[ \t]*-{3,}[ \t]*$")
+_STYLE_MACRO_PATTERN = re.compile(
+    r"\\style\s*\{\s*font-family\s*:[^}]*\}\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}"
+)
+_PERSIAN_CHAR_PATTERN = re.compile(r"[\u0600-\u06FF]")
+_TEXT_MACRO_PATTERN = re.compile(r"\\text\s*\{([^{}]*)\}")
+_BROKEN_OP_NEG_SPACE_PATTERN = re.compile(
+    r"(\\(?:cos|sin|tan|cot|sec|csc|arcsin|arccos|arctan|sinh|cosh|tanh|ln|log|exp|lim|det|min|max|sup|inf))!\\left"
+)
+_BROKEN_FUNC_NEG_SPACE_PATTERN = re.compile(r"\b([a-zA-Z0-9_]+)!\\left")
+
+
+def _normalize_persian_text_macro(match: re.Match[str]) -> str:
+    inner = match.group(1)
+    if not _PERSIAN_CHAR_PATTERN.search(inner):
+        return match.group(0)
+    cleaned = inner.replace("~", " ").replace(r"\ ", " ")
+    return f"\\persiantext{{{cleaned}}}"
+
+
+def _sanitize_markdown_body(markdown: str) -> str:
+    """Sanitizes AI transcription quirks in staged Markdown body outside fenced code blocks."""
+    if not markdown:
+        return markdown
+
+    lines = markdown.splitlines()
+    out_lines: List[str] = []
+    in_fence = False
+    fence_marker = ""
+    pending_blank_after_hr = False
+
+    for line in lines:
+        fence_match = _FENCE_PATTERN.match(line)
+        if fence_match:
+            if pending_blank_after_hr:
+                if out_lines and out_lines[-1].strip() != "":
+                    out_lines.append("")
+                pending_blank_after_hr = False
+            marker = fence_match.group(1)
+            if not in_fence:
+                in_fence = True
+                fence_marker = marker[0] * len(marker)
+            elif line.lstrip().startswith(fence_marker):
+                in_fence = False
+                fence_marker = ""
+            out_lines.append(line)
+            continue
+
+        if in_fence:
+            out_lines.append(line)
+            continue
+
+        if _HR_LINE_PATTERN.match(line):
+            if out_lines and out_lines[-1].strip() != "":
+                out_lines.append("")
+            out_lines.append("---")
+            pending_blank_after_hr = True
+            continue
+
+        if pending_blank_after_hr:
+            if line.strip() != "":
+                out_lines.append("")
+            pending_blank_after_hr = False
+
+        prev = None
+        curr = line
+        while prev != curr:
+            prev = curr
+            curr = _STYLE_MACRO_PATTERN.sub(r"\1", curr)
+
+        curr = _TEXT_MACRO_PATTERN.sub(_normalize_persian_text_macro, curr)
+        curr = _BROKEN_OP_NEG_SPACE_PATTERN.sub(r"\1\\!\\left", curr)
+        curr = _BROKEN_FUNC_NEG_SPACE_PATTERN.sub(r"\1\\!\\left", curr)
+
+        out_lines.append(curr)
+
+    result = "\n".join(out_lines)
+    if markdown.endswith("\n"):
+        result += "\n"
+    return result
+
+
 class StagingWorkspaceManager:
     """
     Allocates and deterministically purges ephemeral workspaces for Quarto PDF compilation.
@@ -439,6 +522,7 @@ class StagingWorkspaceManager:
 
             yaml_front_matter = _dump_yaml(normalized_meta)
             body_markdown = _strip_existing_front_matter(resolved_set.resolved_markdown)
+            body_markdown = _sanitize_markdown_body(body_markdown)
             body_markdown = _convert_github_alerts_to_callouts(body_markdown)
             body_markdown = _sanitize_uncropped_bounding_boxes(body_markdown)
 
