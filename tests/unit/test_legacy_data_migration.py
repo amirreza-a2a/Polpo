@@ -1640,6 +1640,3 @@ lock.release()
     # After worker process exits and releases lock, retry succeeds cleanly
     report = migrate_legacy_user_data_if_needed(target_dir=target_dir, legacy_dir=legacy_dir)
     assert report.migrated
-
-
-

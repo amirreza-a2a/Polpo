@@ -167,6 +167,7 @@ class TestReleaseWorkflowContract(unittest.TestCase):
         self.assertIn("core.version.__version__", self.content)
         self.assertIn("git merge-base --is-ancestor HEAD origin/main", self.content)
         self.assertIn("gitleaks/gitleaks-action", self.content)
+        self.assertIn("libgl1 libegl1 libxkbcommon-x11-0 libdbus-1-3", self.content)
         self.assertIn("scripts/run_quality_gates.py --mode=working-tree", self.content)
 
     def test_tier2_validation_matrix_platforms(self):

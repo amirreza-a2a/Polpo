@@ -1,7 +1,7 @@
 # Implementation Plan: TICK-REL-02 — Frozen-Safe Resource Resolution, Cross-Platform Paths, Startup Failure Handling, and CLI Self-Test
 
-**Date:** 2026-10-16  
-**Status:** In Progress  
+**Date:** 2026-10-16
+**Status:** In Progress
 **Objective:** Deliver TICK-REL-02 in accordance with project architecture rules (`AGENTS.md`) and pre-implementation audit findings.
 
 ---

@@ -113,6 +113,11 @@ jobs:
             echo "Validation run on ref '${TARGET_REF}' (not a release tag) — skipping tag-specific ancestry gating"
           fi
 
+      - name: Install Linux GUI system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1 libegl1 libxkbcommon-x11-0 libdbus-1-3
+
       - name: Install dependencies for quality gates
         run: |
           python -m pip install --upgrade pip
@@ -163,6 +168,12 @@ jobs:
         uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
         with:
           node-version: '22.23.2'
+
+      - name: Install Linux GUI system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1 libegl1 libxkbcommon-x11-0 libdbus-1-3
 
       - name: Install dependencies
         run: |

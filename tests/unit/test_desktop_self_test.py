@@ -363,4 +363,3 @@ def test_windows_console_streams_non_windows_noop():
          patch.dict("sys.modules", {"ctypes": mock_ctypes}):
         _ensure_windows_console_streams()
         mock_ctypes.windll.kernel32.AttachConsole.assert_not_called()
-
