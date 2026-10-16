@@ -27,6 +27,8 @@ DEFAULT_ARCHITECTURE_TESTS = [
     "tests/unit/test_phase4_architecture.py",
     "tests/unit/test_desktop_presentation_invariants.py",
     "tests/unit/test_theme_architecture_invariants.py",
+    "tests/unit/test_architecture_boundaries.py",
+    "tests/unit/test_architecture_security.py",
 ]
 
 EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"

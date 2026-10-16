@@ -432,6 +432,43 @@ def _teardown_app_container(container: DesktopAppContainer) -> None:
             pass
 
 
+def _ensure_windows_console_streams() -> None:
+    """Ensure standard output and error streams are valid on Windows.
+
+    When compiled as a GUI application (console=False in PyInstaller), Windows does
+    not allocate or attach a console by default, resulting in sys.stdout and sys.stderr
+    being None unless explicitly redirected. This helper attaches to the parent console
+    if available and ensures streams are writable UTF-8 streams.
+    """
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.kernel32.AttachConsole(-1)
+        except Exception:
+            pass
+        if sys.stdout is None:
+            try:
+                sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace")
+            except Exception:
+                sys.stdout = open(os.devnull, "w", encoding="utf-8")
+        else:
+            try:
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+        if sys.stderr is None:
+            try:
+                sys.stderr = open("CONOUT$", "w", encoding="utf-8", errors="replace")
+            except Exception:
+                sys.stderr = open(os.devnull, "w", encoding="utf-8")
+        else:
+            try:
+                sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """CLI entrypoint for the desktop application.
 
@@ -445,6 +482,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         raw_args = list(argv)
         # Ensure Qt argv contains the program name as argv[0] so flags like -platform offscreen are parsed correctly
         qt_args = [sys.argv[0] if sys.argv else "polpo"] + list(argv)
+
+    if "--version" in raw_args or "-v" in raw_args or "--self-test" in raw_args or "--help" in raw_args or "-h" in raw_args:
+        _ensure_windows_console_streams()
 
     if "--version" in raw_args or "-v" in raw_args:
         from core.version import APP_NAME, __version__

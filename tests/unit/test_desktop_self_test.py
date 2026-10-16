@@ -89,6 +89,10 @@ def test_self_test_in_process(capsys):
     assert code == 0
     captured = capsys.readouterr()
     assert "Polpo Desktop Diagnostic Self-Test" in captured.out
+    assert "Pandoc Markdown AST parse execution" in captured.out
+    assert "MathJax vector SVG render execution" in captured.out
+    assert "Default prompt seeding bootstrap" in captured.out
+    assert "LaTeX preamble template staging" in captured.out
     assert "Self-test PASSED" in captured.out
 
 
@@ -313,4 +317,50 @@ def test_desktop_app_container_explicit_db_path_skips_migration(tmp_path: Path):
 
         mock_migrate.assert_not_called()
     assert custom_db.is_file()
+
+
+def test_windows_console_streams_attach_and_reconfigure():
+    """On Windows, _ensure_windows_console_streams reconfigures active streams to UTF-8."""
+    from interfaces.desktop.app import _ensure_windows_console_streams
+
+    mock_stdout = MagicMock()
+    mock_stderr = MagicMock()
+    mock_ctypes = MagicMock()
+
+    with patch("sys.platform", "win32"), \
+         patch.dict("sys.modules", {"ctypes": mock_ctypes}), \
+         patch("sys.stdout", mock_stdout), \
+         patch("sys.stderr", mock_stderr):
+        _ensure_windows_console_streams()
+        mock_ctypes.windll.kernel32.AttachConsole.assert_called_once_with(-1)
+        mock_stdout.reconfigure.assert_called_once_with(encoding="utf-8", errors="replace")
+        mock_stderr.reconfigure.assert_called_once_with(encoding="utf-8", errors="replace")
+
+
+def test_windows_console_streams_opens_conout_when_streams_none():
+    """On Windows GUI executables without redirection, sys.stdout/stderr are None and opened to CONOUT$."""
+    from interfaces.desktop.app import _ensure_windows_console_streams
+
+    mock_ctypes = MagicMock()
+    mock_file = MagicMock()
+
+    with patch("sys.platform", "win32"), \
+         patch.dict("sys.modules", {"ctypes": mock_ctypes}), \
+         patch("sys.stdout", None), \
+         patch("sys.stderr", None), \
+         patch("builtins.open", return_value=mock_file) as mock_open:
+        _ensure_windows_console_streams()
+        # Verify CONOUT$ was attempted for both stdout and stderr
+        mock_open.assert_any_call("CONOUT$", "w", encoding="utf-8", errors="replace")
+
+
+def test_windows_console_streams_non_windows_noop():
+    """On Linux/macOS, _ensure_windows_console_streams is a no-op."""
+    from interfaces.desktop.app import _ensure_windows_console_streams
+
+    mock_ctypes = MagicMock()
+    with patch("sys.platform", "linux"), \
+         patch.dict("sys.modules", {"ctypes": mock_ctypes}):
+        _ensure_windows_console_streams()
+        mock_ctypes.windll.kernel32.AttachConsole.assert_not_called()
 

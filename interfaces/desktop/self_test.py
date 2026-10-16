@@ -46,13 +46,14 @@ class SelfTestDiagnostic:
     """Manages check execution and formatted console reporting."""
 
     def __init__(self, output: TextIO | None = None):
-        self.output = output if output is not None else sys.stdout
+        self.output = output if output is not None else (sys.stdout if sys.stdout is not None else sys.stderr)
         self.failures: list[str] = []
         self.warnings: list[str] = []
 
     def log(self, message: str) -> None:
-        self.output.write(message + "\n")
-        self.output.flush()
+        if self.output is not None:
+            self.output.write(message + "\n")
+            self.output.flush()
 
     def pass_check(self, title: str, detail: str = "") -> None:
         suffix = f" ({detail})" if detail else ""
@@ -171,13 +172,15 @@ def run_self_test(output: TextIO | None = None) -> int:
     # 4. Runtime Dependency Discovery
     is_frozen = getattr(sys, "frozen", False)
 
-    # Pandoc Discovery
+    # Pandoc Discovery & AST Parse Execution
     pandoc_resolver = PandocBinaryResolver()
     bundled_pandoc = pandoc_resolver.get_bundled_path()
     system_pandoc = pandoc_resolver.get_system_path()
+    active_pandoc = None
 
     if bundled_pandoc is not None and bundled_pandoc.is_file():
         diag.pass_check("Pandoc runtime discovery", f"Bundled: {bundled_pandoc}")
+        active_pandoc = bundled_pandoc
     elif system_pandoc is not None and system_pandoc.is_file():
         if is_frozen:
             diag.fail_check(
@@ -186,6 +189,7 @@ def run_self_test(output: TextIO | None = None) -> int:
             )
         else:
             diag.pass_check("Pandoc runtime discovery", f"System PATH: {system_pandoc}")
+            active_pandoc = system_pandoc
     else:
         if is_frozen:
             diag.fail_check("Pandoc runtime discovery", "Pandoc executable not found (required for frozen bundle)")
@@ -195,7 +199,22 @@ def run_self_test(output: TextIO | None = None) -> int:
                 "Pandoc not found in bundled resources or system PATH (unbundled build; provisioning in TICK-REL-04)",
             )
 
-    # Node.js Discovery
+    if active_pandoc is not None:
+        try:
+            from infrastructure.markdown.pandoc_runner import PandocRunner
+            runner = PandocRunner(binary_path=active_pandoc)
+            ast = runner.run("# تست عنوان\n\n$E=mc^2$")
+            if "pandoc-api-version" in ast:
+                diag.pass_check("Pandoc Markdown AST parse execution", f"AST validated (API {ast.get('pandoc-api-version')})")
+            else:
+                diag.fail_check("Pandoc Markdown AST parse execution", "Output missing 'pandoc-api-version'")
+        except Exception as exc:
+            if is_frozen:
+                diag.fail_check("Pandoc Markdown AST parse execution", str(exc))
+            else:
+                diag.warn("Pandoc Markdown AST parse execution", str(exc))
+
+    # Node.js Discovery & MathJax SVG Render Execution
     try:
         node_path = resolve_node_executable()
         ext = ".exe" if (os.name == "nt" or sys.platform == "win32") else ""
@@ -212,6 +231,25 @@ def run_self_test(output: TextIO | None = None) -> int:
                 )
             else:
                 diag.pass_check("Node.js runtime discovery", f"System PATH: {node_path}")
+
+        # Execute MathJax daemon formula rendering
+        try:
+            from infrastructure.math.mathjax_supervisor import MathJaxProcessSupervisor
+            supervisor = MathJaxProcessSupervisor()
+            try:
+                render_res = supervisor.render(tex="E=mc^2", display=False)
+                svg_markup = render_res.get("svg_xml", "")
+                if render_res and "<svg" in svg_markup:
+                    diag.pass_check("MathJax vector SVG render execution", f"Rendered <svg> ({len(svg_markup)} bytes)")
+                else:
+                    diag.fail_check("MathJax vector SVG render execution", "Output missing valid <svg> markup")
+            finally:
+                supervisor.shutdown()
+        except Exception as exc:
+            if is_frozen:
+                diag.fail_check("MathJax vector SVG render execution", str(exc))
+            else:
+                diag.warn("MathJax vector SVG render execution", f"MathJax render unverified: {exc}")
     except Exception as exc:
         if is_frozen:
             diag.fail_check("Node.js runtime discovery", str(exc))
@@ -233,6 +271,14 @@ def run_self_test(output: TextIO | None = None) -> int:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)
             from interfaces.desktop.composition import DesktopAppContainer
+            from infrastructure.pdf.staging_workspace import StagingWorkspaceManager
+
+            staging_mgr = StagingWorkspaceManager()
+            preamble_file = staging_mgr.templates_dir / "polpo_preamble.tex"
+            if not preamble_file.is_file():
+                diag.fail_check("LaTeX preamble template staging", f"File not found: {preamble_file}")
+            else:
+                diag.pass_check("LaTeX preamble template staging", f"Resolved: {preamble_file}")
 
             container = DesktopAppContainer(
                 db_path=tmp_root / "selftest_smoke.db",
@@ -268,6 +314,14 @@ def run_self_test(output: TextIO | None = None) -> int:
                             "SQLite persistence and migrations bootstrap",
                             f"All {len(expected_tables)} required tables verified ({len(tables)} total)",
                         )
+
+                    # Verify default prompt seeding per Section 7.3 & TICK-REL-03
+                    cursor.execute("SELECT COUNT(*) FROM prompts;")
+                    prompt_count = cursor.fetchone()[0]
+                    if prompt_count < 9:
+                        diag.fail_check("Default prompt seeding", f"Expected at least 9 seeded prompts, got {prompt_count}")
+                    else:
+                        diag.pass_check("Default prompt seeding bootstrap", f"All {prompt_count} curated prompt templates seeded")
                 finally:
                     conn.close()
             finally:

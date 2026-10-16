@@ -32,9 +32,6 @@ on:
         required: false
         default: true
         type: boolean
-  push:
-    tags:
-      - 'v*'
 
 permissions:
   contents: read
@@ -62,11 +59,35 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
+      - name: Set up Node.js 22.23.2
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        with:
+          node-version: '22.23.2'
+
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
+
+      - name: Cache runtime binaries and MathJax dependencies
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+        id: cache-runtimes
+        with:
+          path: |
+            resources/bin
+            resources/mathjax/node
+            resources/mathjax/node.exe
+            resources/mathjax/node_modules
+          key: runtimes-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('resources/runtimes.json', 'resources/mathjax/package-lock.json') }}
+
+      - name: Provision pinned runtimes and MathJax dependencies
+        run: |
+          python scripts/fetch_runtimes.py --install-mathjax-deps
+
+      - name: Verify MathJax worker standalone
+        run: |
+          python scripts/verify_mathjax_worker.py
 
       - name: Run test suite
         run: |
@@ -98,6 +119,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
 
+      - name: Set up Node.js 22.23.2
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        with:
+          node-version: '22.23.2'
+
       - name: Install Linux system dependencies
         run: |
           sudo apt-get update
@@ -108,6 +134,25 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
+
+      - name: Cache runtime binaries and MathJax dependencies
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+        id: cache-runtimes
+        with:
+          path: |
+            resources/bin
+            resources/mathjax/node
+            resources/mathjax/node.exe
+            resources/mathjax/node_modules
+          key: runtimes-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('resources/runtimes.json', 'resources/mathjax/package-lock.json') }}
+
+      - name: Provision pinned runtimes and MathJax dependencies
+        run: |
+          python scripts/fetch_runtimes.py --install-mathjax-deps
+
+      - name: Verify MathJax worker standalone
+        run: |
+          python scripts/verify_mathjax_worker.py
 
       - name: Run test suite
         run: |

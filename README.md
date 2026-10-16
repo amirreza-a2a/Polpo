@@ -409,16 +409,44 @@ Never include API keys, access tokens, private documents, or other secrets in bu
 
 ---
 
-## 10. Current Release Status
+## 10. Release Status and Packaging Architecture
 
-This README documents the desktop application's architecture, development setup, and intended runtime behavior. It does not, by itself, establish that a signed installer or standalone package is available.
+Polpo provides standalone, hermetic desktop distributions built with PyInstaller, containing all required runtime dependencies (statically linked Pandoc 3.1.11, headless Node.js 22.23.2 MathJax daemon, schema migrations, and prompt templates). End users do not need to install Python, Pandoc, or Node.js separately.
 
-Check the repository's [GitHub Actions](https://github.com/amirreza-a2a/Polpo/actions) and [GitHub Releases](https://github.com/amirreza-a2a/Polpo/releases) for the current validation and distribution status.
+### 10.1 Supported Platform Tiers
 
-A release should be considered ready for end users only after its intended platform artifacts have been built, tested on clean environments, and accompanied by installation instructions and known limitations.
+* **Tier-1 Packaged Distributions (Automated CI & Releases):**
+  * **Linux (x86_64):** Standalone archive (`Polpo-v<version>-linux-x86_64.tar.gz`) verified on Ubuntu 24.04+. Requires standard desktop GUI libraries (`libgl1`, `libegl1`, `libxkbcommon-x11-0`, `libdbus-1-3`).
+  * **Windows (x64):** Standalone archive (`Polpo-v<version>-windows-x64.zip`) verified on Windows Server 2025 and Windows 10/11 x64.
+* **Tier-2 Source-Validated Platforms (Periodic CI & Manual Packaging):**
+  * **macOS (Apple Silicon / ARM64 & Intel / x86_64):** Validated on native `macos-15` runners with Python 3.12. Standalone `.app` bundles require inside-out code signing and Apple notarization per [`docs/packaging.md`](docs/packaging.md).
+  * **Python Matrix:** Tested across Python 3.10, 3.11, and 3.12 on Linux.
+
+### 10.2 Binary Verification and Frozen Self-Test
+
+Every official release artifact can be verified before installation:
+
+1. **Integrity Check:** Compare against the published `SHA256SUMS.txt` sidecar:
+   ```bash
+   sha256sum -c Polpo-v*-linux-x86_64.tar.gz.sha256
+   ```
+2. **Provenance Attestation:** Official release assets are cryptographically attested using GitHub Actions artifact attestations (`actions/attest-build-provenance`):
+   ```bash
+   gh attestation verify Polpo-v*-linux-x86_64.tar.gz --owner amirreza-a2a
+   ```
+3. **Hermetic Self-Test:** Run the bundled binary in diagnostic mode to verify runtime integrity, SQLite migrations, QML engine, and MathJax vector rendering:
+   ```bash
+   # Linux
+   ./Polpo/Polpo --self-test
+
+   # Windows
+   .\Polpo\Polpo.exe --self-test
+   ```
+
+Check the repository's [GitHub Actions](https://github.com/amirreza-a2a/Polpo/actions) and [GitHub Releases](https://github.com/amirreza-a2a/Polpo/releases) for official downloads and validation status.
 
 ---
 
 ## License
 
-See the repository's license file for the applicable license terms.
+Polpo is licensed under the **GNU Affero General Public License v3** (`AGPL-3.0-only`). See [LICENSE](LICENSE) for terms and third-party notices.
