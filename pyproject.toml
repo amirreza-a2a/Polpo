@@ -1,3 +1,72 @@
+[build-system]
+requires = ["setuptools>=68.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "polpo"
+version = "0.1.0"
+description = "Local-first desktop application for OCR, document transcription, and PDF export"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "AGPL-3.0-only" }
+authors = [
+    { name = "Amirreza Ashrafi", email = "amirrezaashrafi000@gmail.com" },
+]
+keywords = ["ocr", "mathjax", "pandoc", "pdf", "desktop", "pyside6"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU Affero General Public License v3 (AGPLv3)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Graphics :: Capture :: Scanners",
+    "Topic :: Text Processing :: Markup :: Markdown",
+]
+dependencies = [
+    "PyMuPDF==1.24.10",
+    "Pillow==10.4.0",
+    "google-genai==1.16.1",
+    "openai==1.82.0",
+    "python-dotenv==1.0.1",
+    "pydantic==2.13.5",
+    "PySide6==6.8.0.2",
+    "keyring==24.3.1",
+    "cryptography==44.0.0",
+    "platformdirs==4.3.6",
+    "httpx==0.28.1",
+]
+
+[project.optional-dependencies]
+telegram-legacy = [
+    "python-telegram-bot==21.5",
+    "PyMySQL==1.1.1",
+]
+dev = [
+    "pytest>=8.3.0,<10.0.0",
+    "tomli>=1.1.0; python_version < '3.11'",
+]
+
+[project.urls]
+Homepage = "https://github.com/amirreza-a2a/Polpo"
+Repository = "https://github.com/amirreza-a2a/Polpo"
+Issues = "https://github.com/amirreza-a2a/Polpo/issues"
+Changelog = "https://github.com/amirreza-a2a/Polpo/blob/main/CHANGELOG.md"
+
+[project.gui-scripts]
+polpo = "interfaces.desktop.app:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "application*", "infrastructure*", "interfaces*"]
+exclude = ["interfaces.telegram*", "tests*", "handlers*", "database*", "services*", "utils*", "temp_files*", "output_files*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.qml", "qmldir", "*.sql", "*.json", "*.txt", "*.tex", "*.js"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
@@ -9,3 +78,4 @@ markers = [
 filterwarnings = [
     "default",
 ]
+addopts = "-p no:pytest-qt"

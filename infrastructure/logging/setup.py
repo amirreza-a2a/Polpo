@@ -8,6 +8,9 @@ import logging
 from logging.handlers import RotatingFileHandler
 import re
 from pathlib import Path
+from typing import Optional
+
+from infrastructure.paths import get_user_log_dir
 
 
 class SecretRedactingFilter(logging.Filter):
@@ -19,20 +22,32 @@ class SecretRedactingFilter(logging.Filter):
         self.secrets = set()
         if secrets_to_mask:
             for s in secrets_to_mask:
-                if s and isinstance(s, str) and len(s) > 3:
-                    self.secrets.add(s)
+                self.register_secret(s)
 
-        # Common API key and token regex patterns
-        self.patterns = [
-            re.compile(r'(\d{8,12}:[A-Za-z0-9_-]{35})'),       # Telegram Bot Token
-            re.compile(r'(AIza[A-Za-z0-9_-]{30,})'),           # Google API Key
-            re.compile(r'(sk-[A-Za-z0-9_-]{20,})'),            # OpenAI / OpenRouter Key
+        # Common API key and token regex patterns with replacement values
+        self.pattern_rules: list[tuple[re.Pattern, str]] = [
+            (re.compile(r'(\d{8,12}:[A-Za-z0-9_-]{35})'), "[REDACTED_API_KEY]"),
+            (re.compile(r'(AIza[A-Za-z0-9_-]{30,})'), "[REDACTED_API_KEY]"),
+            (re.compile(r'(sk-ant-[A-Za-z0-9_-]{20,})'), "[REDACTED_API_KEY]"),
+            (re.compile(r'(sk-[A-Za-z0-9_-]{20,})'), "[REDACTED_API_KEY]"),
+            (re.compile(r'(Bearer\s+)[A-Za-z0-9._~+/-]+=*', re.IGNORECASE), r"\g<1>[REDACTED]"),
+            # Double-quoted assignments containing whitespace
+            (re.compile(r'((?:api[_-]?key|secret|token|password|auth)[\'"]?\s*[:=]\s*")([^"]+)(")', re.IGNORECASE), r"\g<1>[REDACTED]\g<3>"),
+            # Single-quoted assignments containing whitespace
+            (re.compile(r"((?:api[_-]?key|secret|token|password|auth)[\'\"]?\s*[:=]\s*')([^']+)(')", re.IGNORECASE), r"\g<1>[REDACTED]\g<3>"),
+            # Unquoted assignments
+            (re.compile(r'((?:api[_-]?key|secret|token|password|auth)[\'"]?\s*[:=]\s*)([^\s\'",]+)', re.IGNORECASE), r"\g<1>[REDACTED]"),
         ]
 
+    def register_secret(self, secret: str) -> None:
+        """Register an arbitrary secret string to be explicitly redacted."""
+        if secret and isinstance(secret, str) and len(secret.strip()) > 3:
+            self.secrets.add(secret.strip())
+
     def filter(self, record: logging.LogRecord) -> bool:
-        if isinstance(record.msg, str):
+        if not record.args and isinstance(record.msg, str):
             record.msg = self._sanitize(record.msg)
-        if record.args:
+        elif record.args:
             if isinstance(record.args, dict):
                 record.args = {k: self._sanitize(v) if isinstance(v, str) else v for k, v in record.args.items()}
             elif isinstance(record.args, tuple):
@@ -46,18 +61,43 @@ class SecretRedactingFilter(logging.Filter):
         for secret in self.secrets:
             if secret in result:
                 result = result.replace(secret, "[REDACTED]")
-        for pattern in self.patterns:
-            result = pattern.sub("[REDACTED_API_KEY]", result)
+        for pattern, replacement in self.pattern_rules:
+            result = pattern.sub(replacement, result)
         return result
 
 
-def setup_logging(log_level: int = logging.INFO, log_dir: str = None) -> logging.Logger:
+class RedactingFormatter(logging.Formatter):
+    """Security-focused logging Formatter that guarantees rendered messages and
+
+    exception tracebacks (exc_info / exc_text) are thoroughly redacted before being
+    written to destination streams or files.
+    """
+
+    def __init__(self, redactor: SecretRedactingFilter, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.redactor = redactor
+
+    def format(self, record: logging.LogRecord) -> str:
+        formatted = super().format(record)
+        return self.redactor._sanitize(formatted)
+
+    def formatException(self, ei) -> str:
+        formatted = super().formatException(ei)
+        return self.redactor._sanitize(formatted)
+
+
+def setup_logging(
+    log_level: int = logging.INFO,
+    log_dir: Optional[str | Path] = None,
+    max_bytes: int = 5 * 1024 * 1024,
+    backup_count: int = 5,
+) -> logging.Logger:
     """
     Initializes structured logging with rotating file and console handlers.
+    Places rotating log files in the cross-platform user data directory by default.
     """
     if log_dir is None:
-        project_root = Path(__file__).resolve().parent.parent.parent
-        log_dir = project_root / "logs"
+        log_dir = get_user_log_dir()
     else:
         log_dir = Path(log_dir)
 
@@ -80,18 +120,30 @@ def setup_logging(log_level: int = logging.INFO, log_dir: str = None) -> logging
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
 
-    # Prevent attaching duplicate handlers on repeated setup invocations
-    if not root_logger.handlers:
-        formatter = logging.Formatter(
-            fmt="%(asctime)s [%(levelname)s] %(name)s (%(filename)s:%(lineno)d): %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
+    formatter = RedactingFormatter(
+        redacting_filter,
+        fmt="%(asctime)s [%(levelname)s] %(name)s (%(filename)s:%(lineno)d): %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
-        # 1. Rotating file handler (5 MB, up to 5 backups)
+    # Attach or reconfigure rotating file handler for target log_file
+    existing_file_handlers = [h for h in root_logger.handlers if isinstance(h, RotatingFileHandler)]
+    has_target_handler = False
+    for h in existing_file_handlers:
+        if getattr(h, "baseFilename", None) == str(log_file.resolve()):
+            has_target_handler = True
+        else:
+            root_logger.removeHandler(h)
+            try:
+                h.close()
+            except Exception:
+                pass
+
+    if not has_target_handler:
         file_handler = RotatingFileHandler(
             filename=str(log_file),
-            maxBytes=5 * 1024 * 1024,
-            backupCount=5,
+            maxBytes=max_bytes,
+            backupCount=backup_count,
             encoding="utf-8",
         )
         file_handler.setLevel(log_level)
@@ -99,7 +151,12 @@ def setup_logging(log_level: int = logging.INFO, log_dir: str = None) -> logging
         file_handler.addFilter(redacting_filter)
         root_logger.addHandler(file_handler)
 
-        # 2. Console handler (stdout)
+    # Attach console handler if not present
+    has_console = any(
+        isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler)
+        for h in root_logger.handlers
+    )
+    if not has_console:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(log_level)
         console_handler.setFormatter(formatter)

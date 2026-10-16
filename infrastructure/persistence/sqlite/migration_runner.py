@@ -9,11 +9,12 @@ from datetime import datetime, timezone
 from typing import List, Optional, Set
 import sqlite3
 
+from infrastructure.paths import get_runtime_resource_path
 from infrastructure.persistence.sqlite.connection import SQLiteDatabaseManager
 
 logger = logging.getLogger("database.sqlite.migrations")
 
-MIGRATIONS_DIR_DEFAULT = Path(__file__).parent / "migrations"
+MIGRATIONS_DIR_DEFAULT = get_runtime_resource_path("infrastructure/persistence/sqlite/migrations")
 
 
 class MigrationError(Exception):
@@ -35,7 +36,11 @@ class SQLiteMigrationRunner:
         migrations_dir: Optional[Path | str] = None,
     ):
         self.db_manager = db_manager
-        self.migrations_dir = Path(migrations_dir or MIGRATIONS_DIR_DEFAULT)
+        self.migrations_dir = (
+            Path(migrations_dir)
+            if migrations_dir is not None
+            else get_runtime_resource_path("infrastructure/persistence/sqlite/migrations")
+        )
 
     def ensure_version_table(self, conn: sqlite3.Connection) -> None:
         """Creates the schema_version table if it does not already exist."""

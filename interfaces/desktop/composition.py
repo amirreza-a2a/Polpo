@@ -31,6 +31,7 @@ from application.services.quick_convert import QuickConvertService
 from application.services.api_key_service import ApiKeyService
 from application.services.settings_service import LocalSettingsService
 from application.services.prompt_service import PromptService
+from application.services.prompt_seeding_service import PromptSeedingService
 from application.services.artifact_service import ArtifactService
 from application.services.document_viewer_service import DocumentViewerService
 from application.services.markdown_viewer_service import MarkdownViewerService
@@ -50,6 +51,11 @@ from infrastructure.pdf.quarto_adapter import QuartoPdfAdapter
 from infrastructure.pdf.atomic_publisher import AtomicPdfPublisher
 from infrastructure.markdown.pandoc_parser import PandocParser
 from infrastructure.math import MathSvgCache, MathJaxProcessSupervisor, MathJaxClient
+from infrastructure.paths import (
+    get_user_data_dir,
+    get_runtime_resource_path,
+    migrate_legacy_user_data_if_needed,
+)
 from interfaces.desktop.workers.runtime import DesktopJobRuntime
 from interfaces.desktop.workers.scheduler import DesktopJobScheduler
 
@@ -76,9 +82,9 @@ class DesktopAppContainer:
 
         # 1. Platform-appropriate default paths if not provided
         if db_path is None:
-            data_home = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
-            base_data = Path(data_home) / "polpot"
+            base_data = get_user_data_dir()
             base_data.mkdir(parents=True, exist_ok=True)
+            migrate_legacy_user_data_if_needed(target_dir=base_data)
             db_path = base_data / "polpot.db"
             if artifacts_dir is None:
                 artifacts_dir = base_data / "artifacts"
@@ -131,6 +137,10 @@ class DesktopAppContainer:
         # 5. Application Services
         self.settings_service = LocalSettingsService(self.uow_factory)
         self.prompt_service = PromptService(self.uow_factory)
+        self.prompt_seeding_service = PromptSeedingService(
+            uow_factory=self.uow_factory,
+            resource_resolver=get_runtime_resource_path,
+        )
         self.api_key_service = ApiKeyService(self.uow_factory, self.credential_resolver, self.provider_detector)
         self.artifact_service = ArtifactService(self.storage, self.uow_factory)
         self.quick_convert_service = QuickConvertService(self.uow_factory, self.ai_executor)
@@ -255,13 +265,15 @@ class DesktopAppContainer:
         """
         Executes deterministic startup sequence:
         1. Applies SQLite schema migrations (applies 004).
-        2. Reconciles legacy unversioned canonical documents (idempotent backfill).
-        3. Reconciles crashed publication intents.
-        4. Reconciles stale processing jobs to PAUSED.
-        5. Reconciles missed schedules according to AppSettings policy.
+        2. Atomically seeds curated default prompts if table is empty.
+        3. Reconciles legacy unversioned canonical documents (idempotent backfill).
+        4. Reconciles crashed publication intents.
+        5. Reconciles stale processing jobs to PAUSED.
+        6. Reconciles missed schedules according to AppSettings policy.
         Sets initialized state flag.
         """
         self.migration_runner.run_migrations()
+        self.prompt_seeding_service.seed_default_prompts()
         self.document_publication_service.backfill_legacy_document_versions()
         self.document_publication_service.reconcile_startup_intents()
         self.job_recovery_service.reconcile_stale_jobs()
