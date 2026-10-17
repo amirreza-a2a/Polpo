@@ -339,10 +339,9 @@ class TestFetchRuntimesScript(unittest.TestCase):
             mock_run.assert_called_once()
             args, kwargs = mock_run.call_args
             cmd = args[0]
-            self.assertEqual(cmd[0], "npm")
-            self.assertEqual(cmd[1], "ci")
-            self.assertIn("--omit=dev", cmd)
-            self.assertIn(str(mathjax_dir), " ".join(cmd))
+            self.assertEqual(cmd[:3], ["npm", "ci", "--omit=dev"])
+            self.assertEqual(cmd[3], "--prefix")
+            self.assertEqual(Path(cmd[4]).resolve(), mathjax_dir.resolve())
 
     def test_ambiguous_binary_in_archive_fails_explicitly(self):
         """If multiple executable candidates match candidate_name in archive, raises BinaryNotFoundError."""
@@ -473,12 +472,14 @@ class TestFetchRuntimesScript(unittest.TestCase):
                 return str(fake_node)
             return None
 
-        with patch("shutil.which", side_effect=fake_which):
+        with patch("shutil.which", side_effect=fake_which), patch.dict(os.environ, {}, clear=True):
             cmd = fetch_runtimes.resolve_npm_command(
                 repo_root=self.root_path,
                 sys_platform="win32",
             )
-            self.assertEqual(cmd, [str(fake_node), str(fake_cli)])
+            self.assertEqual(len(cmd), 2)
+            self.assertEqual(Path(cmd[0]).resolve(), fake_node.resolve())
+            self.assertEqual(Path(cmd[1]).resolve(), fake_cli.resolve())
 
     def test_windows_npm_cli_resolution_from_npm_cmd_dir(self):
         """On Windows, resolve_npm_command finds node and npm-cli.js via npm.cmd directory when node not in PATH."""
@@ -497,12 +498,14 @@ class TestFetchRuntimesScript(unittest.TestCase):
                 return str(fake_cmd)
             return None
 
-        with patch("shutil.which", side_effect=fake_which):
+        with patch("shutil.which", side_effect=fake_which), patch.dict(os.environ, {}, clear=True):
             cmd = fetch_runtimes.resolve_npm_command(
                 repo_root=self.root_path,
                 sys_platform="win32",
             )
-            self.assertEqual(cmd, [str(fake_node), str(fake_cli)])
+            self.assertEqual(len(cmd), 2)
+            self.assertEqual(Path(cmd[0]).resolve(), fake_node.resolve())
+            self.assertEqual(Path(cmd[1]).resolve(), fake_cli.resolve())
 
     def test_windows_npm_resolution_native_exe_fallback(self):
         """On Windows, if a native npm.exe is found and npm-cli.js is absent, returns [npm.exe]."""
@@ -516,12 +519,13 @@ class TestFetchRuntimesScript(unittest.TestCase):
                 return str(fake_npm_exe)
             return None
 
-        with patch("shutil.which", side_effect=fake_which):
+        with patch("shutil.which", side_effect=fake_which), patch.dict(os.environ, {}, clear=True):
             cmd = fetch_runtimes.resolve_npm_command(
                 repo_root=self.root_path,
                 sys_platform="win32",
             )
-            self.assertEqual(cmd, [str(fake_npm_exe)])
+            self.assertEqual(len(cmd), 1)
+            self.assertEqual(Path(cmd[0]).resolve(), fake_npm_exe.resolve())
 
     def test_windows_npm_cmd_does_not_invoke_cmd_exe_fallback(self):
         """On Windows, if npm-cli.js is absent and only npm.cmd exists, cmd.exe is NOT invoked; NpmNotFoundError is raised."""
@@ -535,7 +539,7 @@ class TestFetchRuntimesScript(unittest.TestCase):
                 return str(fake_npm_cmd)
             return None
 
-        with patch("shutil.which", side_effect=fake_which):
+        with patch("shutil.which", side_effect=fake_which), patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(fetch_runtimes.NpmNotFoundError) as ctx:
                 fetch_runtimes.resolve_npm_command(
                     repo_root=self.root_path,
@@ -592,19 +596,23 @@ class TestFetchRuntimesScript(unittest.TestCase):
 
             mock_run.assert_called_once()
             cmd = mock_run.call_args[0][0]
-            self.assertEqual(cmd, ["npm", "ci", "--omit=dev", "--prefix", str(mathjax_dir)])
+            self.assertEqual(cmd[:4], ["npm", "ci", "--omit=dev", "--prefix"])
+            self.assertEqual(Path(cmd[4]).resolve(), mathjax_dir.resolve())
 
         # Windows verification
-        fake_node = str(self.root_path / "node.exe")
-        fake_cli = str(self.root_path / "npm-cli.js")
-        with patch.object(fetch_runtimes, "resolve_npm_command", return_value=[fake_node, fake_cli]):
+        fake_node = self.root_path / "node.exe"
+        fake_cli = self.root_path / "npm-cli.js"
+        with patch.object(fetch_runtimes, "resolve_npm_command", return_value=[str(fake_node), str(fake_cli)]):
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
                 fetch_runtimes.install_mathjax_dependencies(repo_root=self.root_path, sys_platform="win32")
 
                 mock_run.assert_called_once()
                 cmd = mock_run.call_args[0][0]
-                self.assertEqual(cmd, [fake_node, fake_cli, "ci", "--omit=dev", "--prefix", str(mathjax_dir)])
+                self.assertEqual(Path(cmd[0]).resolve(), fake_node.resolve())
+                self.assertEqual(Path(cmd[1]).resolve(), fake_cli.resolve())
+                self.assertEqual(cmd[2:5], ["ci", "--omit=dev", "--prefix"])
+                self.assertEqual(Path(cmd[5]).resolve(), mathjax_dir.resolve())
 
     def test_subprocess_filenotfound_raises_npm_not_found_error(self):
         """When subprocess.run raises FileNotFoundError, install_mathjax_dependencies raises NpmNotFoundError."""
@@ -667,12 +675,14 @@ class TestFetchRuntimesScript(unittest.TestCase):
         fake_cli = self.root_path / "custom" / "npm-cli.js"
         fake_cli.write_text("", encoding="utf-8")
 
-        with patch.dict(os.environ, {"POLPO_NODE_PATH": str(fake_node), "POLPO_NPM_CLI_PATH": str(fake_cli)}):
+        with patch.dict(os.environ, {"POLPO_NODE_PATH": str(fake_node), "POLPO_NPM_CLI_PATH": str(fake_cli)}, clear=True):
             cmd = fetch_runtimes.resolve_npm_command(
                 repo_root=self.root_path,
                 sys_platform="win32",
             )
-            self.assertEqual(cmd, [str(fake_node), str(fake_cli)])
+            self.assertEqual(len(cmd), 2)
+            self.assertEqual(Path(cmd[0]).resolve(), fake_node.resolve())
+            self.assertEqual(Path(cmd[1]).resolve(), fake_cli.resolve())
 
     def test_posix_npm_cli_resolution_when_npm_binary_missing(self):
         """On POSIX, if 'npm' binary is not on PATH, falls back to [<node>, <npm-cli.js>]."""
@@ -691,12 +701,14 @@ class TestFetchRuntimesScript(unittest.TestCase):
                 return str(fake_node)
             return None
 
-        with patch("shutil.which", side_effect=fake_which):
+        with patch("shutil.which", side_effect=fake_which), patch.dict(os.environ, {}, clear=True):
             cmd = fetch_runtimes.resolve_npm_command(
                 repo_root=self.root_path,
                 sys_platform="linux",
             )
-            self.assertEqual(cmd, [str(fake_node), str(fake_cli)])
+            self.assertEqual(len(cmd), 2)
+            self.assertEqual(Path(cmd[0]).resolve(), fake_node.resolve())
+            self.assertEqual(Path(cmd[1]).resolve(), fake_cli.resolve())
 
 
 if __name__ == "__main__":

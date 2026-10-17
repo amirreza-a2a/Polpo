@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 import sqlite3
+import sys
 from unittest.mock import patch, MagicMock
 import pytest
 
@@ -16,12 +17,16 @@ from infrastructure.paths import (
 )
 
 
+@pytest.mark.skipif(
+    sys.platform.startswith(("win", "darwin")),
+    reason="XDG_DATA_HOME is honored only on Linux/POSIX per ADR-003 and AGENTS.md",
+)
 def test_get_user_data_dir_respects_xdg_data_home(tmp_path: Path):
     """When XDG_DATA_HOME is set and non-empty, get_user_data_dir must honor it."""
     custom_xdg = tmp_path / "custom_xdg"
     with patch.dict(os.environ, {"XDG_DATA_HOME": str(custom_xdg)}):
         result = get_user_data_dir()
-        assert result == custom_xdg / "polpot"
+        assert result == (custom_xdg / "polpot").resolve()
         assert result.is_absolute()
 
 
@@ -37,10 +42,15 @@ def test_get_user_data_dir_default_platformdirs():
 
 def test_get_user_log_dir_is_inside_user_data_dir(tmp_path: Path):
     """get_user_log_dir returns <user_data_dir>/logs."""
-    custom_xdg = tmp_path / "custom_xdg"
-    with patch.dict(os.environ, {"XDG_DATA_HOME": str(custom_xdg)}):
-        log_dir = get_user_log_dir()
-        assert log_dir == custom_xdg / "polpot" / "logs"
+    log_dir = get_user_log_dir()
+    assert log_dir == (get_user_data_dir() / "logs").resolve()
+    assert log_dir.is_absolute()
+
+    if not sys.platform.startswith(("win", "darwin")):
+        custom_xdg = tmp_path / "custom_xdg"
+        with patch.dict(os.environ, {"XDG_DATA_HOME": str(custom_xdg)}):
+            log_dir_xdg = get_user_log_dir()
+            assert log_dir_xdg == (custom_xdg / "polpot" / "logs").resolve()
 
 
 def test_get_user_data_dir_cross_platform_mocking(tmp_path: Path):
