@@ -57,6 +57,16 @@ class UnsupportedPlatformError(ValueError):
     pass
 
 
+class NpmNotFoundError(FileNotFoundError):
+    """Raised when neither npm nor Node/npm-cli.js can be located on the system."""
+    pass
+
+
+class NpmExecutionError(RuntimeError):
+    """Raised when npm execution returns a non-zero exit code."""
+    pass
+
+
 @dataclass
 class RuntimeAcquisitionReport:
     """Diagnostic report for a runtime acquisition step."""
@@ -371,7 +381,222 @@ class RuntimeAcquirer:
         return reports
 
 
-def install_mathjax_dependencies(repo_root: Optional[Path] = None, force: bool = False) -> None:
+def _find_node_executable(repo_root: Path, is_windows: bool) -> Optional[Path]:
+    """Finds a candidate Node.js executable."""
+    ext = ".exe" if is_windows else ""
+
+    # 1. Environment variable override
+    env_node = os.environ.get("POLPO_NODE_PATH")
+    if env_node:
+        p = Path(env_node).expanduser().resolve()
+        if p.is_file():
+            if not is_windows or str(p).lower().endswith(".exe"):
+                return p
+        if p.is_dir() and (p / f"node{ext}").is_file():
+            return (p / f"node{ext}").resolve()
+
+    # 2. PATH lookup
+    if is_windows:
+        cands = ["node.exe"]
+        if os.name == "nt":
+            cands.append("node")
+    else:
+        cands = ["node"]
+
+    for cand in cands:
+        which_path = shutil.which(cand)
+        if which_path:
+            p = Path(which_path).resolve()
+            if is_windows and not str(p).lower().endswith(".exe"):
+                continue
+            if p.is_file():
+                return p
+
+    # 3. Executable adjacent to npm/npm.cmd on PATH
+    if is_windows:
+        npm_cands = ["npm.cmd", "npm.bat", "npm.exe"]
+        if os.name == "nt":
+            npm_cands.append("npm")
+        for npm_cand in npm_cands:
+            npm_path = shutil.which(npm_cand)
+            if npm_path:
+                p = (Path(npm_path).parent / f"node{ext}").resolve()
+                if p.is_file() and str(p).lower().endswith(".exe"):
+                    return p
+
+    # 4. Bundled or staged runtime in resources/mathjax/node[.exe]
+    staged = repo_root / "resources" / "mathjax" / f"node{ext}"
+    if staged.is_file():
+        if not is_windows or str(staged).lower().endswith(".exe"):
+            return staged.resolve()
+
+    # 5. Standard Windows installation paths
+    if is_windows:
+        for env_var in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"]:
+            base = os.environ.get(env_var)
+            if base:
+                cand = (Path(base) / "nodejs" / f"node{ext}").resolve()
+                if cand.is_file() and str(cand).lower().endswith(".exe"):
+                    return cand
+
+    return None
+
+
+def _find_npm_cli_js(repo_root: Path, node_exe: Optional[Path], is_windows: bool) -> Optional[Path]:
+    """Finds the npm-cli.js entrypoint script."""
+    candidates: List[Path] = []
+
+    # 0. Environment variable override
+    env_npm = os.environ.get("POLPO_NPM_CLI_PATH") or os.environ.get("POLPO_NPM_PATH")
+    if env_npm:
+        p = Path(env_npm).expanduser().resolve()
+        if p.is_file() and p.name == "npm-cli.js":
+            return p
+        if p.is_dir() and (p / "bin" / "npm-cli.js").is_file():
+            return (p / "bin" / "npm-cli.js").resolve()
+        if p.is_dir() and (p / "npm-cli.js").is_file():
+            return (p / "npm-cli.js").resolve()
+
+    # 1. Relative to discovered node executable
+    if node_exe:
+        node_dir = node_exe.parent
+        if is_windows:
+            # Windows layout (official zip, MSI, setup-node, Scoop): <node_dir>/node_modules/npm/bin/npm-cli.js
+            candidates.append(node_dir / "node_modules" / "npm" / "bin" / "npm-cli.js")
+            candidates.append(node_dir / "node_modules" / "npm" / "index.js")
+        else:
+            # POSIX layout: <node_dir>/../lib/node_modules/npm/bin/npm-cli.js
+            candidates.append(node_dir.parent / "lib" / "node_modules" / "npm" / "bin" / "npm-cli.js")
+            candidates.append(node_dir / "lib" / "node_modules" / "npm" / "bin" / "npm-cli.js")
+            candidates.append(node_dir / "node_modules" / "npm" / "bin" / "npm-cli.js")
+
+    # 2. Relative to npm / npm.cmd in PATH
+    if is_windows:
+        npm_names = ["npm.cmd", "npm.bat", "npm.exe"]
+        if os.name == "nt":
+            npm_names.append("npm")
+    else:
+        npm_names = ["npm"]
+
+    for npm_name in npm_names:
+        which_npm = shutil.which(npm_name)
+        if which_npm:
+            resolved_npm = Path(which_npm).resolve()
+            if resolved_npm.is_file() and resolved_npm.name == "npm-cli.js":
+                candidates.append(resolved_npm)
+
+            npm_dir = Path(which_npm).parent
+            if is_windows:
+                candidates.append(npm_dir / "node_modules" / "npm" / "bin" / "npm-cli.js")
+                candidates.append(npm_dir / "node_modules" / "npm" / "index.js")
+            else:
+                candidates.append(npm_dir.parent / "lib" / "node_modules" / "npm" / "bin" / "npm-cli.js")
+                candidates.append(npm_dir / "lib" / "node_modules" / "npm" / "bin" / "npm-cli.js")
+                candidates.append(npm_dir / "node_modules" / "npm" / "bin" / "npm-cli.js")
+
+    # 3. Standard Windows system/user npm locations
+    if is_windows:
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            candidates.append(Path(appdata) / "npm" / "node_modules" / "npm" / "bin" / "npm-cli.js")
+        for env_var in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"]:
+            base = os.environ.get(env_var)
+            if base:
+                candidates.append(Path(base) / "nodejs" / "node_modules" / "npm" / "bin" / "npm-cli.js")
+
+    # 4. Standard POSIX global paths
+    if not is_windows:
+        candidates.append(Path("/usr/local/lib/node_modules/npm/bin/npm-cli.js"))
+        candidates.append(Path("/usr/lib/node_modules/npm/bin/npm-cli.js"))
+        candidates.append(Path("/usr/share/nodejs/npm/bin/npm-cli.js"))
+
+    for cand in candidates:
+        try:
+            if cand.is_file():
+                return cand.resolve()
+        except OSError:
+            continue
+
+    return None
+
+
+def resolve_npm_command(
+    repo_root: Optional[Path] = None,
+    sys_platform: Optional[str] = None,
+) -> List[str]:
+    """Resolves a cross-platform command prefix for invoking npm.
+
+    On Windows:
+      Directly invoking 'npm' via subprocess without shell=True fails with WinError 2
+      because npm is distributed as a batch script ('npm.cmd'). Batch files also
+      suffer from argument parsing vulnerabilities (CVE-2024-24576). The reliable,
+      safe strategy on Windows is invoking Node with npm's JavaScript CLI entrypoint:
+        [<node.exe>, <npm-cli.js>]
+      If npm-cli.js is not found, a verified native npm.exe is accepted.
+      Arbitrary execution of 'cmd.exe /c npm.cmd' is deliberately avoided to eliminate
+      shell injection and batch argument parsing risks.
+
+    On POSIX (Linux, macOS):
+      'npm' is directly executable on PATH via shebang. If found, returns ['npm'].
+      Falls back to [<node>, <npm-cli.js>] if npm is absent from PATH but Node is present.
+
+    Environment Overrides:
+      - POLPO_NODE_PATH: Explicit path to node / node.exe binary or directory.
+      - POLPO_NPM_CLI_PATH: Explicit path to npm-cli.js or its containing directory.
+
+    Raises:
+      NpmNotFoundError: If neither npm nor Node/npm-cli.js can be located.
+    """
+    effective_platform = sys_platform if sys_platform is not None else sys.platform
+    is_windows = effective_platform == "win32" or effective_platform.startswith("win")
+
+    if repo_root is None:
+        repo_root = Path(__file__).resolve().parent.parent
+    else:
+        repo_root = Path(repo_root).resolve()
+
+    if not is_windows:
+        npm_path = shutil.which("npm")
+        if npm_path:
+            return ["npm"]
+
+    # Search for Node executable and npm-cli.js (primary strategy on Windows; fallback on POSIX)
+    node_exe = _find_node_executable(repo_root=repo_root, is_windows=is_windows)
+    npm_cli_js = _find_npm_cli_js(repo_root=repo_root, node_exe=node_exe, is_windows=is_windows)
+
+    if node_exe and npm_cli_js:
+        logger.debug("Resolved npm invocation via Node CLI: %s %s", node_exe, npm_cli_js)
+        return [str(node_exe), str(npm_cli_js)]
+
+    if is_windows:
+        # Check for native npm.exe (e.g. Volta, Scoop shim)
+        cand_exes = ["npm.exe"]
+        if os.name == "nt":
+            cand_exes.append("npm")
+        for cand in cand_exes:
+            p = shutil.which(cand)
+            if p and p.lower().endswith(".exe") and Path(p).is_file():
+                return [p]
+
+        raise NpmNotFoundError(
+            "npm could not be located on Windows. "
+            "Neither Node.js with 'npm-cli.js' nor native 'npm.exe' was found. "
+            "Please ensure Node.js 22.x LTS is installed and present in PATH."
+        )
+
+    # POSIX fallback error when npm is not found
+    raise NpmNotFoundError(
+        "npm could not be located on PATH or via Node.js installation. "
+        "Please ensure Node.js 22.x LTS and npm are installed."
+    )
+
+
+def install_mathjax_dependencies(
+    repo_root: Optional[Path] = None,
+    force: bool = False,
+    timeout: Optional[float] = None,
+    sys_platform: Optional[str] = None,
+) -> None:
     """Installs pinned MathJax npm dependencies in resources/mathjax using lockfile."""
     if repo_root is None:
         repo_root = Path(__file__).resolve().parent.parent
@@ -388,11 +613,44 @@ def install_mathjax_dependencies(repo_root: Optional[Path] = None, force: bool =
         logger.info("MathJax production dependencies already present in %s (skipping npm ci)", mathjax_full)
         return
 
-    cmd = ["npm", "ci", "--omit=dev", "--prefix", str(mathjax_dir)]
+    npm_base_cmd = resolve_npm_command(repo_root=repo_root, sys_platform=sys_platform)
+    cmd = npm_base_cmd + ["ci", "--omit=dev", "--prefix", str(mathjax_dir)]
     logger.info("Installing production MathJax npm dependencies: %s", " ".join(cmd))
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=str(repo_root),
+        )
+    except FileNotFoundError as exc:
+        raise NpmNotFoundError(
+            f"Failed to execute npm command '{cmd[0]}': {exc}. "
+            "Please ensure Node.js and npm are installed and available in PATH."
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        stdout_str = exc.stdout or ""
+        stderr_str = exc.stderr or ""
+        details = []
+        if stdout_str.strip():
+            details.append(f"stdout:\n{stdout_str.strip()}")
+        if stderr_str.strip():
+            details.append(f"stderr:\n{stderr_str.strip()}")
+        details_text = "\n".join(details)
+        details_msg = f"\n{details_text}" if details_text else ""
+        raise NpmExecutionError(f"npm ci timed out after {timeout} seconds:{details_msg}") from exc
+
     if result.returncode != 0:
-        raise RuntimeError(f"npm ci failed (exit code {result.returncode}):\n{result.stderr}")
+        details = []
+        if result.stdout and result.stdout.strip():
+            details.append(f"stdout:\n{result.stdout.strip()}")
+        if result.stderr and result.stderr.strip():
+            details.append(f"stderr:\n{result.stderr.strip()}")
+        details_text = "\n".join(details)
+        details_msg = f"\n{details_text}" if details_text else ""
+        raise NpmExecutionError(f"npm ci failed (exit code {result.returncode}):{details_msg}")
+
     logger.info("MathJax npm dependencies successfully installed in %s", mathjax_dir / "node_modules")
 
 
@@ -464,7 +722,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 )
 
         if args.install_mathjax_deps and not args.skip_npm:
-            install_mathjax_dependencies(force=args.force)
+            install_mathjax_dependencies(repo_root=acquirer.repo_root, force=args.force)
 
         logger.info("Runtime acquisition completed successfully.")
         return 0

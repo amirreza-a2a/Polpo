@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path
 import stat
-import sys
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -331,7 +331,7 @@ class TestFetchRuntimesScript(unittest.TestCase):
         mathjax_dir.mkdir(parents=True, exist_ok=True)
         (mathjax_dir / "package-lock.json").write_text("{}", encoding="utf-8")
 
-        with patch("subprocess.run") as mock_run:
+        with patch.object(fetch_runtimes, "resolve_npm_command", return_value=["npm"]), patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
 
             fetch_runtimes.install_mathjax_dependencies(repo_root=self.root_path)
@@ -442,7 +442,7 @@ class TestFetchRuntimesScript(unittest.TestCase):
         mj_full = mathjax_dir / "node_modules" / "mathjax-full"
         mj_full.mkdir(parents=True, exist_ok=True)
 
-        with patch("subprocess.run") as mock_run:
+        with patch.object(fetch_runtimes, "resolve_npm_command", return_value=["npm"]), patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
             fetch_runtimes.install_mathjax_dependencies(repo_root=self.root_path, force=False)
             mock_run.assert_not_called()
@@ -457,6 +457,246 @@ class TestFetchRuntimesScript(unittest.TestCase):
             code = fetch_runtimes.main(["--platform", "linux-x86_64", "--skip-npm"])
             self.assertEqual(code, 0)
             mock_acquire_all.assert_called_once()
+
+    def test_windows_npm_cli_resolution_from_node_dir(self):
+        """On Windows, resolve_npm_command discovers npm-cli.js adjacent to node.exe."""
+        fake_node_dir = self.root_path / "tools" / "node"
+        fake_cli_dir = fake_node_dir / "node_modules" / "npm" / "bin"
+        fake_cli_dir.mkdir(parents=True, exist_ok=True)
+        fake_node = fake_node_dir / "node.exe"
+        fake_node.write_text("", encoding="utf-8")
+        fake_cli = fake_cli_dir / "npm-cli.js"
+        fake_cli.write_text("", encoding="utf-8")
+
+        def fake_which(cmd):
+            if cmd in ("node.exe", "node"):
+                return str(fake_node)
+            return None
+
+        with patch("shutil.which", side_effect=fake_which):
+            cmd = fetch_runtimes.resolve_npm_command(
+                repo_root=self.root_path,
+                sys_platform="win32",
+            )
+            self.assertEqual(cmd, [str(fake_node), str(fake_cli)])
+
+    def test_windows_npm_cli_resolution_from_npm_cmd_dir(self):
+        """On Windows, resolve_npm_command finds node and npm-cli.js via npm.cmd directory when node not in PATH."""
+        fake_npm_dir = self.root_path / "tools" / "npm_dir"
+        fake_cli_dir = fake_npm_dir / "node_modules" / "npm" / "bin"
+        fake_cli_dir.mkdir(parents=True, exist_ok=True)
+        fake_node = fake_npm_dir / "node.exe"
+        fake_node.write_text("", encoding="utf-8")
+        fake_cmd = fake_npm_dir / "npm.cmd"
+        fake_cmd.write_text("", encoding="utf-8")
+        fake_cli = fake_cli_dir / "npm-cli.js"
+        fake_cli.write_text("", encoding="utf-8")
+
+        def fake_which(cmd):
+            if cmd in ("npm.cmd", "npm"):
+                return str(fake_cmd)
+            return None
+
+        with patch("shutil.which", side_effect=fake_which):
+            cmd = fetch_runtimes.resolve_npm_command(
+                repo_root=self.root_path,
+                sys_platform="win32",
+            )
+            self.assertEqual(cmd, [str(fake_node), str(fake_cli)])
+
+    def test_windows_npm_resolution_native_exe_fallback(self):
+        """On Windows, if a native npm.exe is found and npm-cli.js is absent, returns [npm.exe]."""
+        fake_bin_dir = self.root_path / "tools" / "bin"
+        fake_bin_dir.mkdir(parents=True, exist_ok=True)
+        fake_npm_exe = fake_bin_dir / "npm.exe"
+        fake_npm_exe.write_text("", encoding="utf-8")
+
+        def fake_which(cmd):
+            if cmd in ("npm.exe", "npm"):
+                return str(fake_npm_exe)
+            return None
+
+        with patch("shutil.which", side_effect=fake_which):
+            cmd = fetch_runtimes.resolve_npm_command(
+                repo_root=self.root_path,
+                sys_platform="win32",
+            )
+            self.assertEqual(cmd, [str(fake_npm_exe)])
+
+    def test_windows_npm_cmd_does_not_invoke_cmd_exe_fallback(self):
+        """On Windows, if npm-cli.js is absent and only npm.cmd exists, cmd.exe is NOT invoked; NpmNotFoundError is raised."""
+        fake_bin_dir = self.root_path / "tools" / "bin"
+        fake_bin_dir.mkdir(parents=True, exist_ok=True)
+        fake_npm_cmd = fake_bin_dir / "npm.cmd"
+        fake_npm_cmd.write_text("", encoding="utf-8")
+
+        def fake_which(cmd):
+            if cmd in ("npm.cmd", "npm"):
+                return str(fake_npm_cmd)
+            return None
+
+        with patch("shutil.which", side_effect=fake_which):
+            with self.assertRaises(fetch_runtimes.NpmNotFoundError) as ctx:
+                fetch_runtimes.resolve_npm_command(
+                    repo_root=self.root_path,
+                    sys_platform="win32",
+                )
+            self.assertIn("Neither Node.js with 'npm-cli.js' nor native 'npm.exe' was found", str(ctx.exception))
+
+    def test_subprocess_never_requests_shell_execution(self):
+        """install_mathjax_dependencies never invokes subprocess.run with shell=True."""
+        mathjax_dir = self.root_path / "resources" / "mathjax"
+        mathjax_dir.mkdir(parents=True, exist_ok=True)
+        (mathjax_dir / "package-lock.json").write_text("{}", encoding="utf-8")
+
+        for platform_id in ["linux", "win32", "darwin"]:
+            with patch.object(fetch_runtimes, "resolve_npm_command", return_value=["npm"]), \
+                 patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
+                fetch_runtimes.install_mathjax_dependencies(repo_root=self.root_path, sys_platform=platform_id)
+                mock_run.assert_called_once()
+                kwargs = mock_run.call_args[1]
+                self.assertFalse(kwargs.get("shell", False), f"shell=True detected for platform {platform_id}")
+
+    def test_missing_npm_or_node_diagnostics_windows(self):
+        """On Windows, if neither node nor npm can be located, raises NpmNotFoundError with clear diagnostics."""
+        with patch("shutil.which", return_value=None), patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(fetch_runtimes.NpmNotFoundError) as ctx:
+                fetch_runtimes.resolve_npm_command(
+                    repo_root=self.root_path,
+                    sys_platform="win32",
+                )
+            self.assertIn("npm could not be located on Windows", str(ctx.exception))
+            self.assertIn("Node.js 22.x LTS", str(ctx.exception))
+
+    def test_missing_npm_diagnostics_posix(self):
+        """On POSIX, if neither npm nor node can be located, raises NpmNotFoundError with clear diagnostics."""
+        with patch("shutil.which", return_value=None), patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(fetch_runtimes.NpmNotFoundError) as ctx:
+                fetch_runtimes.resolve_npm_command(
+                    repo_root=self.root_path,
+                    sys_platform="linux",
+                )
+            self.assertIn("npm could not be located on PATH", str(ctx.exception))
+
+    def test_correct_subprocess_args_for_windows_and_posix(self):
+        """install_mathjax_dependencies invokes subprocess with proper arguments on Windows and POSIX."""
+        mathjax_dir = self.root_path / "resources" / "mathjax"
+        mathjax_dir.mkdir(parents=True, exist_ok=True)
+        (mathjax_dir / "package-lock.json").write_text("{}", encoding="utf-8")
+
+        # POSIX verification
+        with patch("shutil.which", return_value="/usr/bin/npm"), patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            fetch_runtimes.install_mathjax_dependencies(repo_root=self.root_path, sys_platform="linux")
+
+            mock_run.assert_called_once()
+            cmd = mock_run.call_args[0][0]
+            self.assertEqual(cmd, ["npm", "ci", "--omit=dev", "--prefix", str(mathjax_dir)])
+
+        # Windows verification
+        fake_node = str(self.root_path / "node.exe")
+        fake_cli = str(self.root_path / "npm-cli.js")
+        with patch.object(fetch_runtimes, "resolve_npm_command", return_value=[fake_node, fake_cli]):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
+                fetch_runtimes.install_mathjax_dependencies(repo_root=self.root_path, sys_platform="win32")
+
+                mock_run.assert_called_once()
+                cmd = mock_run.call_args[0][0]
+                self.assertEqual(cmd, [fake_node, fake_cli, "ci", "--omit=dev", "--prefix", str(mathjax_dir)])
+
+    def test_subprocess_filenotfound_raises_npm_not_found_error(self):
+        """When subprocess.run raises FileNotFoundError, install_mathjax_dependencies raises NpmNotFoundError."""
+        mathjax_dir = self.root_path / "resources" / "mathjax"
+        mathjax_dir.mkdir(parents=True, exist_ok=True)
+        (mathjax_dir / "package-lock.json").write_text("{}", encoding="utf-8")
+
+        with patch("subprocess.run", side_effect=FileNotFoundError("Executable not found")):
+            with patch.object(fetch_runtimes, "resolve_npm_command", return_value=["npm"]):
+                with self.assertRaises(fetch_runtimes.NpmNotFoundError) as ctx:
+                    fetch_runtimes.install_mathjax_dependencies(repo_root=self.root_path)
+                self.assertIn("Failed to execute npm command 'npm'", str(ctx.exception))
+
+    def test_npm_non_zero_exit_propagates_status_and_output(self):
+        """When npm ci fails with non-zero exit status, stdout and stderr are included in NpmExecutionError."""
+        mathjax_dir = self.root_path / "resources" / "mathjax"
+        mathjax_dir.mkdir(parents=True, exist_ok=True)
+        (mathjax_dir / "package-lock.json").write_text("{}", encoding="utf-8")
+
+        with patch.object(fetch_runtimes, "resolve_npm_command", return_value=["npm"]), patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=1,
+                stdout="npm notice run in progress",
+                stderr="npm ERR! code ENOENT\nnpm ERR! package.json missing",
+            )
+            with self.assertRaises(fetch_runtimes.NpmExecutionError) as ctx:
+                fetch_runtimes.install_mathjax_dependencies(repo_root=self.root_path)
+
+            err_msg = str(ctx.exception)
+            self.assertIn("exit code 1", err_msg)
+            self.assertIn("npm notice run in progress", err_msg)
+            self.assertIn("npm ERR! code ENOENT", err_msg)
+            self.assertIsInstance(ctx.exception, RuntimeError)
+
+    def test_npm_timeout_expired_propagates_details(self):
+        """When npm ci exceeds timeout, NpmExecutionError is raised with diagnostic details."""
+        mathjax_dir = self.root_path / "resources" / "mathjax"
+        mathjax_dir.mkdir(parents=True, exist_ok=True)
+        (mathjax_dir / "package-lock.json").write_text("{}", encoding="utf-8")
+
+        with patch.object(fetch_runtimes, "resolve_npm_command", return_value=["npm"]):
+            with patch(
+                "subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd=["npm"], timeout=10.0, output="partial stdout", stderr="partial stderr"),
+            ):
+                with self.assertRaises(fetch_runtimes.NpmExecutionError) as ctx:
+                    fetch_runtimes.install_mathjax_dependencies(repo_root=self.root_path, timeout=10.0)
+
+                err_msg = str(ctx.exception)
+                self.assertIn("timed out after 10.0 seconds", err_msg)
+                self.assertIn("partial stdout", err_msg)
+                self.assertIn("partial stderr", err_msg)
+
+    def test_environment_variable_overrides_for_node_and_npm_cli(self):
+        """POLPO_NODE_PATH and POLPO_NPM_CLI_PATH take precedence when configured."""
+        fake_node = self.root_path / "custom" / "bin" / "node.exe"
+        fake_node.parent.mkdir(parents=True, exist_ok=True)
+        fake_node.write_text("", encoding="utf-8")
+
+        fake_cli = self.root_path / "custom" / "npm-cli.js"
+        fake_cli.write_text("", encoding="utf-8")
+
+        with patch.dict(os.environ, {"POLPO_NODE_PATH": str(fake_node), "POLPO_NPM_CLI_PATH": str(fake_cli)}):
+            cmd = fetch_runtimes.resolve_npm_command(
+                repo_root=self.root_path,
+                sys_platform="win32",
+            )
+            self.assertEqual(cmd, [str(fake_node), str(fake_cli)])
+
+    def test_posix_npm_cli_resolution_when_npm_binary_missing(self):
+        """On POSIX, if 'npm' binary is not on PATH, falls back to [<node>, <npm-cli.js>]."""
+        fake_bin_dir = self.root_path / "custom" / "bin"
+        fake_lib_dir = self.root_path / "custom" / "lib" / "node_modules" / "npm" / "bin"
+        fake_bin_dir.mkdir(parents=True, exist_ok=True)
+        fake_lib_dir.mkdir(parents=True, exist_ok=True)
+
+        fake_node = fake_bin_dir / "node"
+        fake_node.write_text("", encoding="utf-8")
+        fake_cli = fake_lib_dir / "npm-cli.js"
+        fake_cli.write_text("", encoding="utf-8")
+
+        def fake_which(cmd):
+            if cmd == "node":
+                return str(fake_node)
+            return None
+
+        with patch("shutil.which", side_effect=fake_which):
+            cmd = fetch_runtimes.resolve_npm_command(
+                repo_root=self.root_path,
+                sys_platform="linux",
+            )
+            self.assertEqual(cmd, [str(fake_node), str(fake_cli)])
 
 
 if __name__ == "__main__":
