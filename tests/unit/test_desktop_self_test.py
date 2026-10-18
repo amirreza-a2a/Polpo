@@ -18,18 +18,17 @@ from interfaces.desktop.self_test import run_self_test
 
 
 @pytest.fixture(autouse=True)
-def isolate_test_environment(tmp_path: Path):
+def isolate_test_environment(tmp_path: Path, monkeypatch):
     """Ensure tests run headlessly and in an isolated data environment."""
     orig_platform = os.environ.get("QT_QPA_PLATFORM")
     orig_xdg = os.environ.get("XDG_DATA_HOME")
-    orig_home = os.environ.get("HOME")
-
-    test_home = tmp_path / "home"
-    test_home.mkdir(parents=True, exist_ok=True)
 
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     os.environ["XDG_DATA_HOME"] = str(tmp_path / "test_isolated_xdg")
-    os.environ["HOME"] = str(test_home)
+    monkeypatch.setattr(
+        "infrastructure.paths.get_legacy_user_data_dir",
+        lambda app_slug="polpot": tmp_path / "test_isolated_legacy",
+    )
 
     yield
 
@@ -42,11 +41,6 @@ def isolate_test_environment(tmp_path: Path):
         os.environ["XDG_DATA_HOME"] = orig_xdg
     else:
         os.environ.pop("XDG_DATA_HOME", None)
-
-    if orig_home is not None:
-        os.environ["HOME"] = orig_home
-    else:
-        os.environ.pop("HOME", None)
 
 
 def test_version_flag_in_process(capsys):
