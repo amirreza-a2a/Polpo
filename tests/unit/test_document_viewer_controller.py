@@ -41,6 +41,7 @@ def test_controller_dispatches_async_apply_to_publication_service(qapp):
     controller = DocumentViewerController(
         viewer_service=mock_service,
         region_publication_service=mock_pub_service,
+        parent=qapp,
     )
 
     try:
@@ -75,6 +76,7 @@ def test_controller_emits_applied_signal_on_success(qapp):
     controller = DocumentViewerController(
         viewer_service=mock_service,
         region_publication_service=mock_pub_service,
+        parent=qapp,
     )
 
     applied_events = []
@@ -119,6 +121,7 @@ def test_controller_handles_publication_failure_gracefully(qapp):
     controller = DocumentViewerController(
         viewer_service=mock_service,
         region_publication_service=mock_pub_service,
+        parent=qapp,
     )
 
     applied_events = []

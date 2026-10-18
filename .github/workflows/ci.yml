@@ -46,6 +46,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       QT_QPA_PLATFORM: offscreen
+      QSG_RHI_BACKEND: software
 
     steps:
       - name: Checkout repository
@@ -98,6 +99,9 @@ jobs:
     name: test-linux
     runs-on: ubuntu-24.04
     needs: quality-gates
+    env:
+      QT_QPA_PLATFORM: offscreen
+      QSG_RHI_BACKEND: software
 
     steps:
       - name: Checkout repository
@@ -147,6 +151,7 @@ jobs:
       - name: Run test suite
         env:
           QT_QPA_PLATFORM: offscreen
+          QSG_RHI_BACKEND: software
         run: |
           pytest -q
 
