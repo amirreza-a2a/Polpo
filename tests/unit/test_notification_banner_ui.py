@@ -8,7 +8,6 @@ import time
 from unittest.mock import MagicMock
 import pytest
 
-from PySide6.QtTest import QTest
 
 from application.dto.package_recovery_dto import PackageRecoveryPlanDTO
 from application.dto.pdf_export_dto import PdfExportResultDTO
@@ -38,16 +37,18 @@ def qapp():
 def pump_events(app, count=5, delay=0.01):
     for _ in range(count):
         app.processEvents()
-        QTest.qWait(int(delay * 1000))
+        if delay > 0:
+            time.sleep(delay)
 
 
 def pump_until(app, condition, timeout=3.0, step=0.02):
     start = time.monotonic()
     while time.monotonic() - start < timeout:
         app.processEvents()
-        QTest.qWait(int(step * 1000))
         if condition():
             return True
+        if step > 0:
+            time.sleep(step)
     app.processEvents()
     return bool(condition())
 

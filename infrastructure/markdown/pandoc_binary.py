@@ -212,7 +212,7 @@ class PandocBinaryResolver:
             if not os.access(path, os.X_OK):
                 try:
                     current_mode = path.stat().st_mode
-                    path.chmod(current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+                    os.chmod(path, current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
                 except OSError as err:
                     raise PandocIncompatibleError(
                         f"Binary at '{path}' is not executable and chmod failed: {err}",
