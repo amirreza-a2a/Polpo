@@ -413,9 +413,9 @@ def create_app(
 logger = logging.getLogger(__name__)
 
 
-def _teardown_app_container(container: DesktopAppContainer) -> None:
+def _teardown_app_container(container: Optional[DesktopAppContainer]) -> None:
     """Safely shuts down the container, synchronization coordinators, and event bridge idempotently."""
-    if getattr(container, "_teardown_completed", False):
+    if container is None or getattr(container, "_teardown_completed", False):
         return
     container._teardown_completed = True
 

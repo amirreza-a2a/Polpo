@@ -5,12 +5,11 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 from unittest.mock import MagicMock, patch
 import pytest
 
 from core.version import APP_NAME, __version__
-from infrastructure.paths import get_runtime_resource_path, get_user_log_dir
+from infrastructure.paths import get_runtime_resource_path
 from infrastructure.logging.setup import setup_logging
 from interfaces.desktop import app as desktop_app_module
 from interfaces.desktop.app import main
@@ -235,6 +234,11 @@ def test_main_preserves_cleanup_when_app_exec_raises():
     assert container._is_shut_down is True
     assert not container.runtime.is_running
     assert not container.scheduler.is_running
+
+
+def test_teardown_app_container_handles_none_gracefully():
+    """_teardown_app_container handles None container input without raising AttributeError."""
+    desktop_app_module._teardown_app_container(None)
 
 
 def test_desktop_app_container_shutdown_is_idempotent(tmp_path: Path):

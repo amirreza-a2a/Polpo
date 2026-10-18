@@ -51,20 +51,22 @@ def pump_until(app, condition, timeout=3.0, step=0.02):
 
 
 def _teardown_ui_test(container, win, engine, app):
-    """Safely shuts down container, closes window, and clears QML cache to prevent window leakage."""
+    """Safely shuts down container, closes window, clears QML cache, and runs deferred Qt deletion."""
     _teardown_app_container(container)
     if win is not None:
         try:
             win.setProperty("visible", False)
             win.close()
+            win.deleteLater()
         except Exception:
             pass
     if engine is not None:
         try:
             engine.clearComponentCache()
+            engine.deleteLater()
         except Exception:
             pass
-    app.processEvents()
+    pump_events(app, count=2)
 
 
 def test_notification_banner_geometry_and_dismissal_lifecycle(qapp, tmp_path):

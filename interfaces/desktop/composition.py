@@ -3,7 +3,6 @@
 #  Canonical Desktop Composition Root & Dependency Injection
 # ============================================================
 
-import os
 from pathlib import Path
 from typing import Optional, Dict
 
