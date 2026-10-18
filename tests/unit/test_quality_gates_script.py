@@ -254,6 +254,11 @@ class TestBytecodeCompilationGate:
 class TestArchitectureInvariantsGate:
     """Validation of architecture AST invariant test suite invocation."""
 
+    def test_default_architecture_tests_includes_security_and_boundaries(self):
+        """Verifies TICK-REL-06 requirement that boundaries and security tests are included."""
+        assert "tests/unit/test_architecture_boundaries.py" in DEFAULT_ARCHITECTURE_TESTS
+        assert "tests/unit/test_architecture_security.py" in DEFAULT_ARCHITECTURE_TESTS
+
     @patch("subprocess.run")
     def test_architecture_invariants_invokes_targeted_suites(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="30 passed in 1.5s\n", stderr="")

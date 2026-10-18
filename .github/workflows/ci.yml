@@ -14,6 +14,10 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -42,6 +46,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       QT_QPA_PLATFORM: offscreen
+      QSG_RHI_BACKEND: software
 
     steps:
       - name: Checkout repository
@@ -94,6 +99,9 @@ jobs:
     name: test-linux
     runs-on: ubuntu-24.04
     needs: quality-gates
+    env:
+      QT_QPA_PLATFORM: offscreen
+      QSG_RHI_BACKEND: software
 
     steps:
       - name: Checkout repository
@@ -106,14 +114,14 @@ jobs:
           cache: 'pip'
 
       - name: Set up Node.js 22.23.2
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
         with:
           node-version: '22.23.2'
 
       - name: Install Linux system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1 libegl1 libxkbcommon-x11-0 libdbus-1-3 pandoc
+          sudo apt-get install -y libgl1 libegl1 libxkbcommon-x11-0 libdbus-1-3
 
       - name: Install Python dependencies
         run: |
@@ -121,9 +129,20 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
-      - name: Install MathJax worker dependencies
+      - name: Cache runtime binaries and MathJax dependencies
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+        id: cache-runtimes
+        with:
+          path: |
+            resources/bin
+            resources/mathjax/node
+            resources/mathjax/node.exe
+            resources/mathjax/node_modules
+          key: runtimes-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('resources/runtimes.json', 'resources/mathjax/package-lock.json') }}
+
+      - name: Provision pinned runtimes and MathJax dependencies
         run: |
-          npm ci --prefix resources/mathjax
+          python scripts/fetch_runtimes.py --install-mathjax-deps
 
       - name: Verify MathJax worker standalone
         run: |
@@ -132,6 +151,7 @@ jobs:
       - name: Run test suite
         env:
           QT_QPA_PLATFORM: offscreen
+          QSG_RHI_BACKEND: software
         run: |
           pytest -q
 
@@ -156,13 +176,9 @@ jobs:
           cache: 'pip'
 
       - name: Set up Node.js 22.23.2
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
         with:
           node-version: '22.23.2'
-
-      - name: Install Pandoc
-        run: |
-          choco install pandoc --no-progress
 
       - name: Install Python dependencies
         run: |
@@ -170,9 +186,20 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
-      - name: Install MathJax worker dependencies
+      - name: Cache runtime binaries and MathJax dependencies
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+        id: cache-runtimes
+        with:
+          path: |
+            resources/bin
+            resources/mathjax/node
+            resources/mathjax/node.exe
+            resources/mathjax/node_modules
+          key: runtimes-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('resources/runtimes.json', 'resources/mathjax/package-lock.json') }}
+
+      - name: Provision pinned runtimes and MathJax dependencies
         run: |
-          npm ci --prefix resources/mathjax
+          python scripts/fetch_runtimes.py --install-mathjax-deps
 
       - name: Verify MathJax worker standalone
         run: |

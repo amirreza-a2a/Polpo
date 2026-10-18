@@ -3,10 +3,20 @@
 #  Canonical Desktop Application Shell & Entrypoint
 # ============================================================
 
+import logging
+import os
 import sys
 from pathlib import Path
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Sequence
 
+if __package__ is None or __package__ == "":
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+from core.version import APP_NAME
+from infrastructure.paths import get_runtime_resource_path, DataMigrationConflictError
+from infrastructure.logging.setup import setup_logging
 from interfaces.desktop.qt_compat import QGuiApplication, QQmlApplicationEngine
 from interfaces.desktop.composition import DesktopAppContainer
 from interfaces.desktop.bridge import QtSignalEventBridge
@@ -226,8 +236,9 @@ def create_app(
     app = QGuiApplication.instance()
     if app is None:
         app = QGuiApplication(argv if argv is not None else sys.argv)
-    app.setApplicationName("PolpoT")
-    app.setOrganizationName("PolpoT")
+    app.setApplicationName(APP_NAME)
+    app.setApplicationDisplayName(APP_NAME)
+    app.setOrganizationName("Polpo")
 
     # 1. Dependency injection composition root
     container = DesktopAppContainer(
@@ -390,23 +401,167 @@ def create_app(
 
     # 8. Graceful shutdown handler
     def on_shutdown():
-        if sync_coordinator is not None:
-            sync_coordinator.shutdown()
-        container.shutdown()
-        bridge.detach()
+        _teardown_app_container(container)
 
+    container._about_to_quit_handler = on_shutdown
+    container._teardown_completed = False
     app.aboutToQuit.connect(on_shutdown)
 
     return app, engine, container
 
 
-def main() -> int:
-    """CLI entrypoint for starting the desktop GUI application."""
-    app, engine, container = create_app()
-    qml_path = Path(__file__).parent / "qml" / "Main.qml"
-    if qml_path.exists():
+logger = logging.getLogger(__name__)
+
+
+def _teardown_app_container(container: Optional[DesktopAppContainer]) -> None:
+    """Safely shuts down the container, synchronization coordinators, and event bridge idempotently."""
+    if container is None or getattr(container, "_teardown_completed", False):
+        return
+    container._teardown_completed = True
+
+    cleanup_fn = getattr(container, "_about_to_quit_handler", None)
+    app = QGuiApplication.instance()
+    if cleanup_fn is not None and app is not None:
+        try:
+            app.aboutToQuit.disconnect(cleanup_fn)
+        except (RuntimeError, TypeError):
+            pass
+
+    if hasattr(container, "sync_coordinator") and container.sync_coordinator is not None:
+        try:
+            container.sync_coordinator.shutdown()
+        except Exception:
+            pass
+    try:
+        container.shutdown()
+    except Exception:
+        pass
+    if hasattr(container, "bridge") and container.bridge is not None:
+        try:
+            container.bridge.detach()
+        except Exception:
+            pass
+
+
+def _ensure_windows_console_streams() -> None:
+    """Ensure standard output and error streams are valid on Windows.
+
+    When compiled as a GUI application (console=False in PyInstaller), Windows does
+    not allocate or attach a console by default, resulting in sys.stdout and sys.stderr
+    being None unless explicitly redirected. This helper attaches to the parent console
+    if available and ensures streams are writable UTF-8 streams.
+    """
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.kernel32.AttachConsole(-1)
+        except Exception:
+            pass
+        if sys.stdout is None:
+            try:
+                sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace")
+            except Exception:
+                sys.stdout = open(os.devnull, "w", encoding="utf-8")
+        else:
+            try:
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+        if sys.stderr is None:
+            try:
+                sys.stderr = open("CONOUT$", "w", encoding="utf-8", errors="replace")
+            except Exception:
+                sys.stderr = open(os.devnull, "w", encoding="utf-8")
+        else:
+            try:
+                sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    """CLI entrypoint for the desktop application.
+
+    Supports `--version` and `--self-test` without launching GUI or modifying user databases.
+    Enforces fail-fast validation when Main.qml is missing or fails to produce root objects.
+    """
+    if argv is None:
+        raw_args = list(sys.argv[1:])
+        qt_args = list(sys.argv)
+    else:
+        raw_args = list(argv)
+        # Ensure Qt argv contains the program name as argv[0] so flags like -platform offscreen are parsed correctly
+        qt_args = [sys.argv[0] if sys.argv else "polpo"] + list(argv)
+
+    if "--version" in raw_args or "-v" in raw_args or "--self-test" in raw_args or "--help" in raw_args or "-h" in raw_args:
+        _ensure_windows_console_streams()
+
+    if "--version" in raw_args or "-v" in raw_args:
+        from core.version import APP_NAME, __version__
+        print(f"{APP_NAME} {__version__}")
+        return 0
+
+    if "--self-test" in raw_args:
+        from interfaces.desktop.self_test import run_self_test
+        return run_self_test()
+
+    if "--help" in raw_args or "-h" in raw_args:
+        from core.version import APP_NAME, __version__
+        print(f"{APP_NAME} {__version__}")
+        print("\nUsage: polpo [OPTIONS]")
+        print("\nOptions:")
+        print("  -v, --version    Show version information and exit.")
+        print("  --self-test      Run diagnostic smoke self-test and exit.")
+        print("  -h, --help       Show this help message and exit.")
+        return 0
+
+    # Initialize structured logging into cross-platform user-data logs directory
+    setup_logging()
+
+    # Normal desktop application GUI startup with conflict and error guards
+    try:
+        app, engine, container = create_app(argv=qt_args)
+    except DataMigrationConflictError as exc:
+        logger.critical("Fatal startup failure: %s", exc)
+        sys.stderr.write(f"Fatal error: {exc}\n")
+        return 1
+
+    qml_path = get_runtime_resource_path("interfaces/desktop/qml/Main.qml")
+
+    if not qml_path.is_file() or not os.access(qml_path, os.R_OK):
+        logger.critical("Fatal startup failure: Main QML interface not found or not readable: %s", qml_path)
+        sys.stderr.write(f"Fatal error: Main QML interface file not found or not readable: {qml_path}\n")
+        _teardown_app_container(container)
+        return 1
+
+    # Capture QML compilation warnings and syntax errors for actionable diagnostics
+    qml_errors: list[str] = []
+    engine.warnings.connect(lambda warns: [qml_errors.append(w.toString()) for w in warns])
+
+    try:
         engine.load(str(qml_path))
-    return app.exec()
+    except Exception as exc:
+        logger.critical("Fatal startup failure: Exception during QML loading: %s", exc)
+        sys.stderr.write(f"Fatal error: Exception during QML loading: {exc}\n")
+        _teardown_app_container(container)
+        return 1
+
+    if not engine.rootObjects():
+        error_details = ("\nQML diagnostics:\n" + "\n".join(f"  - {err}" for err in qml_errors)) if qml_errors else ""
+        logger.critical(
+            "Fatal startup failure: QQmlApplicationEngine produced 0 root objects from: %s%s",
+            qml_path,
+            error_details,
+        )
+        sys.stderr.write(f"Fatal error: Failed to instantiate QML root object from: {qml_path}{error_details}\n")
+        _teardown_app_container(container)
+        return 1
+
+    try:
+        return app.exec()
+    finally:
+        _teardown_app_container(container)
 
 
 if __name__ == "__main__":

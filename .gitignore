@@ -37,7 +37,14 @@ resources/bin/**
 !resources/bin/**/.gitkeep
 resources/mathjax/node
 resources/mathjax/node.exe
+resources/mathjax/node_modules/
 node_modules/
+
+# Packaging and release build outputs
+dist/
+build/
+*.sha256
+*.spec.bak
 
 /.quarto/
 **/*.quarto_ipynb

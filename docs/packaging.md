@@ -15,9 +15,10 @@ polpot/
 ├── resources/
 │   ├── runtimes.json                # Upstream acquisition manifest with SHA-256 hashes
 │   ├── bin/
-│   │   ├── linux-x64/pandoc         # Statically linked musl binary (v3.1.11)
-│   │   ├── win-x64/pandoc.exe       # Standalone Windows executable (v3.1.11)
-│   │   └── macos-universal/pandoc   # Universal binary (v3.1.11)
+│   │   ├── linux-x86_64/pandoc      # Statically linked musl binary (v3.1.11)
+│   │   ├── windows-x64/pandoc.exe   # Standalone Windows executable (v3.1.11)
+│   │   ├── darwin-x86_64/pandoc     # macOS x86_64 binary (v3.1.11)
+│   │   └── darwin-arm64/pandoc      # macOS Apple Silicon binary (v3.1.11)
 │   └── mathjax/
 │       ├── node                     # Hermetic Node.js 22.23.2 LTS executable (or node.exe)
 │       ├── mathjax_worker.js        # Line-delimited JSON-RPC headless renderer
@@ -92,7 +93,7 @@ macOS bundles must be signed **inside-out** (all nested helper executables and `
    codesign --force --timestamp --options runtime \
      --entitlements resources/entitlements.plist \
      --sign "Developer ID Application: Your Name (TEAM_ID)" \
-     resources/bin/macos-universal/pandoc
+     resources/bin/darwin-arm64/pandoc
 
    # Sign bundled Node.js runtime
    codesign --force --timestamp --options runtime \
@@ -146,3 +147,77 @@ The repository CI workflow (`.github/workflows/ci.yml`) validates runtime contra
 * **Linux (`ubuntu-24.04`):** Validates Pandoc execution, Node 22.23.2 MathJax daemon startup, rendering, and clean shutdown under POSIX process semantics.
 * **Windows (`windows-2025`):** Validates Pandoc execution, Win32 process creation flags (`CREATE_NO_WINDOW`), line endings (`\r\n`), and clean daemon termination on native Windows runners.
 * **Verification Script:** `scripts/verify_mathjax_worker.py` asserts protocol compliance, bounded memory buffers, and error isolation without test runner hangs.
+
+---
+
+## 6. Reproducible Desktop Package Building (`scripts/build_package.py`)
+
+Standalone desktop packages are built using PyInstaller (`packaging/polpo.spec`, pinned to `pyinstaller==6.22.3`) and automated through `scripts/build_package.py`:
+
+```bash
+# 0. Install pinned PyInstaller build dependency
+python -m pip install "pyinstaller==6.22.3"
+
+# 1. Fetch pinned runtime binaries and production MathJax dependencies
+python scripts/fetch_runtimes.py --install-mathjax-deps
+
+# 2. Build standalone desktop bundle and deterministic archive
+python scripts/build_package.py
+```
+
+### 6.1 Package Structure
+
+The resulting directory bundle (`dist/Polpo/`) contains:
+- The compiled `Polpo` executable (`Polpo.exe` on Windows).
+- Hermetic runtime binaries: Pandoc 3.1.11 (`resources/bin/<platform>/`) and Node.js 22.23.2 (`resources/mathjax/node`).
+- Bundled `mathjax_worker.js` with production `node_modules` (`mathjax-full@3.2.2`).
+- Embedded SQLite schema migrations (`infrastructure/persistence/sqlite/migrations/`).
+- Curated prompt templates (`prompts/templates/`).
+- Bundled LaTeX preamble template (`resources/templates/polpo_preamble.tex`).
+- QML source components (`interfaces/desktop/qml/`).
+- License file (`LICENSE` under AGPL-3.0-only).
+
+### 6.2 Deterministic Archive Generation
+
+`scripts/build_package.py` creates bit-for-bit reproducible release archives:
+- **Linux:** `dist/Polpo-v<version>-linux-x86_64.tar.gz` (with normalized tar entries and fixed Gzip header timestamp).
+- **Windows:** `dist/Polpo-v<version>-windows-x64.zip` (with normalized DOS timestamps).
+- Accompanying SHA-256 checksum sidecars: `dist/Polpo-v<version>-<platform>.tar.gz.sha256`.
+
+### 6.3 Frozen Binary `--self-test` Smoke Test
+
+Before distribution, packaged binaries must be validated in an isolated directory outside the source tree:
+
+```bash
+# Extract archive to a clean temporary location
+mkdir -p /tmp/polpo_smoke && tar -xzf dist/Polpo-*.tar.gz -C /tmp/polpo_smoke
+
+# Execute self-test with constrained PATH (confirming bundled pandoc and node are used)
+PATH="/usr/bin:/bin" QT_QPA_PLATFORM=offscreen /tmp/polpo_smoke/Polpo/Polpo --self-test
+```
+
+The `--self-test` flag exercises:
+1. Frozen runtime path resolution (`sys._MEIPASS` / bundle root).
+2. SQLite database migration application (`001` through `004`).
+3. Idempotent default prompt seeding into the clean SQLite database.
+4. QML application engine initialization (`Main.qml`).
+5. Bundled Pandoc 3.1.11 binary invocation (AST parsing with source positions).
+6. Bundled Node.js 22.23.2 MathJax daemon IPC handshake and mathematical SVG vector rendering (`$E=mc^2$`).
+7. Clean, zero-orphan process shutdown.
+
+---
+
+## 7. Release Pipeline and Provenance (`.github/workflows/release.yml`)
+
+Official releases and pre-release validation runs are orchestrated through a 4-job GitHub Actions workflow:
+
+### 7.1 Triggers and Execution Modes
+- **`push` to `refs/tags/v*`:** Canonical release trigger. Verifies ref ancestry on `main`, runs Tier-2 validation matrix, builds Linux/Windows packages, runs smoke tests, and publishes the release with cryptographic provenance.
+- **`push` to `release-validation/**` branches:** CI validation trigger for pre-release testing. Builds packages and runs smoke tests across Linux and Windows without publishing.
+- **`workflow_dispatch`:** Manual execution on any branch or ref for build and smoke-test verification. Publication is unreachable on manual dispatch.
+
+### 7.2 Job DAG and Gating
+1. **`validate-release-ref`:** Verifies tag format matches `core/version.py`, checks commit is on `origin/main`, runs Gitleaks secret scanning, and passes all repository quality gates (`scripts/run_quality_gates.py`).
+2. **`tier2-validation-matrix`:** Executes the full test suite across macOS 15 ARM64 and Linux Python 3.10 and 3.11.
+3. **`package-and-smoke-test`:** Builds standalone packages on Linux and Windows runners, unpacks them in clean temp directories outside the checkout, and executes `--self-test` with stripped system PATH.
+4. **`publish-release`:** Strictly requires tag push (`startsWith(github.ref, 'refs/tags/v')`). Combines and verifies `SHA256SUMS.txt`, generates cryptographic build provenance attestations via `actions/attest-build-provenance`, and publishes the atomic GitHub Release with release notes.

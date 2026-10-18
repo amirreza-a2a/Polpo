@@ -542,6 +542,11 @@ class MathJaxProcessSupervisor:
 
                 # Re-check shutdown status in case shutdown was called while lock was released
                 if self._is_shutdown:
+                    self._cleanup_process_handles_locked(
+                        reason="SHUTDOWN",
+                        process=stale_proc,
+                        generation=stale_gen,
+                    )
                     raise MathSupervisorShutdownError(
                         code=-32603,
                         message="MathJaxProcessSupervisor has been shut down.",
@@ -665,6 +670,24 @@ class MathJaxProcessSupervisor:
             # Perform synchronous cold-start health handshake (ADR-002 D02)
             try:
                 self._perform_startup_handshake_locked(current_gen, current_queue)
+            except MathSupervisorShutdownError:
+                spawned_proc = self._process
+                lock_was_held = False
+                try:
+                    self._lock.release()
+                    lock_was_held = True
+                except RuntimeError:
+                    lock_was_held = False
+
+                try:
+                    if spawned_proc is not None:
+                        self._terminate_process_outside_lock(spawned_proc, reason="SHUTDOWN")
+                finally:
+                    if lock_was_held:
+                        self._lock.acquire()
+
+                self._cleanup_process_handles_locked(reason="SHUTDOWN_RACE", process=spawned_proc)
+                raise
             except MathWorkerStartupError as handshake_exc:
                 _set_exc_process_identity(handshake_exc, self._process, current_gen)
                 raise
@@ -711,6 +734,12 @@ class MathJaxProcessSupervisor:
 
         deadline = time.monotonic() + self._startup_timeout
         while True:
+            if self._is_shutdown:
+                raise MathSupervisorShutdownError(
+                    code=-32603,
+                    message="MathJaxProcessSupervisor has been shut down.",
+                )
+
             remaining = deadline - time.monotonic()
             if remaining <= 0.0:
                 raise MathWorkerStartupError(
@@ -719,12 +748,9 @@ class MathJaxProcessSupervisor:
                 )
 
             try:
-                item = q.get(timeout=max(0.0, remaining))
+                item = q.get(timeout=min(0.1, max(0.0, remaining)))
             except queue.Empty:
-                raise MathWorkerStartupError(
-                    code=-32603,
-                    message=f"MathJax worker startup handshake timed out after {self._startup_timeout:.1f}s.",
-                )
+                continue
 
             gen, payload_item = item
             if gen != expected_gen:
@@ -1277,32 +1303,29 @@ class MathJaxProcessSupervisor:
                 # Neutral lifecycle teardown event; neither success nor failure
                 raise
 
-    def shutdown(self) -> None:
+    def shutdown(self, settle_timeout: float = 2.0) -> None:
         """Terminate the child worker process and close open pipes idempotently.
 
         Ordered teardown sequence (ADR-002 section D06):
         1. Set self._is_shutdown = True early to reject any new incoming operations.
         2. Push _AbortSentinel to active response queue outside lock to wake RPC waiters immediately.
         3. Release any active circuit breaker probe reservation cleanly.
-        4. Terminate worker process outside supervisor lock via two-phase escalation.
-        5. Cleanup process handles under the lifecycle lock.
-        6. Join reader and stderr drain threads with bounded timeout (<= 0.2s) outside the lock.
-        7. Leave supervisor in safe terminal state (repeated calls are no-ops).
+        4. Coordinate with active respawn/spawn lifecycle to avoid handle races.
+        5. Terminate worker process outside supervisor lock via two-phase escalation.
+        6. Cleanup process handles under the lifecycle lock.
+        7. Join reader and stderr drain threads with bounded timeout (<= 0.2s) outside the lock.
+        8. Leave supervisor in safe terminal state (repeated calls are no-ops).
         """
         self._is_shutdown = True
 
-        proc = self._process
-        q = self._response_queue
-        drain_thread = self._stderr_drain_thread
-        reader_thread = self._stdout_reader_thread
-
         # If already cleanly shut down (process and queue are None and not respawning), fast no-op
-        if proc is None and q is None and not self._respawning:
+        if self._process is None and self._response_queue is None and not self._respawning:
             if hasattr(self._circuit_breaker, "release_probe"):
                 self._circuit_breaker.release_probe()
             return
 
         # Wake blocked RPC waiters immediately without waiting out request timeouts
+        q = self._response_queue
         if q is not None:
             q.put((self._process_generation, _AbortSentinel()))
 
@@ -1310,16 +1333,71 @@ class MathJaxProcessSupervisor:
         if hasattr(self._circuit_breaker, "release_probe"):
             self._circuit_breaker.release_probe()
 
+        # Coordinate with active respawn/spawn lifecycle:
+        # Wake any threads waiting on state_cv (e.g. waiting for respawn to complete)
+        # and wait for an in-flight respawn owner to finish aborting and handle cleanup.
+        is_reentrant = (self._respawn_owner_thread_id == threading.get_ident())
+        owner_settled = True
+        if not is_reentrant:
+            deadline = time.monotonic() + max(0.0, settle_timeout)
+            with self._state_cv:
+                self._state_cv.notify_all()
+                while self._respawning and self._respawn_owner_thread_id is not None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0.0:
+                        owner_settled = False
+                        break
+                    self._state_cv.wait(timeout=remaining)
+
+        # Re-check and wake any late-stage queue allocated during race
+        q_after = self._response_queue
+        if q_after is not None and q_after is not q:
+            q_after.put((self._process_generation, _AbortSentinel()))
+
+        # If in-flight owner failed to settle within deadline, check if owner thread is still alive
+        if not is_reentrant and not owner_settled and self._respawning:
+            owner_tid = self._respawn_owner_thread_id
+            owner_alive = False
+            if owner_tid is not None:
+                owner_alive = any(
+                    t.ident == owner_tid and t.is_alive()
+                    for t in threading.enumerate()
+                )
+            if not owner_alive:
+                # Owner thread crashed or disappeared; reclaim ownership so shutdown can finish
+                with self._lock:
+                    self._respawning = False
+                    self._respawn_owner_thread_id = None
+                    self._state_cv.notify_all()
+                owner_settled = True
+            else:
+                logger.warning(
+                    "MathJax supervisor shutdown: in-flight respawn owner thread %s "
+                    "did not settle within %.1fs; owner retains cleanup responsibility.",
+                    owner_tid,
+                    settle_timeout,
+                )
+
+        # Snapshot final state only after coordination
+        proc = self._process
+        drain_thread = self._stderr_drain_thread
+        reader_thread = self._stdout_reader_thread
+
+        # If already cleanly shut down (process and queue are None and not respawning), fast no-op
+        if proc is None and self._response_queue is None and not self._respawning:
+            return
+
         # Terminate worker process outside supervisor lock to prevent lock contention
         if proc is not None:
             self._terminate_process_outside_lock(proc, reason="SHUTDOWN")
 
-        # Clean up stream handles and wake condition variable waiters under supervisor lock
-        is_reentrant = (self._respawn_owner_thread_id == threading.get_ident())
+        # Clean up stream handles under lock only if the respawn owner has settled or caller is reentrant.
+        # If an active owner is still executing, the owner is responsible for handle cleanup upon exit.
         if not is_reentrant:
-            with self._lock:
-                self._cleanup_process_handles_locked(reason="SHUTDOWN")
-                self._state_cv.notify_all()
+            if owner_settled:
+                with self._lock:
+                    self._cleanup_process_handles_locked(reason="SHUTDOWN")
+                    self._state_cv.notify_all()
         else:
             self._cleanup_process_handles_locked(reason="SHUTDOWN")
             self._state_cv.notify_all()

@@ -38,6 +38,7 @@ from application.services.document_asset_resolver import (
     DocumentAssetResolver,
 )
 from application.services.metadata_normalizer import normalize_quarto_pdf_metadata
+from infrastructure.paths import get_runtime_resource_path
 
 logger = logging.getLogger(__name__)
 
@@ -430,9 +431,7 @@ class StagingWorkspaceManager:
         if templates_dir is not None:
             self.templates_dir = Path(templates_dir).resolve()
         else:
-            self.templates_dir = (
-                Path(__file__).resolve().parent.parent.parent / "resources" / "templates"
-            )
+            self.templates_dir = get_runtime_resource_path("resources/templates")
 
     @contextmanager
     def create_session(
@@ -525,9 +524,10 @@ class StagingWorkspaceManager:
             body_markdown = _sanitize_markdown_body(body_markdown)
             body_markdown = _convert_github_alerts_to_callouts(body_markdown)
             body_markdown = _sanitize_uncropped_bounding_boxes(body_markdown)
+            clean_body = body_markdown.lstrip("\r\n")
 
             qmd_path = staging_dir / "document.qmd"
-            qmd_content = f"---\n{yaml_front_matter}\n---\n\n{body_markdown.lstrip('\r\n')}"
+            qmd_content = f"---\n{yaml_front_matter}\n---\n\n{clean_body}"
             qmd_path.write_text(qmd_content, encoding="utf-8")
 
             session = StagingSession(

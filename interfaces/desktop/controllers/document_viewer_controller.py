@@ -564,6 +564,7 @@ class DocumentViewerController(QObject):
             self._on_internal_apply_error(resolved_job_id, region_id, str(e))
             raise
 
+    @Slot(int, str, int, str, int)
     def _on_internal_apply_finished(
         self,
         job_id: int,
@@ -587,6 +588,7 @@ class DocumentViewerController(QObject):
         if document_version is not None and document_version > 0:
             self.canonicalDocumentPublished.emit(job_id, document_version)
 
+    @Slot(int, str, str)
     def _on_internal_apply_error(
         self, job_id: int, region_id: str, error_msg: str
     ) -> None:
@@ -606,7 +608,10 @@ class DocumentViewerController(QObject):
     @Slot()
     def shutdown(self) -> None:
         """Explicit shutdown releasing executor resources."""
-        self._executor.shutdown(wait=False, cancel_futures=True)
+        try:
+            self._executor.shutdown(wait=True, cancel_futures=True)
+        except TypeError:
+            self._executor.shutdown(wait=True)
 
     def _get_viewport_metrics(self) -> ViewportMetrics:
         return ViewportMetrics(
@@ -1824,6 +1829,7 @@ class DocumentViewerController(QObject):
     # Internal Signal Handlers
     # =========================================================================
 
+    @Slot(int, object)
     def _on_internal_page_loaded(self, req_id: int, payload: object) -> None:
         """Executed on GUI thread when page rendering finishes."""
         if req_id != self._request_id:
@@ -1868,6 +1874,7 @@ class DocumentViewerController(QObject):
         self.dimensionsChanged.emit()
         self.regionsChanged.emit()
 
+    @Slot(int, str)
     def _on_internal_page_error(self, req_id: int, error_msg: str) -> None:
         """Executed on GUI thread when page rendering fails."""
         if req_id != self._request_id:

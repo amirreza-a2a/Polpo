@@ -8,7 +8,6 @@ import time
 from unittest.mock import MagicMock
 import pytest
 
-from PySide6.QtTest import QTest
 
 from application.dto.package_recovery_dto import PackageRecoveryPlanDTO
 from application.dto.pdf_export_dto import PdfExportResultDTO
@@ -16,14 +15,11 @@ from core.exceptions.domain_exceptions import (
     MissingLatexPackageError,
     PdfCompilationError,
 )
-from interfaces.desktop.app import create_app
+from interfaces.desktop.app import _teardown_app_container, create_app
 from interfaces.desktop.qt_compat import (
     QGuiApplication,
-    QQmlApplicationEngine,
-    QQmlComponent,
     QQuickItem,
     QObject,
-    QUrl,
 )
 
 
@@ -38,21 +34,42 @@ def qapp():
 def pump_events(app, count=5, delay=0.01):
     for _ in range(count):
         app.processEvents()
-        QTest.qWait(int(delay * 1000))
+        if delay > 0:
+            time.sleep(delay)
 
 
 def pump_until(app, condition, timeout=3.0, step=0.02):
     start = time.monotonic()
     while time.monotonic() - start < timeout:
         app.processEvents()
-        QTest.qWait(int(step * 1000))
         if condition():
             return True
+        if step > 0:
+            time.sleep(step)
     app.processEvents()
     return bool(condition())
 
 
-def test_notification_banner_geometry_and_dismissal_lifecycle(qapp):
+def _teardown_ui_test(container, win, engine, app):
+    """Safely shuts down container, closes window, clears QML cache, and runs deferred Qt deletion."""
+    _teardown_app_container(container)
+    if win is not None:
+        try:
+            win.setProperty("visible", False)
+            win.close()
+            win.deleteLater()
+        except Exception:
+            pass
+    if engine is not None:
+        try:
+            engine.clearComponentCache()
+            engine.deleteLater()
+        except Exception:
+            pass
+    pump_events(app, count=2)
+
+
+def test_notification_banner_geometry_and_dismissal_lifecycle(qapp, tmp_path):
     """
     Verifies NotificationBanner inside Main.qml:
     1. Zero height and invisible when message is empty.
@@ -61,7 +78,14 @@ def test_notification_banner_geometry_and_dismissal_lifecycle(qapp):
     4. Dismiss action clears the error and does NOT break the QML binding.
     5. A subsequent error updates the banner and restores visibility.
     """
-    engine = QQmlApplicationEngine()
+    db_file = tmp_path / "test.db"
+    artifacts_dir = tmp_path / "artifacts"
+    app, engine, container = create_app(
+        argv=["-platform", "offscreen"],
+        db_path=db_file,
+        artifacts_dir=artifacts_dir,
+        start_background_runtime=False,
+    )
     qml_path = (
         Path(__file__).parent.parent.parent
         / "interfaces"
@@ -70,11 +94,12 @@ def test_notification_banner_geometry_and_dismissal_lifecycle(qapp):
         / "Main.qml"
     ).resolve()
 
-    comp = QQmlComponent(engine, str(qml_path))
-    win = comp.create()
-    assert win is not None, f"Failed to load Main.qml: {comp.errors()}"
-    win.show()
-    pump_events(qapp, count=5)
+    engine.load(str(qml_path))
+    root_objs = engine.rootObjects()
+    assert len(root_objs) > 0, "Failed to load Main.qml"
+    win = root_objs[0]
+    win.setProperty("visible", False)
+    pump_events(qapp, count=2)
 
     # Locate the error NotificationBanner
     error_banner = None
@@ -148,8 +173,7 @@ def test_notification_banner_geometry_and_dismissal_lifecycle(qapp):
         f"Text paintedWidth ({text_item.property('paintedWidth')}) exceeded available width ({text_item.property('width')})"
     )
 
-    win.deleteLater()
-    engine.deleteLater()
+    _teardown_ui_test(container, win, engine, qapp)
 
 
 def test_pdf_export_generic_compilation_error_ui_flow(qapp, tmp_path):
@@ -184,10 +208,13 @@ def test_pdf_export_generic_compilation_error_ui_flow(qapp, tmp_path):
         / "qml"
         / "Main.qml"
     ).resolve()
-    engine.load(QUrl.fromLocalFile(str(qml_path)))
-    pump_events(qapp, count=5)
+    engine.load(str(qml_path))
+    root_objs = engine.rootObjects()
+    assert len(root_objs) > 0, "Failed to load Main.qml"
+    win = root_objs[0]
+    win.setProperty("visible", False)
+    pump_events(qapp, count=2)
 
-    win = engine.rootObjects()[0]
     error_banner = None
     for c in win.findChildren(QQuickItem):
         if c.property("bannerType") == "error":
@@ -212,9 +239,7 @@ def test_pdf_export_generic_compilation_error_ui_flow(qapp, tmp_path):
     assert error_banner.property("height") >= 36.0
     assert error_banner.property("implicitHeight") >= 36.0
 
-    container.export_controller.shutdown()
-    win.deleteLater()
-    engine.deleteLater()
+    _teardown_ui_test(container, win, engine, qapp)
 
 
 def test_pdf_export_missing_package_recovery_dialog_flow(qapp, tmp_path):
@@ -256,10 +281,13 @@ def test_pdf_export_missing_package_recovery_dialog_flow(qapp, tmp_path):
         / "qml"
         / "Main.qml"
     ).resolve()
-    engine.load(QUrl.fromLocalFile(str(qml_path)))
-    pump_events(qapp, count=5)
+    engine.load(str(qml_path))
+    root_objs = engine.rootObjects()
+    assert len(root_objs) > 0, "Failed to load Main.qml"
+    win = root_objs[0]
+    win.setProperty("visible", False)
+    pump_events(qapp, count=2)
 
-    win = engine.rootObjects()[0]
     recovery_dialog = None
     for c in win.findChildren(QObject):
         if c.objectName() == "missingPackageRecoveryModal":
@@ -283,9 +311,7 @@ def test_pdf_export_missing_package_recovery_dialog_flow(qapp, tmp_path):
     assert "algorithm2e" in pkgs
     assert recovery_dialog.property("canAutoRecover") is True
 
-    container.export_controller.shutdown()
-    win.deleteLater()
-    engine.deleteLater()
+    _teardown_ui_test(container, win, engine, qapp)
 
 
 def test_pdf_export_success_ui_flow(qapp, tmp_path):
@@ -319,10 +345,13 @@ def test_pdf_export_success_ui_flow(qapp, tmp_path):
         / "qml"
         / "Main.qml"
     ).resolve()
-    engine.load(QUrl.fromLocalFile(str(qml_path)))
-    pump_events(qapp, count=5)
+    engine.load(str(qml_path))
+    root_objs = engine.rootObjects()
+    assert len(root_objs) > 0, "Failed to load Main.qml"
+    win = root_objs[0]
+    win.setProperty("visible", False)
+    pump_events(qapp, count=2)
 
-    win = engine.rootObjects()[0]
     error_banner = None
     for c in win.findChildren(QQuickItem):
         if c.property("bannerType") == "error":
@@ -352,6 +381,4 @@ def test_pdf_export_success_ui_flow(qapp, tmp_path):
     assert not error_banner.property("visible")
     assert error_banner.property("height") == 0.0
 
-    container.export_controller.shutdown()
-    win.deleteLater()
-    engine.deleteLater()
+    _teardown_ui_test(container, win, engine, qapp)

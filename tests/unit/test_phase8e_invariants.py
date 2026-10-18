@@ -132,7 +132,9 @@ class TestPhase8EInvariants(unittest.TestCase):
 
         # Start ONLY scheduler (Runtime is NOT started)
         self.scheduler.start()
-        time.sleep(0.15)
+        deadline = time.time() + 2.0
+        while not wake_called and time.time() < deadline:
+            time.sleep(0.02)
 
         # Scheduler must have detected due job and called wake()
         self.assertTrue(len(wake_called) > 0, "Scheduler did not wake runtime for due job")

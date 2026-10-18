@@ -49,6 +49,44 @@ class SyntheticClock:
         self.time += seconds
 
 
+class OwnerTrackingLock:
+    """Wrapper around threading.Lock tracking whether the calling thread holds the lock."""
+
+    def __init__(self, real_lock: threading.Lock) -> None:
+        self._real_lock = real_lock
+        self._owner_ident: int | None = None
+        self._meta_lock = threading.Lock()
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        res = self._real_lock.acquire(blocking, timeout)
+        if res:
+            with self._meta_lock:
+                self._owner_ident = threading.get_ident()
+        return res
+
+    def release(self) -> None:
+        with self._meta_lock:
+            self._owner_ident = None
+        self._real_lock.release()
+
+    def __enter__(self) -> OwnerTrackingLock:
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
+        self.release()
+
+    def _is_owned(self) -> bool:
+        with self._meta_lock:
+            return self._owner_ident == threading.get_ident()
+
+    def is_owned_by_current_thread(self) -> bool:
+        return self._is_owned()
+
+    def locked(self) -> bool:
+        return self._real_lock.locked()
+
+
 # Test 1 — RPC waiter unblock
 def test_rpc_waiter_unblocks_immediately_on_shutdown():
     """An active thread blocked waiting on an RPC response wakes up immediately on shutdown."""
@@ -834,6 +872,10 @@ def test_rpc_failure_does_not_expose_terminating_process_as_healthy():
 def test_spawn_shutdown_race_termination_occurs_outside_supervisor_lock():
     """Verify that when shutdown occurs during Popen, post-Popen termination executes outside supervisor lock."""
     supervisor = MathJaxProcessSupervisor()
+    tracking_lock = OwnerTrackingLock(supervisor._lock)
+    supervisor._lock = tracking_lock
+    supervisor._state_cv = threading.Condition(tracking_lock)
+
     mock_proc = MagicMock()
     mock_proc.pid = 9999
 
@@ -853,15 +895,15 @@ def test_spawn_shutdown_race_termination_occurs_outside_supervisor_lock():
     mock_proc.poll = MagicMock(side_effect=mock_poll)
 
     def spy_terminate():
-        lock_states["terminate"].append(supervisor._lock.locked())
+        lock_states["terminate"].append(tracking_lock.is_owned_by_current_thread())
 
     def spy_kill():
         nonlocal reaped
-        lock_states["kill"].append(supervisor._lock.locked())
+        lock_states["kill"].append(tracking_lock.is_owned_by_current_thread())
         reaped = True
 
     def spy_wait(timeout=None):
-        lock_states["wait"].append(supervisor._lock.locked())
+        lock_states["wait"].append(tracking_lock.is_owned_by_current_thread())
         if reaped:
             return -9
         return None
@@ -875,8 +917,8 @@ def test_spawn_shutdown_race_termination_occurs_outside_supervisor_lock():
     shutdown_thread_holder = []
 
     def racing_popen(*args, **kwargs):
-        # 1. supervisor._lock is held
-        assert supervisor._lock.locked() is True
+        # 1. supervisor._lock is held by the spawning thread
+        assert tracking_lock.is_owned_by_current_thread() is True
         popen_executed.set()
 
         # 3. shutdown starts during Popen from another thread
@@ -911,10 +953,10 @@ def test_spawn_shutdown_race_termination_occurs_outside_supervisor_lock():
     assert len(lock_states["kill"]) >= 1, "proc.kill() was not called"
     assert len(lock_states["wait"]) >= 1, "proc.wait() was not called"
 
-    # Assert that for EVERY call, supervisor._lock was NOT held
-    assert all(held is False for held in lock_states["terminate"]), "Lock was held during proc.terminate()"
-    assert all(held is False for held in lock_states["kill"]), "Lock was held during proc.kill()"
-    assert all(held is False for held in lock_states["wait"]), "Lock was held during proc.wait()"
+    # Assert that for EVERY call, supervisor._lock was NOT held by terminating thread
+    assert all(held is False for held in lock_states["terminate"]), "Lock was held by terminating thread during proc.terminate()"
+    assert all(held is False for held in lock_states["kill"]), "Lock was held by terminating thread during proc.kill()"
+    assert all(held is False for held in lock_states["wait"]), "Lock was held by terminating thread during proc.wait()"
 
     # Verify spawned process is reaped
     assert mock_proc.poll() is not None, "Process was not reaped"
@@ -926,3 +968,189 @@ def test_spawn_shutdown_race_termination_occurs_outside_supervisor_lock():
 
     # Verify mock_popen was called exactly once (no replacement worker created)
     mock_popen.assert_called_once()
+
+
+def test_respawn_shutdown_race_terminates_both_generations_cleanly():
+    """Verify that when shutdown occurs during respawn Popen, both generations are reaped without lock."""
+    supervisor = MathJaxProcessSupervisor()
+    tracking_lock = OwnerTrackingLock(supervisor._lock)
+    supervisor._lock = tracking_lock
+    supervisor._state_cv = threading.Condition(tracking_lock)
+
+    # Generation 1 mock process (stale)
+    mock_proc_gen1 = MagicMock()
+    mock_proc_gen1.pid = 1111
+    gen1_state = {"reaped": False}
+
+    def poll_gen1():
+        if gen1_state["reaped"]:
+            return -9
+        return None
+
+    mock_proc_gen1.poll = MagicMock(side_effect=poll_gen1)
+
+    # Generation 2 mock process (replacement spawned during respawn)
+    mock_proc_gen2 = MagicMock()
+    mock_proc_gen2.pid = 2222
+    gen2_state = {"reaped": False}
+
+    def poll_gen2():
+        if gen2_state["reaped"]:
+            return -9
+        return None
+
+    mock_proc_gen2.poll = MagicMock(side_effect=poll_gen2)
+
+    gen1_lock_states = []
+    gen2_lock_states = []
+
+    def spy_term_gen1():
+        gen1_lock_states.append(tracking_lock.is_owned_by_current_thread())
+        gen1_state["reaped"] = True
+
+    def spy_term_gen2():
+        gen2_lock_states.append(tracking_lock.is_owned_by_current_thread())
+        gen2_state["reaped"] = True
+
+    mock_proc_gen1.terminate = MagicMock(side_effect=spy_term_gen1)
+    mock_proc_gen1.kill = MagicMock(side_effect=spy_term_gen1)
+    mock_proc_gen1.wait = MagicMock(return_value=-9)
+
+    mock_proc_gen2.terminate = MagicMock(side_effect=spy_term_gen2)
+    mock_proc_gen2.kill = MagicMock(side_effect=spy_term_gen2)
+    mock_proc_gen2.wait = MagicMock(return_value=-9)
+
+    # Set up supervisor with an existing (stale) Gen 1 process
+    supervisor._process = mock_proc_gen1
+    supervisor._process_generation = 1
+    supervisor._response_queue = queue.Queue()
+
+    shutdown_started = threading.Event()
+    shutdown_thread_holder = []
+
+    def racing_replacement_popen(*args, **kwargs):
+        # Gen 1 was already terminated outside lock; replacement Popen holds lock
+        assert tracking_lock.is_owned_by_current_thread() is True
+
+        def run_shutdown():
+            shutdown_started.set()
+            supervisor.shutdown()
+
+        t = threading.Thread(target=run_shutdown)
+        shutdown_thread_holder.append(t)
+        t.start()
+
+        assert shutdown_started.wait(timeout=5.0)
+        while not supervisor._is_shutdown:
+            time.sleep(0.001)
+
+        return mock_proc_gen2
+
+    with patch("subprocess.Popen", side_effect=racing_replacement_popen):
+        with pytest.raises(MathSupervisorShutdownError) as exc_info:
+            with supervisor._lock:
+                # Trigger respawn: mark mock_proc_gen1 as stale
+                gen1_state["reaped"] = True
+                supervisor._ensure_process_locked()
+
+    if shutdown_thread_holder:
+        shutdown_thread_holder[0].join(timeout=5.0)
+
+    assert "shut down during spawn" in exc_info.value.message
+    # Both Gen 1 and Gen 2 must be reaped
+    assert mock_proc_gen1.poll() is not None, "Gen 1 was not reaped"
+    assert mock_proc_gen2.poll() is not None, "Gen 2 was not reaped"
+    # Neither termination held lock in the terminating thread
+    assert all(held is False for held in gen1_lock_states), "Lock held during Gen 1 termination"
+    assert all(held is False for held in gen2_lock_states), "Lock held during Gen 2 termination"
+    # Clean supervisor state
+    assert supervisor._process is None
+    assert supervisor.is_shutdown is True
+    assert supervisor.is_alive is False
+
+
+def test_shutdown_delayed_respawn_owner_does_not_corrupt_handles_or_hang():
+    """Verify that if respawn owner does not settle before shutdown deadline, shutdown is bounded and handles are not corrupted."""
+    supervisor = MathJaxProcessSupervisor()
+    tracking_lock = OwnerTrackingLock(supervisor._lock)
+    supervisor._lock = tracking_lock
+    supervisor._state_cv = threading.Condition(tracking_lock)
+
+    # Generation 1 mock process (stale)
+    mock_proc_gen1 = MagicMock()
+    mock_proc_gen1.pid = 1111
+    stale_state = {"reaped": False}
+
+    def poll_gen1():
+        if stale_state["reaped"]:
+            return -9
+        return None
+
+    mock_proc_gen1.poll = MagicMock(side_effect=poll_gen1)
+
+    owner_reached_termination = threading.Event()
+    owner_can_proceed = threading.Event()
+    owner_finished = threading.Event()
+    owner_exceptions = []
+
+    orig_terminate = supervisor._terminate_process_outside_lock
+
+    def delayed_terminate(proc, reason="CLEANUP"):
+        if proc is mock_proc_gen1 and reason == "RESPAWN":
+            # The owner thread released supervisor._lock before calling _terminate_process_outside_lock
+            assert tracking_lock.is_owned_by_current_thread() is False
+            owner_reached_termination.set()
+            assert owner_can_proceed.wait(timeout=5.0), "Timeout waiting for owner_can_proceed"
+            stale_state["reaped"] = True
+            return
+        return orig_terminate(proc, reason=reason)
+
+    supervisor._terminate_process_outside_lock = MagicMock(side_effect=delayed_terminate)
+
+    # Set up supervisor with an existing (stale) Gen 1 process
+    supervisor._process = mock_proc_gen1
+    supervisor._process_generation = 1
+    supervisor._response_queue = queue.Queue()
+
+    def owner_thread_worker():
+        try:
+            with supervisor._lock:
+                stale_state["reaped"] = True
+                supervisor._ensure_process_locked()
+        except Exception as e:
+            owner_exceptions.append(e)
+        finally:
+            owner_finished.set()
+
+    owner_t = threading.Thread(target=owner_thread_worker)
+    owner_t.start()
+
+    # 1. Wait until owner has claimed respawn and reached out-of-lock termination
+    assert owner_reached_termination.wait(timeout=5.0)
+
+    # 2. Call shutdown with a tiny settle timeout (0.01s)
+    # Shutdown enters with self._state_cv: (which succeeds because owner released lock!),
+    # and waits on state_cv with timeout=0.01s.
+    # Shutdown must complete within bounded time (< 1.0s) without deadlocking or hanging
+    t0 = time.monotonic()
+    supervisor.shutdown(settle_timeout=0.01)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 1.0, f"Shutdown took too long: {elapsed:.2f}s"
+    assert supervisor.is_shutdown is True
+
+    # 3. Because owner was still active at timeout, shutdown did NOT prematurely clear handles
+    # Now unblock owner to finish
+    owner_can_proceed.set()
+    assert owner_finished.wait(timeout=5.0), "Owner did not finish"
+    owner_t.join(timeout=5.0)
+
+    # 4. Verify owner caught shutdown exception and cleaned up safely
+    assert len(owner_exceptions) == 1
+    assert isinstance(owner_exceptions[0], MathSupervisorShutdownError)
+
+    # 5. In the end, process was reaped, supervisor state is cleanly None
+    assert mock_proc_gen1.poll() is not None, "Gen 1 was not reaped"
+    assert supervisor._process is None
+    assert supervisor._respawning is False
+    assert supervisor._respawn_owner_thread_id is None
+    assert supervisor.is_alive is False
