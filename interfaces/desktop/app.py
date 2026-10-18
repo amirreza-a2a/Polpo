@@ -401,11 +401,10 @@ def create_app(
 
     # 8. Graceful shutdown handler
     def on_shutdown():
-        if sync_coordinator is not None:
-            sync_coordinator.shutdown()
-        container.shutdown()
-        bridge.detach()
+        _teardown_app_container(container)
 
+    container._about_to_quit_handler = on_shutdown
+    container._teardown_completed = False
     app.aboutToQuit.connect(on_shutdown)
 
     return app, engine, container
@@ -415,7 +414,19 @@ logger = logging.getLogger(__name__)
 
 
 def _teardown_app_container(container: DesktopAppContainer) -> None:
-    """Safely shuts down the container, synchronization coordinators, and event bridge."""
+    """Safely shuts down the container, synchronization coordinators, and event bridge idempotently."""
+    if getattr(container, "_teardown_completed", False):
+        return
+    container._teardown_completed = True
+
+    cleanup_fn = getattr(container, "_about_to_quit_handler", None)
+    app = QGuiApplication.instance()
+    if cleanup_fn is not None and app is not None:
+        try:
+            app.aboutToQuit.disconnect(cleanup_fn)
+        except (RuntimeError, TypeError):
+            pass
+
     if hasattr(container, "sync_coordinator") and container.sync_coordinator is not None:
         try:
             container.sync_coordinator.shutdown()
@@ -547,7 +558,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         _teardown_app_container(container)
         return 1
 
-    return app.exec()
+    try:
+        return app.exec()
+    finally:
+        _teardown_app_container(container)
 
 
 if __name__ == "__main__":

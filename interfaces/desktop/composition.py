@@ -79,6 +79,7 @@ class DesktopAppContainer:
         scheduler_tick_interval: float = 5.0,
     ):
         self._initialized: bool = False
+        self._is_shut_down: bool = False
 
         # 1. Platform-appropriate default paths if not provided
         if db_path is None:
@@ -307,10 +308,15 @@ class DesktopAppContainer:
         2. Controllers shut down their thread pools without waiting out RPC timeouts.
         3. Scheduler and runtime shut down.
         """
+        if self._is_shut_down:
+            return
+
         if hasattr(self, "mathjax_supervisor") and self.mathjax_supervisor:
             self.mathjax_supervisor.shutdown()
         if hasattr(self, "markdown_viewer_controller") and self.markdown_viewer_controller:
             self.markdown_viewer_controller.shutdown()
+        if hasattr(self, "markdown_editor_controller") and self.markdown_editor_controller:
+            self.markdown_editor_controller.shutdown()
         if hasattr(self, "document_viewer_controller") and self.document_viewer_controller:
             self.document_viewer_controller.shutdown()
         if hasattr(self, "export_controller") and self.export_controller:
@@ -319,3 +325,4 @@ class DesktopAppContainer:
             self.pdf_setup_controller.shutdown()
         self.scheduler.shutdown()
         self.runtime.shutdown()
+        self._is_shut_down = True

@@ -524,9 +524,10 @@ class StagingWorkspaceManager:
             body_markdown = _sanitize_markdown_body(body_markdown)
             body_markdown = _convert_github_alerts_to_callouts(body_markdown)
             body_markdown = _sanitize_uncropped_bounding_boxes(body_markdown)
+            clean_body = body_markdown.lstrip("\r\n")
 
             qmd_path = staging_dir / "document.qmd"
-            qmd_content = f"---\n{yaml_front_matter}\n---\n\n{body_markdown.lstrip('\r\n')}"
+            qmd_content = f"---\n{yaml_front_matter}\n---\n\n{clean_body}"
             qmd_path.write_text(qmd_content, encoding="utf-8")
 
             session = StagingSession(

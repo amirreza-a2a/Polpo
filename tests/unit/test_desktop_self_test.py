@@ -12,6 +12,7 @@ import pytest
 from core.version import APP_NAME, __version__
 from infrastructure.paths import get_runtime_resource_path, get_user_log_dir
 from infrastructure.logging.setup import setup_logging
+from interfaces.desktop import app as desktop_app_module
 from interfaces.desktop.app import main
 from interfaces.desktop.self_test import run_self_test
 
@@ -159,10 +160,140 @@ def test_fail_fast_invalid_qml_no_root_objects(tmp_path: Path, capsys):
 
 def test_successful_startup_reaching_normal_event_loop():
     """Normal startup reaches the app.exec() event loop, returns its exit status, and cleans up."""
-    with patch("interfaces.desktop.qt_compat.QGuiApplication.exec", return_value=0) as mock_exec:
-        exit_code = main(["-platform", "offscreen"])
-        assert exit_code == 0
-        mock_exec.assert_called_once()
+    created_containers = []
+    real_create_app = desktop_app_module.create_app
+
+    def spied_create_app(*args, **kwargs):
+        app, engine, container = real_create_app(*args, **kwargs)
+        created_containers.append(container)
+        return app, engine, container
+
+    with patch("interfaces.desktop.app.create_app", side_effect=spied_create_app):
+        with patch("interfaces.desktop.qt_compat.QGuiApplication.exec", return_value=0) as mock_exec:
+            exit_code = main(["-platform", "offscreen"])
+            assert exit_code == 0
+            mock_exec.assert_called_once()
+
+    assert len(created_containers) == 1
+    container = created_containers[0]
+    assert container._teardown_completed is True
+    assert container._is_shut_down is True
+    assert not container.runtime.is_running
+    assert not container.scheduler.is_running
+
+
+def test_main_normal_shutdown_via_about_to_quit_is_idempotent():
+    """When Qt emits aboutToQuit before app.exec() returns, teardown runs once without duplicate execution."""
+    created_containers = []
+    real_create_app = desktop_app_module.create_app
+
+    def spied_create_app(*args, **kwargs):
+        app, engine, container = real_create_app(*args, **kwargs)
+        created_containers.append(container)
+        return app, engine, container
+
+    def simulate_exec(app_self):
+        # Emulate normal Qt event loop exit: Qt emits aboutToQuit before exec() returns
+        app_self.aboutToQuit.emit()
+        return 0
+
+    with patch("interfaces.desktop.app.create_app", side_effect=spied_create_app):
+        with patch("interfaces.desktop.qt_compat.QGuiApplication.exec", simulate_exec):
+            exit_code = main(["-platform", "offscreen"])
+            assert exit_code == 0
+
+    assert len(created_containers) == 1
+    container = created_containers[0]
+    assert container._teardown_completed is True
+    assert container._is_shut_down is True
+    assert not container.runtime.is_running
+    assert not container.scheduler.is_running
+
+
+def test_main_preserves_cleanup_when_app_exec_raises():
+    """When app.exec() raises an exception, _teardown_app_container is invoked in finally and cleans up."""
+    created_containers = []
+    real_create_app = desktop_app_module.create_app
+
+    def spied_create_app(*args, **kwargs):
+        app, engine, container = real_create_app(*args, **kwargs)
+        created_containers.append(container)
+        return app, engine, container
+
+    with patch("interfaces.desktop.app.create_app", side_effect=spied_create_app):
+        with patch("interfaces.desktop.qt_compat.QGuiApplication.exec", side_effect=RuntimeError("Simulated GUI crash")):
+            with pytest.raises(RuntimeError, match="Simulated GUI crash"):
+                main(["-platform", "offscreen"])
+
+    assert len(created_containers) == 1
+    container = created_containers[0]
+    assert container._teardown_completed is True
+    assert container._is_shut_down is True
+    assert not container.runtime.is_running
+    assert not container.scheduler.is_running
+
+
+def test_desktop_app_container_shutdown_is_idempotent(tmp_path: Path):
+    """Calling container.shutdown() multiple times is safe and executes teardown sequence once."""
+    from interfaces.desktop.composition import DesktopAppContainer
+
+    db_file = tmp_path / "idempotent.db"
+    container = DesktopAppContainer(
+        db_path=db_file,
+        artifacts_dir=tmp_path / "artifacts",
+        scheduler_tick_interval=100.0,
+    )
+    container.initialize()
+    container.start_runtime()
+
+    assert container.runtime.is_running
+    assert container.scheduler.is_running
+    assert container._is_shut_down is False
+
+    # First shutdown
+    container.shutdown()
+    assert container._is_shut_down is True
+    assert not container.runtime.is_running
+    assert not container.scheduler.is_running
+
+    # Second shutdown - must be a clean no-op
+    container.shutdown()
+    assert container._is_shut_down is True
+
+
+def test_desktop_app_container_shutdown_recovery_when_step_raises(tmp_path: Path):
+    """If a teardown step raises, _is_shut_down remains False allowing recovery."""
+    from interfaces.desktop.composition import DesktopAppContainer
+
+    db_file = tmp_path / "recovery.db"
+    container = DesktopAppContainer(
+        db_path=db_file,
+        artifacts_dir=tmp_path / "artifacts",
+        scheduler_tick_interval=100.0,
+    )
+    container.initialize()
+    container.start_runtime()
+
+    assert container.runtime.is_running
+    assert container.scheduler.is_running
+    assert container._is_shut_down is False
+
+    # Simulate failure in mathjax_supervisor during first shutdown attempt
+    container.mathjax_supervisor.shutdown = MagicMock(side_effect=RuntimeError("Transient failure"))
+
+    with pytest.raises(RuntimeError, match="Transient failure"):
+        container.shutdown()
+
+    # Idempotency guard must not lock out recovery
+    assert container._is_shut_down is False
+
+    # Fix transient condition and retry shutdown
+    container.mathjax_supervisor.shutdown = MagicMock()
+    container.shutdown()
+
+    assert container._is_shut_down is True
+    assert not container.runtime.is_running
+    assert not container.scheduler.is_running
 
 
 def test_main_handles_data_migration_conflict(tmp_path: Path, capsys):

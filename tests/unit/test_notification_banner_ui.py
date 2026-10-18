@@ -16,7 +16,7 @@ from core.exceptions.domain_exceptions import (
     MissingLatexPackageError,
     PdfCompilationError,
 )
-from interfaces.desktop.app import create_app
+from interfaces.desktop.app import _teardown_app_container, create_app
 from interfaces.desktop.qt_compat import (
     QGuiApplication,
     QQmlApplicationEngine,
@@ -52,7 +52,7 @@ def pump_until(app, condition, timeout=3.0, step=0.02):
     return bool(condition())
 
 
-def test_notification_banner_geometry_and_dismissal_lifecycle(qapp):
+def test_notification_banner_geometry_and_dismissal_lifecycle(qapp, tmp_path):
     """
     Verifies NotificationBanner inside Main.qml:
     1. Zero height and invisible when message is empty.
@@ -61,7 +61,14 @@ def test_notification_banner_geometry_and_dismissal_lifecycle(qapp):
     4. Dismiss action clears the error and does NOT break the QML binding.
     5. A subsequent error updates the banner and restores visibility.
     """
-    engine = QQmlApplicationEngine()
+    db_file = tmp_path / "test.db"
+    artifacts_dir = tmp_path / "artifacts"
+    app, engine, container = create_app(
+        argv=["-platform", "offscreen"],
+        db_path=db_file,
+        artifacts_dir=artifacts_dir,
+        start_background_runtime=False,
+    )
     qml_path = (
         Path(__file__).parent.parent.parent
         / "interfaces"
@@ -70,11 +77,12 @@ def test_notification_banner_geometry_and_dismissal_lifecycle(qapp):
         / "Main.qml"
     ).resolve()
 
-    comp = QQmlComponent(engine, str(qml_path))
-    win = comp.create()
-    assert win is not None, f"Failed to load Main.qml: {comp.errors()}"
-    win.show()
+    engine.load(QUrl.fromLocalFile(str(qml_path)))
     pump_events(qapp, count=5)
+
+    root_objs = engine.rootObjects()
+    assert len(root_objs) > 0, "Failed to load Main.qml"
+    win = root_objs[0]
 
     # Locate the error NotificationBanner
     error_banner = None
@@ -148,8 +156,10 @@ def test_notification_banner_geometry_and_dismissal_lifecycle(qapp):
         f"Text paintedWidth ({text_item.property('paintedWidth')}) exceeded available width ({text_item.property('width')})"
     )
 
+    _teardown_app_container(container)
     win.deleteLater()
     engine.deleteLater()
+    pump_events(qapp, count=2)
 
 
 def test_pdf_export_generic_compilation_error_ui_flow(qapp, tmp_path):
@@ -212,9 +222,10 @@ def test_pdf_export_generic_compilation_error_ui_flow(qapp, tmp_path):
     assert error_banner.property("height") >= 36.0
     assert error_banner.property("implicitHeight") >= 36.0
 
-    container.export_controller.shutdown()
+    _teardown_app_container(container)
     win.deleteLater()
     engine.deleteLater()
+    pump_events(qapp, count=2)
 
 
 def test_pdf_export_missing_package_recovery_dialog_flow(qapp, tmp_path):
@@ -283,9 +294,10 @@ def test_pdf_export_missing_package_recovery_dialog_flow(qapp, tmp_path):
     assert "algorithm2e" in pkgs
     assert recovery_dialog.property("canAutoRecover") is True
 
-    container.export_controller.shutdown()
+    _teardown_app_container(container)
     win.deleteLater()
     engine.deleteLater()
+    pump_events(qapp, count=2)
 
 
 def test_pdf_export_success_ui_flow(qapp, tmp_path):
@@ -352,6 +364,7 @@ def test_pdf_export_success_ui_flow(qapp, tmp_path):
     assert not error_banner.property("visible")
     assert error_banner.property("height") == 0.0
 
-    container.export_controller.shutdown()
+    _teardown_app_container(container)
     win.deleteLater()
     engine.deleteLater()
+    pump_events(qapp, count=2)
