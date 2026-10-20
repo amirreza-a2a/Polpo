@@ -197,6 +197,12 @@ class TestReleaseWorkflowContract(unittest.TestCase):
         self.assertIn('C:\\Windows\\System32;C:\\Windows', self.content)
         self.assertIn("Polpo.exe", self.content)
 
+        # Packaging baseline and alias generation contract
+        self.assertIn("os: ubuntu-22.04", self.content)
+        self.assertIn("python scripts/build_package.py --create-alias", self.content)
+        self.assertIn("dist/polpo-*.tar.gz", self.content)
+        self.assertIn("dist/polpo-*.tar.gz.sha256", self.content)
+
         # Upload artifacts
         self.assertIn("actions/upload-artifact", self.content)
         self.assertIn("if-no-files-found: error", self.content)

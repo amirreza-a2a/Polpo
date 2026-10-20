@@ -28,6 +28,10 @@ datas = [
     (str(repo_root / "CHANGELOG.md"), "."),
 ]
 
+deps_script = repo_root / "scripts" / "polpo_linux_deps.sh"
+if deps_script.is_file():
+    datas.append((str(deps_script), "scripts"))
+
 entitlements_file = repo_root / "resources" / "entitlements.plist"
 if entitlements_file.is_file():
     datas.append((str(entitlements_file), "resources"))

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Universal Linux Installer & Updater:** Single-command user-space installer and update manager (`install.sh`, `polpo-update`, `polpo-uninstall`) with zero root/sudo requirement, advisory concurrency locking, sidecar SHA-256 verification, path-traversal prevention, atomic staging and directory switching, bounded version retention, and automatic rollback on failure.
+- **Distro Dependency Helper:** Distro-aware system dependency diagnostic and resolution tool (`scripts/polpo_linux_deps.sh`, `polpo-deps`) supporting Debian/Ubuntu, Fedora, Arch Linux, openSUSE, and unknown glibc distros. Covers required Qt GUI libraries and optional PDF export toolchains (Quarto, XeLaTeX, poppler-utils, typst, weasyprint) with `--dry-run` and interactive consent prompts.
+- **Release Packaging Enhancements:** Stable unversioned release asset aliases (`polpo-linux-x86_64.tar.gz`, `polpo-windows-x64.zip`) and sidecars generated via `scripts/build_package.py --create-alias`. Updated Linux packaging runner baseline to `ubuntu-22.04` to ensure `glibc >= 2.35` compatibility across Debian 12+, Ubuntu 22.04+, and modern distributions.
+
 ### Planned
 - TICK-REL-02: Frozen-safe resource paths, cross-platform user directories via `platformdirs`, fail-fast QML startup, and `--self-test` mode.
 - TICK-REL-03: Idempotent default prompt seeding on first-run SQLite initialization.

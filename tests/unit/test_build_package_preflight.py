@@ -281,6 +281,25 @@ class TestBuildPackagePreflight(unittest.TestCase):
             )
         self.assertIn("does not support cross-compilation", str(ctx.exception))
 
+    def test_create_stable_alias(self):
+        """create_stable_alias creates unversioned archive copy and valid sha256 sidecar."""
+        dist_dir = self.repo_root / "dist"
+        dist_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = dist_dir / "Polpo-v0.1.0-linux-x86_64.tar.gz"
+        archive_path.write_bytes(b"sample archive binary payload")
+
+        result = build_package.create_stable_alias(archive_path, "linux-x86_64")
+        self.assertIsNotNone(result)
+        alias_path, sidecar_path = result
+
+        self.assertEqual(alias_path.name, "polpo-linux-x86_64.tar.gz")
+        self.assertEqual(sidecar_path.name, "polpo-linux-x86_64.tar.gz.sha256")
+        self.assertTrue(alias_path.is_file())
+        self.assertTrue(sidecar_path.is_file())
+
+        expected_hash = hashlib.sha256(b"sample archive binary payload").hexdigest()
+        self.assertIn(expected_hash, sidecar_path.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

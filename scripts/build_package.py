@@ -313,11 +313,28 @@ def create_deterministic_zip(
                     zf.writestr(zi, f.read())
 
 
+def create_stable_alias(archive_path: Path, target_platform: str) -> Optional[Tuple[Path, Path]]:
+    """Creates a stable download alias (e.g. polpo-linux-x86_64.tar.gz) and its SHA-256 sidecar."""
+    if target_platform == "linux-x86_64":
+        alias_name = "polpo-linux-x86_64.tar.gz"
+    elif target_platform == "windows-x64":
+        alias_name = "polpo-windows-x64.zip"
+    else:
+        return None
+
+    alias_path = archive_path.with_name(alias_name)
+    shutil.copy2(archive_path, alias_path)
+    sidecar_path = generate_checksum_sidecar(alias_path)
+    logger.info("Generated stable alias: %s and checksum: %s", alias_path.name, sidecar_path.name)
+    return alias_path, sidecar_path
+
+
 def build_package(
     repo_root: Optional[Path] = None,
     target_platform: Optional[str] = None,
     dist_dir: Optional[Path] = None,
     pyinstaller_bin: Optional[str] = None,
+    create_alias: bool = False,
 ) -> Tuple[Path, Path]:
     """Runs preflight checks, executes PyInstaller, and produces a normalized archive + SHA-256 sidecar."""
     if repo_root is None:
@@ -396,7 +413,11 @@ def build_package(
     # 5. Generate checksum sidecar
     sidecar_path = generate_checksum_sidecar(archive_out_path)
 
-    # 6. Clean up temporary workpath
+    # 6. Generate stable download alias if requested
+    if create_alias:
+        create_stable_alias(archive_out_path, target_platform)
+
+    # 7. Clean up temporary workpath
     if build_staging_dir.exists():
         shutil.rmtree(build_staging_dir, ignore_errors=True)
 
@@ -433,6 +454,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         default=None,
         help="Explicit path to pyinstaller executable.",
     )
+    parser.add_argument(
+        "--create-alias",
+        action="store_true",
+        help="Create stable unversioned release asset alias (e.g. polpo-linux-x86_64.tar.gz).",
+    )
 
     args = parser.parse_args(argv)
 
@@ -452,6 +478,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             target_platform=args.platform,
             dist_dir=args.dist_dir,
             pyinstaller_bin=args.pyinstaller_bin,
+            create_alias=args.create_alias,
         )
         print(f"Build succeeded: {archive_path.name}")
         return 0
