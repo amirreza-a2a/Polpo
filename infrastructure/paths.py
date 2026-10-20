@@ -736,6 +736,12 @@ def _remap_persisted_artifact_path(
     if is_uri:
         if not _is_local_uri_authority(parsed.netloc):
             return path_or_uri
+    elif parsed is not None and parsed.scheme:
+        # Reject non-file URI schemes (e.g. http://, https://, ftp://, s3://).
+        # On Windows, raw drive letters like C:/path can produce parsed.scheme == 'c'.
+        # A single alphabetic character without leading network slashes represents a Windows drive letter.
+        if not (len(parsed.scheme) == 1 and parsed.scheme.isalpha() and not raw_val.startswith(("//", "\\\\"))):
+            return path_or_uri
 
     try:
         resolved_candidate = resolve_canonical_file_path(raw_val)
@@ -756,6 +762,10 @@ def _remap_persisted_artifact_path(
         legacy_pure = PureWindowsPath(legacy_norm)
         target_pure = PureWindowsPath(target_norm)
         candidate_pure = PureWindowsPath(candidate_norm)
+
+        # Unrooted relative paths must not be remapped to target_artifacts_root
+        if not candidate_pure.is_absolute() and not is_uri:
+            return path_or_uri
 
         try:
             if not candidate_pure.is_relative_to(legacy_pure):
@@ -788,6 +798,10 @@ def _remap_persisted_artifact_path(
         legacy_path = Path(legacy_artifacts_root)
         target_path = Path(target_artifacts_root)
         candidate_path = Path(resolved_candidate)
+
+        # Unrooted relative paths must not be remapped to target_artifacts_root
+        if not candidate_path.is_absolute() and not is_uri:
+            return path_or_uri
 
         legacy_resolved = legacy_path.resolve()
         target_resolved = target_path.resolve()
