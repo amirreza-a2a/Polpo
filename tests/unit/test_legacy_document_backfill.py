@@ -276,6 +276,10 @@ def test_resolve_canonical_file_path_accepts_legacy_two_slash_uri():
     p_rfc_c = resolve_canonical_file_path("file:///C:/artifacts/job_1/output_1_v1.md")
     assert p_rfc_c.as_posix().lower() == expected_c.as_posix().lower()
 
+    # Case-insensitive scheme names (RFC 3986 Section 3.1)
+    p_rfc_c_upper = resolve_canonical_file_path("FILE:///C:/artifacts/job_1/output_1_v1.md")
+    assert p_rfc_c_upper.as_posix().lower() == expected_c.as_posix().lower()
+
     p_rfc_d = resolve_canonical_file_path("file:///D:/data/output_2_v1.md")
     assert p_rfc_d.as_posix().lower() == expected_d.as_posix().lower()
 
@@ -283,6 +287,14 @@ def test_resolve_canonical_file_path_accepts_legacy_two_slash_uri():
     p_posix = resolve_canonical_file_path("file:///tmp/artifacts/job_1/output_1_v1.md")
     assert p_posix.as_posix() == "/tmp/artifacts/job_1/output_1_v1.md"
     assert p_posix == Path("/tmp/artifacts/job_1/output_1_v1.md")
+
+    p_posix_upper = resolve_canonical_file_path("FILE:///tmp/artifacts/job_1/output_1_v1.md")
+    assert p_posix_upper.as_posix() == "/tmp/artifacts/job_1/output_1_v1.md"
+    assert p_posix_upper == Path("/tmp/artifacts/job_1/output_1_v1.md")
+
+    p_posix_title = resolve_canonical_file_path("File:///tmp/artifacts/job_1/output_1_v1.md")
+    assert p_posix_title.as_posix() == "/tmp/artifacts/job_1/output_1_v1.md"
+    assert p_posix_title == Path("/tmp/artifacts/job_1/output_1_v1.md")
 
     # Raw filesystem paths
     p_raw = resolve_canonical_file_path("/tmp/artifacts/output.md")
