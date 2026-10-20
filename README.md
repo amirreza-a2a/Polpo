@@ -122,16 +122,19 @@ Infrastructure adapters implement application ports. The core domain and applica
 
 Polpo provides an automated, secure user-space installer and update manager for Linux (`x86_64`, `glibc >= 2.35`). Root privileges (`sudo`) are **never required** to install, update, or run the application.
 
-### One-Line Install
+> [!NOTE]
+> **Release Asset Availability:** Official stable releases are not yet published. Only pre-release candidates (such as `v0.1.0-rc.1`) are currently available on GitHub Releases. Because `install.sh` defaults to the stable channel, use `--channel preview` for testing pre-releases, or install from a downloaded archive via `--archive <path>`.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/amirreza-a2a/Polpo/main/install.sh | bash
-```
-
-To install pre-release candidates (e.g. `v0.1.0-rc.1`):
+### Pre-Release Candidate Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/amirreza-a2a/Polpo/main/install.sh | bash -s -- --channel preview
+```
+
+### Stable Channel (Post-1.0 Release)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/amirreza-a2a/Polpo/main/install.sh | bash
 ```
 
 ### Inspect Before Executing
@@ -139,7 +142,7 @@ curl -fsSL https://raw.githubusercontent.com/amirreza-a2a/Polpo/main/install.sh 
 ```bash
 curl -fsSL -o install.sh https://raw.githubusercontent.com/amirreza-a2a/Polpo/main/install.sh
 less install.sh
-bash install.sh
+bash install.sh --channel preview
 ```
 
 ### Commands Installed to `~/.local/bin`
@@ -149,7 +152,8 @@ bash install.sh
 * `polpo-deps [check|gui|pdf|install-gui|install-pdf]` — Diagnose and install missing system dependencies.
 * `polpo-uninstall` — Cleanly remove binaries and desktop entries while preserving your documents and database.
 
-For complete documentation including distro package mappings, air-gapped installs, and PDF toolchain setup, see the [Linux Installation Guide](docs/linux-installation.md).
+For complete documentation covering automated CI baselines (Ubuntu 22.04 / 24.04), package manager mappings (Debian 12+, Fedora 39+, Arch, openSUSE), air-gapped installs, and PDF toolchain setup, see the [Linux Installation Guide](docs/linux-installation.md).
+
 
 ---
 

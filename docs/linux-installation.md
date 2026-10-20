@@ -8,18 +8,31 @@ This document defines the universal Linux installation, update, dependency resol
 
 Polpo provides a single-command user-space installer that runs entirely without root permissions (`sudo` is never required for application installation).
 
-### Default (Stable Channel)
+> [!NOTE]
+> **Release Asset Status:** Official stable releases are not yet published. Only pre-release candidates (such as `v0.1.0-rc.1`) are currently available on GitHub Releases. Because the installer defaults to `--channel stable`, installing without flags will report no stable releases until the first formal release is cut. For testing pre-release candidates, use `--channel preview` or install directly from a downloaded archive with `--archive <path>`.
+
+### Preview Channel (Pre-Release Candidates)
+
+To install the latest pre-release candidate build (such as `v0.1.0-rc.1`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/amirreza-a2a/Polpo/main/install.sh | bash -s -- --channel preview
+```
+
+### Stable Channel (Post-Release)
+
+Once the first official stable release is published, the single-command install is:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/amirreza-a2a/Polpo/main/install.sh | bash
 ```
 
-### Preview Channel (Release Candidates)
+### Offline / Local Archive Install
 
-If you wish to test pre-release builds or release candidates (such as `v0.1.0-rc.1` before a full stable release is cut):
+To install from a local release archive (e.g. downloaded workflow artifacts or pre-release tarball):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/amirreza-a2a/Polpo/main/install.sh | bash -s -- --channel preview
+bash install.sh --archive Polpo-v0.1.0-linux-x86_64.tar.gz
 ```
 
 ---
@@ -35,8 +48,8 @@ curl -fsSL -o install.sh https://raw.githubusercontent.com/amirreza-a2a/Polpo/ma
 # 2. Inspect script contents
 less install.sh
 
-# 3. Execute with desired options
-bash install.sh --channel stable
+# 3. Execute with desired options (e.g. preview channel or local archive)
+bash install.sh --channel preview
 ```
 
 ---
@@ -51,15 +64,18 @@ bash install.sh --channel stable
 | **C Library** | GNU C Library (`glibc` >= 2.35) | Musl libc (Alpine Linux) is rejected with exit code `2`. |
 | **Privileges** | Per-user (no root required) | Installed into `~/.local/opt/polpo` and `~/.local/bin`. |
 
-### Verified Linux Distributions
+### Automated CI Testing vs. Mapped Distributions
 
-Because the packaged binary is built on an Ubuntu 22.04 baseline targeting `glibc 2.35`, the standalone distribution runs reliably out-of-the-box on:
+Polpo distinguishes between distributions verified in automated CI and distributions mapped for system dependencies:
 
-* **Ubuntu:** 22.04 LTS (glibc 2.35), 24.04 LTS (glibc 2.39), and later
-* **Debian:** 12 Bookworm (glibc 2.36) and later
-* **Fedora:** 39, 40, 41, and later
-* **Arch Linux / Manjaro:** Rolling release
-* **openSUSE:** Leap 15.5+, Tumbleweed
+* **Automatically Tested (CI Baseline):**
+  * **Ubuntu 22.04 LTS (`glibc 2.35`):** Build runner baseline and automated frozen binary smoke-test environment in GitHub Actions (`.github/workflows/release.yml`).
+  * **Ubuntu 24.04 LTS (`glibc 2.39`):** Continuous integration matrix runner for test suites and quality gates.
+* **Mapped Distributions (Tier 3 Best-Effort):**
+  * **Debian 12 Bookworm+**, **Fedora 39+**, **Arch Linux**, and **openSUSE Leap/Tumbleweed** have system package manager mappings defined in `polpo-deps` (`scripts/polpo_linux_deps.sh`). However, compatibility is not proven by continuous CI on those distributions; execution depends on local display drivers, Wayland/X11 configuration, and shared library availability.
+* **Unsupported Systems (Tier 4):**
+  * **Non-x86_64 Architectures:** ARM64, i686, and 32-bit platforms are unsupported and rejected at preflight.
+  * **Musl-based Distributions:** Alpine Linux and other musl libc environments are unsupported and rejected at preflight.
 
 ---
 

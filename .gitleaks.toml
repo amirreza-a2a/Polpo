@@ -16,6 +16,7 @@ useDefault = true
 [allowlist]
 description = "Targeted allowlist for synthetic canary tokens and mock keys used in security and persistence tests"
 regexes = [
+  "^1234567890:ABCdefGHIjklMNOpqrsTUVwxyz123456789$",
   "^AIzaSyD-1234567890abcdefghijklmnopqrst$",
   "^AIzaSyTestKey123$",
   "^SYNTHETIC_CANARY_API_KEY_PHASE_8H_SEC_VALIDATION_998877$",
