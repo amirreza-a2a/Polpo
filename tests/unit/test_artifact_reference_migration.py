@@ -56,7 +56,7 @@ def test_basic_artifact_relocation(tmp_path: Path):
     job_art_dir.mkdir(parents=True)
     doc_file = job_art_dir / "output_42_v1.md"
     content = "# Chapter 1\n\nCanonical text content."
-    doc_file.write_text(content, encoding="utf-8")
+    doc_file.write_bytes(content.encode("utf-8"))
     content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
     # Also create an ingested source PDF inside the legacy artifacts
@@ -443,13 +443,15 @@ def test_file_uri_non_empty_non_drive_authority_not_remapped(tmp_path: Path):
     legacy_artifacts.mkdir(parents=True)
     target_artifacts.mkdir(parents=True)
 
+    legacy_posix = "/" + legacy_artifacts.as_posix().lstrip("/")
+
     # 1. Non-empty, non-drive authorities pointing lexically beneath legacy_artifacts
     # Scheme capitalization must not bypass authority validation (RFC 3986 Section 3.1)
-    remote_host_uri = f"file://remote-host{legacy_artifacts.as_posix()}/job_1/output.md"
-    remote_host_uri_upper = f"FILE://remote-host{legacy_artifacts.as_posix()}/job_1/output.md"
-    remote_host_uri_title = f"File://remote-host{legacy_artifacts.as_posix()}/job_1/output.md"
-    server_uri = f"file://fileserver.corp.internal{legacy_artifacts.as_posix()}/job_1/output.md"
-    ip_uri = f"file://192.168.1.100{legacy_artifacts.as_posix()}/job_1/output.md"
+    remote_host_uri = f"file://remote-host{legacy_posix}/job_1/output.md"
+    remote_host_uri_upper = f"FILE://remote-host{legacy_posix}/job_1/output.md"
+    remote_host_uri_title = f"File://remote-host{legacy_posix}/job_1/output.md"
+    server_uri = f"file://fileserver.corp.internal{legacy_posix}/job_1/output.md"
+    ip_uri = f"file://192.168.1.100{legacy_posix}/job_1/output.md"
 
     assert _remap_persisted_artifact_path(remote_host_uri, legacy_artifacts, target_artifacts) == remote_host_uri
     assert _remap_persisted_artifact_path(remote_host_uri_upper, legacy_artifacts, target_artifacts) == remote_host_uri_upper
@@ -458,14 +460,14 @@ def test_file_uri_non_empty_non_drive_authority_not_remapped(tmp_path: Path):
     assert _remap_persisted_artifact_path(ip_uri, legacy_artifacts, target_artifacts) == ip_uri
 
     # 2. Local authorities MUST be remapped regardless of scheme capitalization
-    local_rfc_uri = f"file://{legacy_artifacts.as_posix()}/job_1/output.md"
-    local_rfc_uri_upper = f"FILE://{legacy_artifacts.as_posix()}/job_1/output.md"
+    local_rfc_uri = f"file://{legacy_posix}/job_1/output.md"
+    local_rfc_uri_upper = f"FILE://{legacy_posix}/job_1/output.md"
     expected_target_rfc = (target_artifacts / "job_1" / "output.md").resolve().as_uri()
     assert _remap_persisted_artifact_path(local_rfc_uri, legacy_artifacts, target_artifacts) == expected_target_rfc
     assert _remap_persisted_artifact_path(local_rfc_uri_upper, legacy_artifacts, target_artifacts) == expected_target_rfc
 
-    localhost_uri = f"file://localhost{legacy_artifacts.as_posix()}/job_1/output.md"
-    localhost_uri_title = f"File://localhost{legacy_artifacts.as_posix()}/job_1/output.md"
+    localhost_uri = f"file://localhost{legacy_posix}/job_1/output.md"
+    localhost_uri_title = f"File://localhost{legacy_posix}/job_1/output.md"
     assert _remap_persisted_artifact_path(localhost_uri, legacy_artifacts, target_artifacts) == expected_target_rfc
     assert _remap_persisted_artifact_path(localhost_uri_title, legacy_artifacts, target_artifacts) == expected_target_rfc
 
@@ -481,17 +483,19 @@ def test_file_uri_non_empty_non_drive_authority_not_remapped(tmp_path: Path):
     job_art_dir = legacy_art_full / "job_50"
     job_art_dir.mkdir(parents=True)
     doc_file = job_art_dir / "output.md"
-    doc_file.write_text("Local artifact content", encoding="utf-8")
+    doc_file.write_bytes(b"Local artifact content")
+
+    doc_posix = "/" + doc_file.resolve().as_posix().lstrip("/")
 
     # Local URI pointing to real local file (standard, uppercase scheme, and localhost TitleCase)
     local_job_uri = doc_file.resolve().as_uri()
-    local_job_uri_upper = f"FILE://{doc_file.resolve().as_posix()}"
-    local_job_uri_localhost = f"File://localhost{doc_file.resolve().as_posix()}"
+    local_job_uri_upper = f"FILE://{doc_posix}"
+    local_job_uri_localhost = f"File://localhost{doc_posix}"
 
     # Remote URIs with non-empty, non-drive authorities under various scheme capitalizations
-    remote_job_uri = f"file://remote-host{doc_file.resolve().as_posix()}"
-    remote_job_uri_upper = f"FILE://remote-host{doc_file.resolve().as_posix()}"
-    remote_job_uri_title = f"File://remote-host{doc_file.resolve().as_posix()}"
+    remote_job_uri = f"file://remote-host{doc_posix}"
+    remote_job_uri_upper = f"FILE://remote-host{doc_posix}"
+    remote_job_uri_title = f"File://remote-host{doc_posix}"
 
     conn = sqlite3.connect(str(legacy_db))
     cur = conn.cursor()
@@ -588,7 +592,7 @@ def test_backfill_and_artifact_read_integration(tmp_path: Path):
     job_art_dir.mkdir(parents=True)
     doc_file = job_art_dir / "output_99_v1.md"
     doc_content = "# Title\n\nPreserved content."
-    doc_file.write_text(doc_content, encoding="utf-8")
+    doc_file.write_bytes(doc_content.encode("utf-8"))
     expected_sha256 = hashlib.sha256(doc_content.encode("utf-8")).hexdigest()
 
     conn = sqlite3.connect(str(legacy_db))
@@ -807,7 +811,7 @@ def test_pending_publication_rollback_across_migration(tmp_path: Path, intent_st
     # Pre-existing canonical version 1
     v1_file = job_dir / f"output_{job_id}_v1.md"
     v1_content = "# Chapter 1: Initial Version\nCanonical content v1."
-    v1_file.write_text(v1_content, encoding="utf-8")
+    v1_file.write_bytes(v1_content.encode("utf-8"))
     v1_sha = hashlib.sha256(v1_content.encode("utf-8")).hexdigest()
     v1_uri = v1_file.resolve().as_uri()
 
@@ -824,7 +828,7 @@ def test_pending_publication_rollback_across_migration(tmp_path: Path, intent_st
     # Interrupted publication in Phase 2: tmp file written and crop promoted before crash
     intent_id = f"intent-{intent_status.lower()}-rb-77"
     tmp_output_file = job_dir / f".output_{job_id}_v2.md.{intent_id}.tmp"
-    tmp_output_file.write_text("# Chapter 1: Version 2\nPartial in-flight text.", encoding="utf-8")
+    tmp_output_file.write_bytes(b"# Chapter 1: Version 2\nPartial in-flight text.")
     promoted_crop = job_dir / dest_crop_name
     promoted_crop.write_bytes(crop_data)
 
@@ -969,7 +973,7 @@ def test_pending_publication_unflushed_clean_across_migration(tmp_path: Path):
     # Pre-existing canonical version 1
     v1_file = job_dir / f"output_{job_id}_v1.md"
     v1_content = "# Chapter 1: Baseline\nInitial text."
-    v1_file.write_text(v1_content, encoding="utf-8")
+    v1_file.write_bytes(v1_content.encode("utf-8"))
     v1_sha = hashlib.sha256(v1_content.encode("utf-8")).hexdigest()
     v1_uri = v1_file.resolve().as_uri()
 
@@ -1101,7 +1105,7 @@ def test_pending_publication_forward_roll_across_migration(tmp_path: Path):
     # Pre-existing canonical version 1
     v1_file = job_dir / f"output_{job_id}_v1.md"
     v1_content = "# Version 1 Original Content"
-    v1_file.write_text(v1_content, encoding="utf-8")
+    v1_file.write_bytes(v1_content.encode("utf-8"))
     v1_sha = hashlib.sha256(v1_content.encode("utf-8")).hexdigest()
     v1_uri = v1_file.resolve().as_uri()
 

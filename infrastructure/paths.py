@@ -767,6 +767,16 @@ def _remap_persisted_artifact_path(
         if not rel.parts or rel.parts == (".",):
             return path_or_uri
 
+        # If running on Windows with an active filesystem, ensure symlinks cannot escape
+        if os.name == "nt":
+            try:
+                candidate_real = Path(resolved_candidate).resolve()
+                legacy_real = Path(legacy_artifacts_root).resolve()
+                if not candidate_real.is_relative_to(legacy_real):
+                    return path_or_uri
+            except (OSError, ValueError):
+                pass
+
         new_target = target_pure / rel
         if is_uri:
             return new_target.as_uri()
