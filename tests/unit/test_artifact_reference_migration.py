@@ -568,6 +568,67 @@ def test_file_uri_non_empty_non_drive_authority_not_remapped(tmp_path: Path):
     dest_conn.close()
 
 
+def test_unrelated_schemes_and_relative_paths_immune_to_working_directory(tmp_path: Path):
+    """
+    Category C: Ensure _remap_persisted_artifact_path and database migration are completely
+    immune to the current working directory (os.getcwd()). Even when the process is executing
+    from within legacy_artifacts_root:
+    - Remote/unrelated schemes (https://, http://, ftp://, s3://) must NEVER be remapped.
+    - Unrooted relative paths (e.g. 'doc.pdf', 'relative/doc.pdf') must NEVER be remapped.
+    - In-legacy absolute paths and local file:/// URIs must still be remapped correctly.
+    """
+    from infrastructure.paths import _remap_persisted_artifact_path
+
+    legacy_dir = tmp_path / "legacy_app"
+    target_dir = tmp_path / "target_app"
+    legacy_artifacts = legacy_dir / "artifacts"
+    target_artifacts = target_dir / "artifacts"
+
+    legacy_artifacts.mkdir(parents=True)
+    target_artifacts.mkdir(parents=True)
+
+    job_dir = legacy_artifacts / "job_77"
+    job_dir.mkdir(parents=True)
+    doc_file = job_dir / "output_77_v1.md"
+    doc_file.write_text("persisted content", encoding="utf-8")
+
+    orig_cwd = os.getcwd()
+    try:
+        # Intentionally change working directory to inside the legacy artifacts tree
+        os.chdir(str(legacy_artifacts))
+
+        # 1. Non-file URI schemes
+        for remote_url in [
+            "https://example.com/reports/source.pdf",
+            "http://example.com/reports/source.pdf",
+            "ftp://files.example.com/source.pdf",
+            "s3://my-bucket/documents/doc.pdf",
+        ]:
+            remapped = _remap_persisted_artifact_path(remote_url, legacy_artifacts, target_artifacts)
+            assert remapped == remote_url, f"Remote URL {remote_url} was incorrectly remapped to {remapped}"
+
+        # 2. Unrooted relative paths
+        for rel_path in ["relative/doc.pdf", "doc.pdf", "./job_77/output.md"]:
+            remapped = _remap_persisted_artifact_path(rel_path, legacy_artifacts, target_artifacts)
+            assert remapped == rel_path, f"Relative path {rel_path} was incorrectly remapped to {remapped}"
+
+        # 3. Legitimate in-legacy URI must still be remapped accurately
+        legit_uri = doc_file.resolve().as_uri()
+        remapped_legit = _remap_persisted_artifact_path(legit_uri, legacy_artifacts, target_artifacts)
+        expected_target_uri = (target_artifacts / "job_77" / "output_77_v1.md").resolve().as_uri()
+        assert remapped_legit == expected_target_uri
+
+        # 4. Legitimate in-legacy raw filesystem path
+        legit_path = str(doc_file.resolve())
+        remapped_path = _remap_persisted_artifact_path(legit_path, legacy_artifacts, target_artifacts)
+        expected_target_path = str((target_artifacts / "job_77" / "output_77_v1.md").resolve())
+        assert remapped_path == expected_target_path
+
+    finally:
+        os.chdir(orig_cwd)
+
+
+
 
 # ==============================================================================
 # Category D: Backfill and Artifact-Read Integration
