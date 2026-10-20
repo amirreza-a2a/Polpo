@@ -54,7 +54,7 @@ def resolve_canonical_file_path(path_or_uri: str) -> Path:
     checks so url2pathname() performs single, canonical percent-decoding.
     """
     cleaned = str(path_or_uri).strip()
-    if cleaned.startswith("file://"):
+    if cleaned.lower().startswith("file://"):
         parsed = urlparse(cleaned)
         netloc = parsed.netloc
         raw_path = parsed.path

@@ -13,16 +13,20 @@ from datetime import datetime, timezone
 import errno
 import hashlib
 import json
+import ntpath
 import os
-from pathlib import Path
+from pathlib import Path, PurePath, PureWindowsPath
 import re
 import shutil
 import sqlite3
 import sys
-from typing import Any, Optional
+from typing import Any, Optional, Union
+from urllib.parse import urlparse
 import uuid
 
 import platformdirs
+
+from core.entities.artifact import resolve_canonical_file_path
 
 
 class DataMigrationConflictError(RuntimeError):
@@ -677,6 +681,237 @@ def _migration_lock(target_dir: Path):
         lock.release()
 
 
+def _is_windows_path(p: Union[str, PurePath]) -> bool:
+    """Detects whether a path string or PurePath represents a Windows drive or UNC path."""
+    s = str(p)
+    return (len(s) >= 2 and s[0].isalpha() and s[1] == ":") or s.startswith(("\\\\", "//"))
+
+
+def _is_local_uri_authority(netloc: str) -> bool:
+    """Checks whether a file URI authority component refers to the local filesystem.
+
+    Under RFC 8089 Section 2, the authority component of a file URI denotes the host.
+    An empty authority (e.g. file:///path) or the case-insensitive string 'localhost'
+    (e.g. file://localhost/path) explicitly identifies the local host.
+    In legacy Windows two-slash compatibility forms (e.g. file://C:/path), Python's
+    urlparse treats the drive letter (e.g. 'C:') as the netloc; this also represents
+    a local Windows drive rather than a remote network authority.
+
+    Any other non-empty authority (e.g. 'remote-host', IP addresses, UNC server names)
+    denotes a non-local or foreign host. Such URIs must not have their authority
+    stripped or discarded when determining whether an artifact belongs to the local
+    legacy migration root.
+    """
+    if not netloc or netloc.lower() == "localhost":
+        return True
+    if len(netloc) == 2 and netloc[0].isalpha() and netloc[1] == ":":
+        return True
+    return False
+
+
+def _remap_persisted_artifact_path(
+    path_or_uri: Optional[str],
+    legacy_artifacts_root: Union[Path, PurePath],
+    target_artifacts_root: Union[Path, PurePath],
+) -> Optional[str]:
+    """Safely remaps a persisted artifact path/URI if it points inside legacy_artifacts_root.
+
+    Preserves:
+    - Standard RFC 8089 file:/// URIs, percent encoding (e.g. %20 and %2520), and raw filesystem paths.
+    - Relative paths beneath the artifact root.
+    - External file references, unrelated URIs, and escaping paths without modification.
+    """
+    if path_or_uri is None:
+        return None
+    raw_val = str(path_or_uri).strip()
+    if not raw_val:
+        return path_or_uri
+
+    try:
+        parsed = urlparse(raw_val)
+    except Exception:
+        parsed = None
+
+    is_uri = parsed is not None and parsed.scheme.lower() == "file"
+    if is_uri:
+        if not _is_local_uri_authority(parsed.netloc):
+            return path_or_uri
+
+    try:
+        resolved_candidate = resolve_canonical_file_path(raw_val)
+    except Exception:
+        return path_or_uri
+
+    is_win = (
+        _is_windows_path(legacy_artifacts_root)
+        or _is_windows_path(target_artifacts_root)
+        or _is_windows_path(resolved_candidate)
+    )
+
+    if is_win:
+        legacy_norm = ntpath.normpath(str(legacy_artifacts_root))
+        target_norm = ntpath.normpath(str(target_artifacts_root))
+        candidate_norm = ntpath.normpath(str(resolved_candidate))
+
+        legacy_pure = PureWindowsPath(legacy_norm)
+        target_pure = PureWindowsPath(target_norm)
+        candidate_pure = PureWindowsPath(candidate_norm)
+
+        try:
+            if not candidate_pure.is_relative_to(legacy_pure):
+                return path_or_uri
+            rel = candidate_pure.relative_to(legacy_pure)
+        except ValueError:
+            return path_or_uri
+
+        if not rel.parts or rel.parts == (".",):
+            return path_or_uri
+
+        # If running on Windows with an active filesystem, ensure symlinks cannot escape
+        if os.name == "nt":
+            try:
+                candidate_real = Path(resolved_candidate).resolve()
+                legacy_real = Path(legacy_artifacts_root).resolve()
+                if not candidate_real.is_relative_to(legacy_real):
+                    return path_or_uri
+            except (OSError, ValueError):
+                pass
+
+        new_target = target_pure / rel
+        if is_uri:
+            return new_target.as_uri()
+        if "/" in raw_val and "\\" not in raw_val:
+            return new_target.as_posix()
+        return str(new_target)
+
+    else:
+        legacy_path = Path(legacy_artifacts_root)
+        target_path = Path(target_artifacts_root)
+        candidate_path = Path(resolved_candidate)
+
+        legacy_resolved = legacy_path.resolve()
+        target_resolved = target_path.resolve()
+        candidate_resolved = candidate_path.resolve()
+
+        try:
+            if not candidate_resolved.is_relative_to(legacy_resolved):
+                return path_or_uri
+            rel = candidate_resolved.relative_to(legacy_resolved)
+        except ValueError:
+            return path_or_uri
+
+        if not rel.parts or rel.parts == (".",):
+            return path_or_uri
+
+        new_target = target_resolved / rel
+        if is_uri:
+            return new_target.as_uri()
+        return str(new_target)
+
+
+def _remap_database_artifact_references(
+    conn: sqlite3.Connection,
+    legacy_artifacts_root: Path,
+    target_artifacts_root: Path,
+) -> int:
+    """Inspects SQLite schema and updates all persisted application-owned artifact references.
+
+    Updates:
+    - jobs.output_path
+    - jobs.file_path (only if pointing inside legacy_artifacts_root)
+    - document_versions.output_path (if table exists)
+    - pipeline2_jobs.input_path and output_path (if table exists)
+    - visual_regions.active_artifact_uri (if table exists)
+
+    Returns:
+        Total number of record fields updated.
+    """
+    cur = conn.cursor()
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    existing_tables = {row[0] for row in cur.fetchall()}
+
+    remapped_count = 0
+
+    # 1. Primary jobs table
+    if "jobs" in existing_tables:
+        cur.execute("PRAGMA table_info(jobs);")
+        job_cols = {row[1] for row in cur.fetchall()}
+
+        if "output_path" in job_cols:
+            cur.execute("SELECT id, output_path FROM jobs WHERE output_path IS NOT NULL AND TRIM(output_path) != '';")
+            for jid, out_p in cur.fetchall():
+                new_p = _remap_persisted_artifact_path(out_p, legacy_artifacts_root, target_artifacts_root)
+                if new_p != out_p:
+                    cur.execute("UPDATE jobs SET output_path = ? WHERE id = ?;", (new_p, jid))
+                    remapped_count += 1
+
+        if "file_path" in job_cols:
+            cur.execute("SELECT id, file_path FROM jobs WHERE file_path IS NOT NULL AND TRIM(file_path) != '';")
+            for jid, f_p in cur.fetchall():
+                new_p = _remap_persisted_artifact_path(f_p, legacy_artifacts_root, target_artifacts_root)
+                if new_p != f_p:
+                    cur.execute("UPDATE jobs SET file_path = ? WHERE id = ?;", (new_p, jid))
+                    remapped_count += 1
+
+    # 2. Immutable document versions table (schema 004+)
+    if "document_versions" in existing_tables:
+        cur.execute("PRAGMA table_info(document_versions);")
+        doc_cols = {row[1] for row in cur.fetchall()}
+
+        if "output_path" in doc_cols:
+            cur.execute(
+                "SELECT id, output_path FROM document_versions WHERE output_path IS NOT NULL AND TRIM(output_path) != '';"
+            )
+            for did, out_p in cur.fetchall():
+                new_p = _remap_persisted_artifact_path(out_p, legacy_artifacts_root, target_artifacts_root)
+                if new_p != out_p:
+                    cur.execute("UPDATE document_versions SET output_path = ? WHERE id = ?;", (new_p, did))
+                    remapped_count += 1
+
+    # 3. Pipeline 2 jobs table
+    if "pipeline2_jobs" in existing_tables:
+        cur.execute("PRAGMA table_info(pipeline2_jobs);")
+        p2_cols = {row[1] for row in cur.fetchall()}
+
+        if "input_path" in p2_cols:
+            cur.execute(
+                "SELECT id, input_path FROM pipeline2_jobs WHERE input_path IS NOT NULL AND TRIM(input_path) != '';"
+            )
+            for p2id, in_p in cur.fetchall():
+                new_p = _remap_persisted_artifact_path(in_p, legacy_artifacts_root, target_artifacts_root)
+                if new_p != in_p:
+                    cur.execute("UPDATE pipeline2_jobs SET input_path = ? WHERE id = ?;", (new_p, p2id))
+                    remapped_count += 1
+
+        if "output_path" in p2_cols:
+            cur.execute(
+                "SELECT id, output_path FROM pipeline2_jobs WHERE output_path IS NOT NULL AND TRIM(output_path) != '';"
+            )
+            for p2id, out_p in cur.fetchall():
+                new_p = _remap_persisted_artifact_path(out_p, legacy_artifacts_root, target_artifacts_root)
+                if new_p != out_p:
+                    cur.execute("UPDATE pipeline2_jobs SET output_path = ? WHERE id = ?;", (new_p, p2id))
+                    remapped_count += 1
+
+    # 4. Visual regions table (schema 002+)
+    if "visual_regions" in existing_tables:
+        cur.execute("PRAGMA table_info(visual_regions);")
+        vr_cols = {row[1] for row in cur.fetchall()}
+
+        if "active_artifact_uri" in vr_cols:
+            cur.execute(
+                "SELECT id, active_artifact_uri FROM visual_regions "
+                "WHERE active_artifact_uri IS NOT NULL AND TRIM(active_artifact_uri) != '';"
+            )
+            for vrid, art_uri in cur.fetchall():
+                new_uri = _remap_persisted_artifact_path(art_uri, legacy_artifacts_root, target_artifacts_root)
+                if new_uri != art_uri:
+                    cur.execute("UPDATE visual_regions SET active_artifact_uri = ? WHERE id = ?;", (new_uri, vrid))
+                    remapped_count += 1
+
+    return remapped_count
+
+
 def migrate_legacy_user_data_if_needed(
     target_dir: Optional[Path] = None,
     legacy_dir: Optional[Path] = None,
@@ -947,6 +1182,19 @@ def migrate_legacy_user_data_if_needed(
                         dest_conn = sqlite3.connect(str(temp_dest), timeout=10.0)
                         try:
                             src_conn.backup(dest_conn)
+
+                            dest_conn.execute("BEGIN IMMEDIATE;")
+                            try:
+                                _remap_database_artifact_references(
+                                    dest_conn,
+                                    legacy_artifacts_root=legacy_artifacts,
+                                    target_artifacts_root=target_artifacts,
+                                )
+                                dest_conn.commit()
+                            except Exception:
+                                dest_conn.rollback()
+                                raise
+
                             quick_check = dest_conn.execute("PRAGMA quick_check;").fetchone()
                             if not quick_check or quick_check[0] != "ok":
                                 raise RuntimeError(
