@@ -118,7 +118,42 @@ Infrastructure adapters implement application ports. The core domain and applica
 
 ---
 
-## 3. Installation and Developer Setup
+## 3. Quick Start: Linux Desktop Installation (End Users)
+
+Polpo provides an automated, secure user-space installer and update manager for Linux (`x86_64`, `glibc >= 2.35`). Root privileges (`sudo`) are **never required** to install, update, or run the application.
+
+### One-Line Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/amirreza-a2a/Polpo/main/install.sh | bash
+```
+
+To install pre-release candidates (e.g. `v0.1.0-rc.1`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/amirreza-a2a/Polpo/main/install.sh | bash -s -- --channel preview
+```
+
+### Inspect Before Executing
+
+```bash
+curl -fsSL -o install.sh https://raw.githubusercontent.com/amirreza-a2a/Polpo/main/install.sh
+less install.sh
+bash install.sh
+```
+
+### Commands Installed to `~/.local/bin`
+
+* `polpo` — Launch the Polpo desktop application.
+* `polpo-update` — Safely check for updates and upgrade in-place (with automatic rollback on failure).
+* `polpo-deps [check|gui|pdf|install-gui|install-pdf]` — Diagnose and install missing system dependencies.
+* `polpo-uninstall` — Cleanly remove binaries and desktop entries while preserving your documents and database.
+
+For complete documentation including distro package mappings, air-gapped installs, and PDF toolchain setup, see the [Linux Installation Guide](docs/linux-installation.md).
+
+---
+
+## 4. Developer Setup and Source Build
 
 This section describes a **development checkout**, not a standalone end-user installation package.
 
@@ -224,7 +259,7 @@ The application initializes its persistence and recovery services during startup
 
 ---
 
-## 4. Testing and Quality Gates
+## 5. Testing and Quality Gates
 
 Polpo uses automated tests and repository-specific quality gates to validate application behavior, architectural boundaries, security invariants, and platform-specific contracts.
 
@@ -276,7 +311,7 @@ CI validation is distinct from packaging validation. A successful unit-test run 
 
 ---
 
-## 5. Platform Support Policy
+## 6. Platform Support Policy
 
 Polpo distinguishes continuous CI coverage from periodic validation and best-effort compatibility.
 
@@ -284,9 +319,9 @@ The following classifications describe the project's intended validation tiers. 
 
 | Tier | Classification | Target environments | Verification scope |
 |---|---|---|---|
-| Tier 1 | Continuously tested | Ubuntu 24.04 LTS x86_64, Python 3.12; Windows Server 2025 x64, Python 3.12 | Blocking CI checks for the configured quality gates, tests, and security checks |
+| Tier 1 | Continuously tested | Ubuntu 22.04 / 24.04 LTS x86_64, Python 3.12; Windows Server 2025 x64, Python 3.12 | Blocking CI checks for the configured quality gates, tests, packaging, and security checks |
 | Tier 2 | Periodically validated | macOS 15 Apple Silicon/ARM64, Python 3.12; Python 3.10 and 3.11 on the configured Ubuntu runner | Periodic, manual, and configured pre-release validation |
-| Tier 3 | Best effort | Other modern glibc-based Linux distributions, WSL2, selected older macOS environments, and supported headless configurations | Compatibility depends on system libraries, display configuration, keyring availability, and runtime dependencies |
+| Tier 3 | Best effort | Other modern glibc-based Linux distributions (Debian 12+, Fedora 39+, Arch, openSUSE), WSL2, selected older macOS environments, and supported headless configurations | Compatibility depends on system libraries, display configuration, keyring availability, and runtime dependencies |
 | Tier 4 | Unsupported | Musl-based Linux distributions such as Alpine, 32-bit systems, Windows versions below 10, macOS versions below 12, and remote server deployments | Outside the intended support boundary |
 
 ### Important Limitations
@@ -301,7 +336,7 @@ The release documentation should state which operating systems have actually bee
 
 ---
 
-## 6. Repository Structure
+## 7. Repository Structure
 
 The following is a high-level map of the principal project areas.
 
@@ -369,12 +404,13 @@ Some historical files and modules may remain for compatibility. Consult the curr
 
 ---
 
-## 7. Architecture Decision Records and Documentation
+## 8. Architecture Decision Records and Documentation
 
 The following documents describe important architectural and operational decisions:
 
 - [AGENTS.md](AGENTS.md) — Development rules, architectural boundaries, security requirements, and implementation constraints.
 - [CONTEXT.md](CONTEXT.md) — Domain terminology, entity invariants, and architectural context.
+- [Linux Installation Guide](docs/linux-installation.md) — Single-command installation, updates, system dependencies, and uninstallation.
 - [ADR-001: Three-Way Merge and Conflict Resolution](docs/adr/2026-09-18-adr-001-phase10f5-three-way-merge-conflict-resolution.md)
 - [ADR-002: MathJax Supervisor Reliability](docs/adr/2026-09-30-adr-002-mathjax-supervisor-reliability-contract.md)
 - [ADR-003: Quarto PDF Export Integration](docs/adr/2026-10-12-adr-003-quarto-pdf-export-integration.md)
@@ -386,7 +422,7 @@ These links assume the corresponding files exist at the listed paths on the curr
 
 ---
 
-## 8. Legacy Telegram Transport
+## 9. Legacy Telegram Transport
 
 The legacy Telegram adapter is retained for backward compatibility. It is separate from the primary desktop application runtime.
 
@@ -396,7 +432,7 @@ Historical server-oriented deployment notes are retained under [`docs/plans/hist
 
 ---
 
-## 9. Security and Privacy
+## 10. Security and Privacy
 
 - **Local persistence:** Application job state and related local data are stored on the user's workstation.
 - **Credential handling:** Configured AI credentials are managed through the credential subsystem. Secrets must not be committed to source control, stored as plaintext in SQLite, or exposed in logs.
@@ -409,20 +445,20 @@ Never include API keys, access tokens, private documents, or other secrets in bu
 
 ---
 
-## 10. Release Status and Packaging Architecture
+## 11. Release Status and Packaging Architecture
 
 Polpo provides standalone, hermetic desktop distributions built with PyInstaller, containing all required runtime dependencies (statically linked Pandoc 3.1.11, headless Node.js 22.23.2 MathJax daemon, schema migrations, and prompt templates). End users do not need to install Python, Pandoc, or Node.js separately.
 
-### 10.1 Supported Platform Tiers
+### 11.1 Supported Platform Tiers
 
 * **Tier-1 Packaged Distributions (Automated CI & Releases):**
-  * **Linux (x86_64):** Standalone archive (`Polpo-v<version>-linux-x86_64.tar.gz`) verified on Ubuntu 24.04+. Requires standard desktop GUI libraries (`libgl1`, `libegl1`, `libxkbcommon-x11-0`, `libdbus-1-3`).
-  * **Windows (x64):** Standalone archive (`Polpo-v<version>-windows-x64.zip`) verified on Windows Server 2025 and Windows 10/11 x64.
+  * **Linux (x86_64):** Standalone archive (`Polpo-v<version>-linux-x86_64.tar.gz` and stable alias `polpo-linux-x86_64.tar.gz`) targeting `glibc >= 2.35` (verified on Ubuntu 22.04+, Debian 12+, Fedora 39+, Arch, and openSUSE). Requires standard desktop GUI libraries (`libgl1`, `libegl1`, `libxkbcommon-x11-0`, `libdbus-1-3`).
+  * **Windows (x64):** Standalone archive (`Polpo-v<version>-windows-x64.zip` and stable alias `polpo-windows-x64.zip`) verified on Windows Server 2025 and Windows 10/11 x64.
 * **Tier-2 Source-Validated Platforms (Periodic CI & Manual Packaging):**
   * **macOS (Apple Silicon / ARM64 & Intel / x86_64):** Validated on native `macos-15` runners with Python 3.12. Standalone `.app` bundles require inside-out code signing and Apple notarization per [`docs/packaging.md`](docs/packaging.md).
   * **Python Matrix:** Tested across Python 3.10, 3.11, and 3.12 on Linux.
 
-### 10.2 Binary Verification and Frozen Self-Test
+### 11.2 Binary Verification and Frozen Self-Test
 
 Every official release artifact can be verified before installation:
 

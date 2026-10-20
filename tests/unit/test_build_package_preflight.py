@@ -33,6 +33,12 @@ class TestBuildPackagePreflight(unittest.TestCase):
         (root / "README.md").write_text("# Polpo", encoding="utf-8")
         (root / "CHANGELOG.md").write_text("# Changelog", encoding="utf-8")
 
+        # Linux helper scripts
+        (root / "install.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+        scripts_dir = root / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        (scripts_dir / "polpo_linux_deps.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+
         # QML interface
         qml_dir = root / "interfaces" / "desktop" / "qml"
         qml_dir.mkdir(parents=True, exist_ok=True)
@@ -134,6 +140,26 @@ class TestBuildPackagePreflight(unittest.TestCase):
         )
         self.assertFalse(report.is_valid)
         self.assertTrue(any("node" in err.lower() for err in report.errors))
+
+    def test_missing_linux_deps_fails_preflight(self):
+        """Missing scripts/polpo_linux_deps.sh fails preflight for linux-x86_64."""
+        (self.repo_root / "scripts" / "polpo_linux_deps.sh").unlink()
+        report = build_package.run_preflight_checks(
+            repo_root=self.repo_root,
+            target_platform="linux-x86_64",
+        )
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any("dependency resolver script missing" in err for err in report.errors))
+
+    def test_missing_linux_installer_fails_preflight(self):
+        """Missing install.sh fails preflight for linux-x86_64."""
+        (self.repo_root / "install.sh").unlink()
+        report = build_package.run_preflight_checks(
+            repo_root=self.repo_root,
+            target_platform="linux-x86_64",
+        )
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any("installer script missing" in err for err in report.errors))
 
     def test_missing_mathjax_full_fails_preflight(self):
         """Missing node_modules/mathjax-full directory fails preflight fast."""
@@ -280,6 +306,25 @@ class TestBuildPackagePreflight(unittest.TestCase):
                 target_platform=foreign,
             )
         self.assertIn("does not support cross-compilation", str(ctx.exception))
+
+    def test_create_stable_alias(self):
+        """create_stable_alias creates unversioned archive copy and valid sha256 sidecar."""
+        dist_dir = self.repo_root / "dist"
+        dist_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = dist_dir / "Polpo-v0.1.0-linux-x86_64.tar.gz"
+        archive_path.write_bytes(b"sample archive binary payload")
+
+        result = build_package.create_stable_alias(archive_path, "linux-x86_64")
+        self.assertIsNotNone(result)
+        alias_path, sidecar_path = result
+
+        self.assertEqual(alias_path.name, "polpo-linux-x86_64.tar.gz")
+        self.assertEqual(sidecar_path.name, "polpo-linux-x86_64.tar.gz.sha256")
+        self.assertTrue(alias_path.is_file())
+        self.assertTrue(sidecar_path.is_file())
+
+        expected_hash = hashlib.sha256(b"sample archive binary payload").hexdigest()
+        self.assertIn(expected_hash, sidecar_path.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

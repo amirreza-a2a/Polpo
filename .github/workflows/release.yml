@@ -213,7 +213,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04
+          - os: ubuntu-22.04
             platform_id: linux-x86_64
             artifact_name: polpo-dist-linux-x86_64
           - os: windows-2025
@@ -272,7 +272,7 @@ jobs:
 
       - name: Build standalone desktop package
         run: |
-          python scripts/build_package.py
+          python scripts/build_package.py --create-alias
 
       - name: Smoke test packaged Linux binary outside repository
         if: runner.os == 'Linux'
@@ -377,6 +377,10 @@ jobs:
             dist/Polpo-*.tar.gz.sha256
             dist/Polpo-*.zip
             dist/Polpo-*.zip.sha256
+            dist/polpo-*.tar.gz
+            dist/polpo-*.tar.gz.sha256
+            dist/polpo-*.zip
+            dist/polpo-*.zip.sha256
           if-no-files-found: error
 
   publish-release:
