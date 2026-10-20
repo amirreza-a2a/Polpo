@@ -10,8 +10,14 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import sys
 import tarfile
 import pytest
+
+pytestmark = pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="Linux installer tests require a Linux environment",
+)
 
 INSTALL_SCRIPT = Path(__file__).resolve().parent.parent.parent / "install.sh"
 DEPS_SCRIPT = Path(__file__).resolve().parent.parent.parent / "scripts" / "polpo_linux_deps.sh"
@@ -62,6 +68,10 @@ def create_synthetic_archive(
             ti, _ = make_tar_entry("Polpo/scripts/polpo_linux_deps.sh", deps_content, mode=0o755)
             tar.addfile(ti, io.BytesIO(deps_content))
 
+            install_content = INSTALL_SCRIPT.read_bytes()
+            ti, _ = make_tar_entry("Polpo/scripts/install.sh", install_content, mode=0o755)
+            tar.addfile(ti, io.BytesIO(install_content))
+
             # Unsafe paths for security tests
             if unsafe_entry == "absolute":
                 ti, _ = make_tar_entry("/etc/passwd", b"root:x:0:0:::", mode=0o644)
@@ -81,15 +91,26 @@ def create_synthetic_archive(
     return archive_path, sidecar_path
 
 
-def run_installer(args: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+def run_installer(
+    args: list[str],
+    env: dict[str, str] | None = None,
+    input_text: str | None = None,
+) -> subprocess.CompletedProcess:
     run_env = os.environ.copy()
     if env:
         run_env.update(env)
+    if "XDG_DATA_HOME" not in run_env:
+        # Isolate desktop integration from developer's real user environment
+        isolated_data = Path("/tmp") / f"polpo_test_xdg_{os.getpid()}"
+        isolated_data.mkdir(parents=True, exist_ok=True)
+        run_env["XDG_DATA_HOME"] = str(isolated_data)
+
     return subprocess.run(
         [str(INSTALL_SCRIPT)] + args,
         capture_output=True,
         text=True,
         env=run_env,
+        input=input_text,
     )
 
 
@@ -344,3 +365,155 @@ def test_concurrent_install_lock_contention(tmp_path: Path):
     finally:
         import shutil
         shutil.rmtree(lock_dir, ignore_errors=True)
+
+
+def test_piped_install_via_stdin(tmp_path: Path):
+    """Piping install.sh via stdin (curl ... | bash) must succeed and install helper scripts."""
+    install_dir = tmp_path / "opt_polpo"
+    bin_dir = tmp_path / "bin"
+    archive, _ = create_synthetic_archive(tmp_path / "dist", version="0.1.0")
+
+    run_env = os.environ.copy()
+    run_env["XDG_DATA_HOME"] = str(tmp_path / "xdg")
+
+    # Run bash -s reading install.sh from stdin
+    script_text = INSTALL_SCRIPT.read_text(encoding="utf-8")
+    res = subprocess.run(
+        [
+            "bash", "-s", "--",
+            "--archive", str(archive),
+            "--dir", str(install_dir),
+            "--bin-dir", str(bin_dir),
+        ],
+        input=script_text,
+        capture_output=True,
+        text=True,
+        env=run_env,
+    )
+
+    assert res.returncode == 0
+    assert "Polpo 0.1.0 successfully installed!" in res.stdout
+    assert (install_dir / "bin" / "install.sh").is_file()
+    assert (bin_dir / "polpo").is_symlink()
+    assert (bin_dir / "polpo-update").is_symlink()
+    assert (bin_dir / "polpo-deps").is_symlink()
+
+    # polpo-update wrapper must work without failing to find install.sh
+    proc = subprocess.run([str(bin_dir / "polpo-update"), "--help"], capture_output=True, text=True)
+    assert proc.returncode == 0
+    assert "Polpo Linux Installer and Updater" in proc.stdout
+
+
+def test_corrupt_archive_rejected(tmp_path: Path):
+    """Corrupt gzip or tar archives must be caught during validation and aborted cleanly."""
+    install_dir = tmp_path / "opt_polpo"
+    archive, _ = create_synthetic_archive(tmp_path / "dist", version="0.1.0", corrupt_tar=True)
+
+    res = run_installer(["--archive", str(archive), "--dir", str(install_dir)])
+    assert res.returncode == 1
+    assert "Corrupt or invalid gzip/tar archive" in res.stderr
+    assert not install_dir.exists()
+
+
+def test_malformed_checksum_rejected(tmp_path: Path):
+    """A malformed SHA-256 sidecar file (wrong length or empty) must abort the install."""
+    install_dir = tmp_path / "opt_polpo"
+    archive, sidecar = create_synthetic_archive(tmp_path / "dist", version="0.1.0")
+    sidecar.write_text("not_a_valid_hash  Polpo.tar.gz\n", encoding="utf-8")
+
+    res = run_installer(["--archive", str(archive), "--dir", str(install_dir)])
+    assert res.returncode == 1
+    assert "Invalid or malformed checksum file" in res.stderr
+    assert not install_dir.exists()
+
+
+def test_root_privileges_rejected(tmp_path: Path):
+    """Installer must abort with code 1 if run with root or sudo privileges."""
+    mock_bin = tmp_path / "bin"
+    mock_bin.mkdir()
+    id_mock = mock_bin / "id"
+    id_mock.write_text("#!/bin/sh\necho 0\n")
+    id_mock.chmod(0o755)
+
+    fake_env = {"PATH": f"{mock_bin}:{os.environ.get('PATH', '')}"}
+    res = run_installer(["--dir", str(tmp_path / "opt")], env=fake_env)
+    assert res.returncode == 1
+    assert "must not be run as root" in res.stderr
+
+
+def test_interrupted_staging_leaves_previous_intact(tmp_path: Path):
+    """Failed upgrade or corrupt archive must leave the existing active version intact."""
+    install_dir = tmp_path / "opt_polpo"
+    bin_dir = tmp_path / "bin"
+
+    # 1. Install 0.1.0
+    v1_archive, _ = create_synthetic_archive(tmp_path / "dist1", version="0.1.0")
+    run_installer(["--archive", str(v1_archive), "--dir", str(install_dir), "--bin-dir", str(bin_dir)])
+
+    # 2. Attempt upgrade with corrupt archive
+    corrupt_archive, _ = create_synthetic_archive(tmp_path / "dist2", version="0.2.0", corrupt_tar=True)
+    res = run_installer(["--archive", str(corrupt_archive), "--dir", str(install_dir), "--bin-dir", str(bin_dir), "--update"])
+
+    assert res.returncode == 1
+    # Existing active installation remains pointing to 0.1.0
+    assert os.readlink(install_dir / "current") == "versions/0.1.0"
+    proc = subprocess.run([str(bin_dir / "polpo")], capture_output=True, text=True)
+    assert "Polpo 0.1.0" in proc.stdout
+
+
+def test_historical_versions_pruning(tmp_path: Path):
+    """Versions beyond max_keep (3) must be pruned while retaining current and previous."""
+    install_dir = tmp_path / "opt_polpo"
+    bin_dir = tmp_path / "bin"
+
+    for v in ["0.1.0", "0.2.0", "0.3.0", "0.4.0"]:
+        arc, _ = create_synthetic_archive(tmp_path / f"dist_{v}", version=v)
+        res = run_installer(["--archive", str(arc), "--dir", str(install_dir), "--bin-dir", str(bin_dir), "--update"])
+        assert res.returncode == 0
+
+    remaining = [p.name for p in (install_dir / "versions").iterdir() if p.is_dir()]
+    assert len(remaining) <= 3
+    assert "0.4.0" in remaining
+    assert "0.3.0" in remaining
+    assert os.readlink(install_dir / "current") == "versions/0.4.0"
+    assert os.readlink(install_dir / "previous") == "versions/0.3.0"
+
+
+def test_desktop_entry_respects_xdg_data_home(tmp_path: Path):
+    """Desktop file creation and removal must respect XDG_DATA_HOME."""
+    install_dir = tmp_path / "opt_polpo"
+    bin_dir = tmp_path / "bin"
+    custom_xdg = tmp_path / "custom_xdg_share"
+    archive, _ = create_synthetic_archive(tmp_path / "dist", version="0.1.0")
+
+    fake_env = {"XDG_DATA_HOME": str(custom_xdg)}
+    res = run_installer([
+        "--archive", str(archive),
+        "--dir", str(install_dir),
+        "--bin-dir", str(bin_dir),
+    ], env=fake_env)
+
+    assert res.returncode == 0
+    desktop_file = custom_xdg / "applications" / "polpo.desktop"
+    assert desktop_file.is_file()
+    content = desktop_file.read_text(encoding="utf-8")
+    assert f'Exec="{bin_dir}/polpo"' in content
+
+    # Test uninstall removes it from XDG_DATA_HOME
+    uninst = run_installer(["--uninstall", "--dir", str(install_dir), "--bin-dir", str(bin_dir)], env=fake_env)
+    assert uninst.returncode == 0
+    assert not desktop_file.exists()
+
+
+def test_failed_download_reporting(tmp_path: Path):
+    """A network or download failure must report an actionable error and exit cleanly."""
+    mock_bin = tmp_path / "bin"
+    mock_bin.mkdir()
+    curl_mock = mock_bin / "curl"
+    curl_mock.write_text("#!/bin/sh\nexit 22\n")
+    curl_mock.chmod(0o755)
+
+    fake_env = {"PATH": f"{mock_bin}:{os.environ.get('PATH', '')}"}
+    res = run_installer(["--channel", "stable", "--dir", str(tmp_path / "opt")], env=fake_env)
+    assert res.returncode == 1
+    assert "Failed to download" in res.stderr or "No published stable release" in res.stderr

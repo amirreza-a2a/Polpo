@@ -3,7 +3,13 @@
 import os
 from pathlib import Path
 import subprocess
+import sys
 import pytest
+
+pytestmark = pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="Linux dependency helper tests require a Linux environment",
+)
 
 SCRIPT_PATH = Path(__file__).resolve().parent.parent.parent / "scripts" / "polpo_linux_deps.sh"
 
@@ -180,3 +186,48 @@ def test_pdf_install_dry_run_shows_tex_command(tmp_path: Path):
     assert "sudo apt-get update && sudo apt-get install -y texlive-xetex texlive-latex-extra" in res.stdout
     assert "500MB to 1GB" in res.stdout
     assert "Dry-run mode: skipping execution." in res.stdout
+
+
+def test_install_gui_already_satisfied(tmp_path: Path):
+    """When all GUI packages are already installed, install-gui reports satisfied and does not invoke sudo."""
+    os_rel = tmp_path / "os-release"
+    os_rel.write_text('ID=ubuntu\nPRETTY_NAME="Ubuntu 24.04"\n')
+
+    mock_bin = tmp_path / "bin"
+    mock_bin.mkdir()
+    dpkg_mock = mock_bin / "dpkg-query"
+    dpkg_mock.write_text("#!/bin/sh\necho 'install ok installed'\n")
+    dpkg_mock.chmod(0o755)
+
+    # sudo mock that should never be called
+    sudo_mock = mock_bin / "sudo"
+    sudo_mock.write_text("#!/bin/sh\necho 'FAIL: sudo should not have been called' >&2\nexit 99\n")
+    sudo_mock.chmod(0o755)
+
+    fake_env = {"PATH": f"{mock_bin}:{os.environ.get('PATH', '')}"}
+    res = run_deps_script(["install-gui", "--os-release", str(os_rel)], env=fake_env)
+
+    assert res.returncode == 0
+    assert "All required GUI dependencies are already satisfied" in res.stdout
+    assert "FAIL" not in res.stderr
+
+
+def test_install_gui_package_manager_failure(tmp_path: Path):
+    """Package manager failure during installation returns non-zero error code."""
+    os_rel = tmp_path / "os-release"
+    os_rel.write_text('ID=ubuntu\nPRETTY_NAME="Ubuntu 24.04"\n')
+
+    mock_bin = tmp_path / "bin"
+    mock_bin.mkdir()
+    dpkg_mock = mock_bin / "dpkg-query"
+    dpkg_mock.write_text("#!/bin/sh\nexit 1\n")
+    dpkg_mock.chmod(0o755)
+
+    sudo_mock = mock_bin / "sudo"
+    sudo_mock.write_text("#!/bin/sh\nexit 100\n")
+    sudo_mock.chmod(0o755)
+
+    fake_env = {"PATH": f"{mock_bin}:{os.environ.get('PATH', '')}"}
+    res = run_deps_script(["install-gui", "--yes", "--os-release", str(os_rel)], env=fake_env)
+
+    assert res.returncode == 100

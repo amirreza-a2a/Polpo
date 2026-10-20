@@ -210,6 +210,15 @@ def run_preflight_checks(
             f"Run 'python scripts/fetch_runtimes.py --install-mathjax-deps' to stage."
         )
 
+    # 10. Linux packaging and installer scripts
+    if target_platform == "linux-x86_64":
+        deps_script = repo_root / "scripts" / "polpo_linux_deps.sh"
+        if not deps_script.is_file():
+            errors.append(f"Linux dependency resolver script missing: {deps_script}")
+        installer_script = repo_root / "install.sh"
+        if not installer_script.is_file():
+            errors.append(f"Linux installer script missing: {installer_script}")
+
     is_valid = len(errors) == 0
     return PreflightReport(is_valid=is_valid, errors=errors, warnings=warnings)
 

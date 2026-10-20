@@ -16,7 +16,10 @@
 
 set -euo pipefail
 
-MAIN_SCRIPT_SOURCE="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+MAIN_SCRIPT_SOURCE="${BASH_SOURCE[0]:-}"
+if [[ -n "$MAIN_SCRIPT_SOURCE" ]]; then
+    MAIN_SCRIPT_SOURCE="$(readlink -f "$MAIN_SCRIPT_SOURCE" 2>/dev/null || echo "$MAIN_SCRIPT_SOURCE")"
+fi
 
 # Configuration defaults
 DEFAULT_REPO="amirreza-a2a/Polpo"
@@ -31,6 +34,21 @@ ROLLBACK_MODE=false
 UNINSTALL_MODE=false
 FORCE_MODE=false
 DRY_RUN=false
+ASSUME_YES=false
+LOCK_DIR=""
+TEMP_DIR=""
+
+cleanup() {
+    local exit_code=$?
+    if [[ -n "${LOCK_DIR:-}" && -d "${LOCK_DIR:-}" ]]; then
+        rm -rf "$LOCK_DIR" 2>/dev/null || true
+    fi
+    if [[ -n "${TEMP_DIR:-}" && -d "${TEMP_DIR:-}" ]]; then
+        rm -rf "$TEMP_DIR" 2>/dev/null || true
+    fi
+    exit "$exit_code"
+}
+trap cleanup EXIT INT TERM
 
 print_usage() {
     cat << 'EOF'
@@ -51,6 +69,7 @@ Options:
   --rollback                  Revert to the previous installed version
   --uninstall                 Remove installed application files, symlinks, and desktop entry
   --force                     Force reinstallation even if the same version is installed
+  -y, --yes                   Assume yes to prompts; non-interactive mode
   --dry-run                   Simulate steps without modifying files or directories
   --repo <owner/repo>         GitHub repository slug (default: amirreza-a2a/Polpo)
   -h, --help                  Show this help message
@@ -138,9 +157,15 @@ download_file() {
     local dest="$2"
 
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$url" -o "$dest"
+        if ! curl -fsSL "$url" -o "$dest"; then
+            log_error "Failed to download from ${url}"
+            return 1
+        fi
     elif command -v wget >/dev/null 2>&1; then
-        wget -q -O "$dest" "$url"
+        if ! wget -q -O "$dest" "$url"; then
+            log_error "Failed to download from ${url}"
+            return 1
+        fi
     else
         log_error "Neither curl nor wget is available for downloading."
         return 1
@@ -180,15 +205,13 @@ acquire_install_lock() {
     fi
 
     echo "$$" > "$LOCK_DIR/pid"
-    # Register cleanup trap
-    trap 'rm -rf "'"$LOCK_DIR"'"' EXIT INT TERM
 }
 
 release_install_lock() {
     if [[ -n "${LOCK_DIR:-}" && -d "${LOCK_DIR:-}" ]]; then
         rm -rf "$LOCK_DIR" 2>/dev/null || true
+        LOCK_DIR=""
     fi
-    trap - EXIT INT TERM
 }
 
 # ------------------------------------------------------------------------------
@@ -222,11 +245,15 @@ validate_archive_layout() {
     local archive_path="$1"
     log_info "Validating archive structure and path safety..."
 
-    local unsafe_entries=()
-    local top_entries=()
+    if ! tar -tzf "$archive_path" >/dev/null 2>&1; then
+        log_error "Corrupt or invalid gzip/tar archive: ${archive_path}"
+        return 1
+    fi
 
+    local entry_count=0
     while IFS= read -r entry; do
         [[ -z "$entry" ]] && continue
+        (( entry_count += 1 ))
 
         # Check for absolute paths
         if [[ "$entry" == /* ]]; then
@@ -249,7 +276,12 @@ validate_archive_layout() {
         fi
     done < <(tar -ztf "$archive_path")
 
-    log_info "Archive layout validated safely."
+    if (( entry_count == 0 )); then
+        log_error "Archive is empty: ${archive_path}"
+        return 1
+    fi
+
+    log_info "Archive layout validated safely (${entry_count} entries)."
 }
 
 verify_extracted_bundle() {
@@ -286,29 +318,103 @@ resolve_stable_release() {
     log_info "Resolving latest stable Polpo release from ${REPO}..."
     local api_url="https://api.github.com/repos/${REPO}/releases/latest"
 
-    local http_code=""
-    if command -v curl >/dev/null 2>&1; then
-        http_code="$(curl -sI -o /dev/null -w "%{http_code}" "$api_url" || echo "000")"
-    elif command -v wget >/dev/null 2>&1; then
-        http_code="$(wget --spider -S "$api_url" 2>&1 | awk '/HTTP\// {print $2}' | tail -n1 || echo "000")"
+    local temp_json
+    temp_json="$(mktemp)"
+    local fetch_ok=false
+
+    if download_file "$api_url" "$temp_json" 2>/dev/null; then
+        fetch_ok=true
     fi
 
-    if [[ "$http_code" == "404" || "$http_code" == "000" ]]; then
-        log_error "No published stable release was found for ${REPO}."
-        log_error "Polpo has not published an official stable release yet."
-        echo ""
-        log_info "To install the latest pre-release, use the preview channel:"
-        log_info "  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash -s -- --channel preview"
-        echo ""
-        log_info "Or install directly from a local archive:"
-        log_info "  install.sh --archive /path/to/Polpo-v0.1.0-linux-x86_64.tar.gz"
+    if [[ "$fetch_ok" != "true" ]]; then
+        rm -f "$temp_json"
+        local http_code="000"
+        if command -v curl >/dev/null 2>&1; then
+            http_code="$(curl -sI -o /dev/null -w "%{http_code}" "$api_url" || echo "000")"
+        elif command -v wget >/dev/null 2>&1; then
+            http_code="$(wget --spider -S "$api_url" 2>&1 | awk '/HTTP\// {print $2}' | tail -n1 || echo "000")"
+        fi
+
+        if [[ "$http_code" == "404" ]]; then
+            log_error "No published stable release was found for ${REPO}."
+            log_error "Polpo has not published an official stable release yet."
+            echo ""
+            log_info "To install the latest pre-release, use the preview channel:"
+            log_info "  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash -s -- --channel preview"
+            echo ""
+            log_info "Or install directly from a local archive:"
+            log_info "  install.sh --archive /path/to/Polpo-v0.1.0-linux-x86_64.tar.gz"
+            return 1
+        else
+            # Try resolving redirect tag before giving up
+            local loc_tag=""
+            if command -v curl >/dev/null 2>&1; then
+                loc_tag="$(curl -sI "https://github.com/${REPO}/releases/latest" 2>/dev/null | awk -F'/' '/[Ll]ocation:/ {print $NF}' | tr -d '\r\n' || true)"
+            fi
+            if [[ -n "$loc_tag" && "$loc_tag" != "latest" ]]; then
+                RESOLVED_VERSION="$loc_tag"
+                RESOLVED_ARCHIVE_URL="https://github.com/${REPO}/releases/latest/download/polpo-linux-x86_64.tar.gz"
+                RESOLVED_CHECKSUM_URL="https://github.com/${REPO}/releases/latest/download/polpo-linux-x86_64.tar.gz.sha256"
+                log_info "Resolved stable release from redirect: ${RESOLVED_VERSION}"
+                return 0
+            fi
+            log_error "No published stable release was found for ${REPO}."
+            return 1
+        fi
+    fi
+
+    # Parse metadata from API response
+    local res
+    res="$(python3 -c '
+import json, sys
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as f:
+        release = json.load(f)
+
+    tag = release.get("tag_name", "")
+    tar_url = ""
+    sha_url = ""
+    for asset in release.get("assets", []):
+        name = asset.get("name", "")
+        if name == "polpo-linux-x86_64.tar.gz" or name.endswith("linux-x86_64.tar.gz"):
+            if not tar_url or name == "polpo-linux-x86_64.tar.gz":
+                tar_url = asset.get("browser_download_url", "")
+        elif name == "polpo-linux-x86_64.tar.gz.sha256" or name.endswith("linux-x86_64.tar.gz.sha256"):
+            if not sha_url or name == "polpo-linux-x86_64.tar.gz.sha256":
+                sha_url = asset.get("browser_download_url", "")
+
+    print(f"{tag}\t{tar_url}\t{sha_url}")
+except Exception:
+    sys.exit(1)
+' "$temp_json" || true)"
+    rm -f "$temp_json"
+
+    if [[ -z "$res" ]]; then
+        log_error "Failed to parse release metadata from GitHub API response."
         return 1
     fi
 
-    # Resolve direct download URL
-    RESOLVED_ARCHIVE_URL="https://github.com/${REPO}/releases/latest/download/polpo-linux-x86_64.tar.gz"
-    RESOLVED_CHECKSUM_URL="https://github.com/${REPO}/releases/latest/download/polpo-linux-x86_64.tar.gz.sha256"
-    RESOLVED_VERSION="latest"
+    RESOLVED_VERSION="$(echo "$res" | cut -f1)"
+    RESOLVED_ARCHIVE_URL="$(echo "$res" | cut -f2)"
+    RESOLVED_CHECKSUM_URL="$(echo "$res" | cut -f3)"
+
+    if [[ -z "$RESOLVED_ARCHIVE_URL" ]]; then
+        RESOLVED_ARCHIVE_URL="https://github.com/${REPO}/releases/latest/download/polpo-linux-x86_64.tar.gz"
+    fi
+    if [[ -z "$RESOLVED_CHECKSUM_URL" ]]; then
+        RESOLVED_CHECKSUM_URL="https://github.com/${REPO}/releases/latest/download/polpo-linux-x86_64.tar.gz.sha256"
+    fi
+
+    if [[ -z "$RESOLVED_VERSION" ]]; then
+        local loc_tag=""
+        if command -v curl >/dev/null 2>&1; then
+            loc_tag="$(curl -sI "https://github.com/${REPO}/releases/latest" 2>/dev/null | awk -F'/' '/[Ll]ocation:/ {print $NF}' | tr -d '\r\n' || true)"
+        fi
+        RESOLVED_VERSION="${loc_tag:-latest}"
+    fi
+
+    log_info "Resolved stable release: ${RESOLVED_VERSION}"
 }
 
 resolve_preview_or_tag_release() {
@@ -396,33 +502,73 @@ install_bundle() {
     mv "$staging_bundle" "$target_version_dir"
     rm -rf "${target_version_dir}.old" 2>/dev/null || true
 
-    # Record version metadata
+    # Record version and channel metadata
     echo "$version_id" > "${target_version_dir}/.polpo_version"
+    echo "$CHANNEL" > "${INSTALL_DIR}/.channel"
 
     # Copy installer and helper scripts into installation bin directory
-    if [[ -f "${MAIN_SCRIPT_SOURCE:-}" ]]; then
+    local install_script_installed=false
+    if [[ -n "${MAIN_SCRIPT_SOURCE:-}" && -f "${MAIN_SCRIPT_SOURCE}" ]]; then
         cp "${MAIN_SCRIPT_SOURCE}" "${INSTALL_DIR}/bin/install.sh"
         chmod +x "${INSTALL_DIR}/bin/install.sh"
+        install_script_installed=true
+    elif [[ -f "${target_version_dir}/scripts/install.sh" ]]; then
+        cp "${target_version_dir}/scripts/install.sh" "${INSTALL_DIR}/bin/install.sh"
+        chmod +x "${INSTALL_DIR}/bin/install.sh"
+        install_script_installed=true
+    elif [[ -f "${target_version_dir}/_internal/scripts/install.sh" ]]; then
+        cp "${target_version_dir}/_internal/scripts/install.sh" "${INSTALL_DIR}/bin/install.sh"
+        chmod +x "${INSTALL_DIR}/bin/install.sh"
+        install_script_installed=true
+    elif [[ -n "${MAIN_SCRIPT_SOURCE:-}" && -f "$(dirname "${MAIN_SCRIPT_SOURCE}")/install.sh" ]]; then
+        cp "$(dirname "${MAIN_SCRIPT_SOURCE}")/install.sh" "${INSTALL_DIR}/bin/install.sh"
+        chmod +x "${INSTALL_DIR}/bin/install.sh"
+        install_script_installed=true
+    elif [[ -z "$LOCAL_ARCHIVE" ]]; then
+        local remote_installer="https://raw.githubusercontent.com/${REPO}/main/install.sh"
+        if download_file "$remote_installer" "${INSTALL_DIR}/bin/install.sh" 2>/dev/null; then
+            chmod +x "${INSTALL_DIR}/bin/install.sh"
+            install_script_installed=true
+        fi
     fi
 
     # Bundle/install polpo_linux_deps.sh
     local deps_source=""
     if [[ -f "${target_version_dir}/scripts/polpo_linux_deps.sh" ]]; then
         deps_source="${target_version_dir}/scripts/polpo_linux_deps.sh"
-    elif [[ -f "$(dirname "${MAIN_SCRIPT_SOURCE:-$0}")/scripts/polpo_linux_deps.sh" ]]; then
-        deps_source="$(dirname "${MAIN_SCRIPT_SOURCE:-$0}")/scripts/polpo_linux_deps.sh"
+    elif [[ -f "${target_version_dir}/_internal/scripts/polpo_linux_deps.sh" ]]; then
+        deps_source="${target_version_dir}/_internal/scripts/polpo_linux_deps.sh"
+    elif [[ -n "${MAIN_SCRIPT_SOURCE:-}" && -f "$(dirname "${MAIN_SCRIPT_SOURCE}")/scripts/polpo_linux_deps.sh" ]]; then
+        deps_source="$(dirname "${MAIN_SCRIPT_SOURCE}")/scripts/polpo_linux_deps.sh"
+    elif [[ -f "$(dirname "$0")/scripts/polpo_linux_deps.sh" ]]; then
+        deps_source="$(dirname "$0")/scripts/polpo_linux_deps.sh"
     fi
 
     if [[ -n "$deps_source" && -f "$deps_source" ]]; then
         cp "$deps_source" "${INSTALL_DIR}/bin/polpo_linux_deps.sh"
         chmod +x "${INSTALL_DIR}/bin/polpo_linux_deps.sh"
+    elif [[ -z "$LOCAL_ARCHIVE" ]]; then
+        local remote_deps="https://raw.githubusercontent.com/${REPO}/main/scripts/polpo_linux_deps.sh"
+        if download_file "$remote_deps" "${INSTALL_DIR}/bin/polpo_linux_deps.sh" 2>/dev/null; then
+            chmod +x "${INSTALL_DIR}/bin/polpo_linux_deps.sh"
+        fi
     fi
 
     # Create polpo-update wrapper
     cat << 'EOF' > "${INSTALL_DIR}/bin/polpo-update"
 #!/usr/bin/env bash
 set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE="${BASH_SOURCE[0]}"
+if command -v readlink >/dev/null 2>&1; then
+    SCRIPT_DIR="$(dirname "$(readlink -f "$SOURCE")")"
+else
+    while [[ -L "$SOURCE" ]]; do
+        _dir="$(cd "$(dirname "$SOURCE")" && pwd)"
+        SOURCE="$(readlink "$SOURCE")"
+        [[ "$SOURCE" != /* ]] && SOURCE="${_dir}/${SOURCE}"
+    done
+    SCRIPT_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+fi
 exec "${SCRIPT_DIR}/install.sh" --update "$@"
 EOF
     chmod +x "${INSTALL_DIR}/bin/polpo-update"
@@ -431,11 +577,23 @@ EOF
     cat << 'EOF' > "${INSTALL_DIR}/bin/polpo-deps"
 #!/usr/bin/env bash
 set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE="${BASH_SOURCE[0]}"
+if command -v readlink >/dev/null 2>&1; then
+    SCRIPT_DIR="$(dirname "$(readlink -f "$SOURCE")")"
+else
+    while [[ -L "$SOURCE" ]]; do
+        _dir="$(cd "$(dirname "$SOURCE")" && pwd)"
+        SOURCE="$(readlink "$SOURCE")"
+        [[ "$SOURCE" != /* ]] && SOURCE="${_dir}/${SOURCE}"
+    done
+    SCRIPT_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+fi
 if [[ -f "${SCRIPT_DIR}/polpo_linux_deps.sh" ]]; then
     exec "${SCRIPT_DIR}/polpo_linux_deps.sh" "$@"
 elif [[ -f "${SCRIPT_DIR}/../current/scripts/polpo_linux_deps.sh" ]]; then
     exec "${SCRIPT_DIR}/../current/scripts/polpo_linux_deps.sh" "$@"
+elif [[ -f "${SCRIPT_DIR}/../current/_internal/scripts/polpo_linux_deps.sh" ]]; then
+    exec "${SCRIPT_DIR}/../current/_internal/scripts/polpo_linux_deps.sh" "$@"
 else
     echo "Error: polpo_linux_deps.sh not found." >&2
     exit 1
@@ -447,7 +605,17 @@ EOF
     cat << 'EOF' > "${INSTALL_DIR}/bin/polpo-uninstall"
 #!/usr/bin/env bash
 set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE="${BASH_SOURCE[0]}"
+if command -v readlink >/dev/null 2>&1; then
+    SCRIPT_DIR="$(dirname "$(readlink -f "$SOURCE")")"
+else
+    while [[ -L "$SOURCE" ]]; do
+        _dir="$(cd "$(dirname "$SOURCE")" && pwd)"
+        SOURCE="$(readlink "$SOURCE")"
+        [[ "$SOURCE" != /* ]] && SOURCE="${_dir}/${SOURCE}"
+    done
+    SCRIPT_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+fi
 exec "${SCRIPT_DIR}/install.sh" --uninstall "$@"
 EOF
     chmod +x "${INSTALL_DIR}/bin/polpo-uninstall"
@@ -491,7 +659,7 @@ EOF
 
 install_desktop_entry() {
     local version_id="$1"
-    local app_dir="${HOME}/.local/share/applications"
+    local app_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
     mkdir -p "$app_dir"
 
     local desktop_file="${app_dir}/polpo.desktop"
@@ -499,7 +667,7 @@ install_desktop_entry() {
 
     # Look for icon in bundle
     local icon_line=""
-    for icon_candidate in "${INSTALL_DIR}/current/resources/icon.png" "${INSTALL_DIR}/current/resources/polpo.png"; do
+    for icon_candidate in "${INSTALL_DIR}/current/resources/icon.png" "${INSTALL_DIR}/current/resources/polpo.png" "${INSTALL_DIR}/current/_internal/resources/icon.png"; do
         if [[ -f "$icon_candidate" ]]; then
             icon_line="Icon=${icon_candidate}"
             break
@@ -511,7 +679,7 @@ install_desktop_entry() {
 Type=Application
 Name=Polpo
 Comment=Desktop-first STEM document transcription and conversion
-Exec=${exe_path}
+Exec="${exe_path}"
 Terminal=false
 Categories=Office;Utility;
 StartupNotify=true
@@ -538,7 +706,7 @@ prune_historical_versions() {
     local all_versions=()
     while IFS= read -r v; do
         [[ -n "$v" ]] && all_versions+=("$v")
-    done < <(find "$versions_dir" -mindepth 1 -maxdepth 1 -type d -printf "%T@ %p\n" | sort -n | awk '{print $2}')
+    done < <(find "$versions_dir" -mindepth 1 -maxdepth 1 -type d -printf "%T@ %p\n" | sort -n | cut -d' ' -f2-)
 
     local total=${#all_versions[@]}
     if (( total > max_keep )); then
@@ -628,12 +796,13 @@ run_uninstall() {
     done
 
     # 2. Remove desktop file
-    local desktop_file="${HOME}/.local/share/applications/polpo.desktop"
+    local app_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+    local desktop_file="${app_dir}/polpo.desktop"
     if [[ -f "$desktop_file" ]]; then
         log_info "Removing desktop entry: ${desktop_file}"
         rm -f "$desktop_file"
         if command -v update-desktop-database >/dev/null 2>&1; then
-            update-desktop-database "${HOME}/.local/share/applications" >/dev/null 2>&1 || true
+            update-desktop-database "$app_dir" >/dev/null 2>&1 || true
         fi
     fi
 
@@ -655,11 +824,14 @@ run_uninstall() {
 # ------------------------------------------------------------------------------
 
 main() {
+    local channel_explicit=false
+
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --channel)
                 [[ $# -lt 2 ]] && { log_error "--channel requires an argument"; return 1; }
                 CHANNEL="$2"
+                channel_explicit=true
                 shift 2
                 ;;
             -v|--version)
@@ -703,6 +875,10 @@ main() {
                 FORCE_MODE=true
                 shift
                 ;;
+            -y|--yes)
+                ASSUME_YES=true
+                shift
+                ;;
             --dry-run)
                 DRY_RUN=true
                 shift
@@ -718,6 +894,11 @@ main() {
                 ;;
         esac
     done
+
+    # If updating without explicit channel, reuse recorded installed channel
+    if [[ "$channel_explicit" == "false" && -f "${INSTALL_DIR}/.channel" ]]; then
+        CHANNEL="$(cat "${INSTALL_DIR}/.channel" 2>/dev/null || echo "stable")"
+    fi
 
     check_privileges
     check_system_compatibility
@@ -736,10 +917,8 @@ main() {
 
     acquire_install_lock "$INSTALL_DIR"
 
-    local temp_dir
-    temp_dir="$(mktemp -d)"
-    # Ensure temp cleanup on unexpected exit
-    local outer_cleanup="rm -rf '${temp_dir}'"
+    TEMP_DIR="$(mktemp -d)"
+    local temp_dir="$TEMP_DIR"
 
     local archive_file=""
     local checksum_file=""
@@ -750,6 +929,7 @@ main() {
         if [[ ! -f "$LOCAL_ARCHIVE" ]]; then
             log_error "Specified archive file not found: ${LOCAL_ARCHIVE}"
             rm -rf "$temp_dir"
+            TEMP_DIR=""
             return 1
         fi
         archive_file="$LOCAL_ARCHIVE"
@@ -784,23 +964,51 @@ main() {
         fi
 
         version_id="${RESOLVED_VERSION#v}"
+
+        # Fast path: check if already up-to-date before downloading archive payload
+        if [[ "$UPDATE_MODE" == "true" && "$FORCE_MODE" != "true" && -n "$version_id" && "$version_id" != "latest" ]]; then
+            local current_link=""
+            [[ -L "${INSTALL_DIR}/current" ]] && current_link="$(readlink "${INSTALL_DIR}/current" || true)"
+            if [[ "$current_link" == "versions/${version_id}" && -d "${INSTALL_DIR}/versions/${version_id}" ]]; then
+                log_info "Polpo is already up to date (version ${version_id})."
+                rm -rf "$temp_dir"
+                TEMP_DIR=""
+                return 0
+            fi
+        fi
+
         archive_file="${temp_dir}/polpo.tar.gz"
         checksum_file="${temp_dir}/polpo.tar.gz.sha256"
 
         log_info "Downloading ${RESOLVED_ARCHIVE_URL}..."
-        download_file "$RESOLVED_ARCHIVE_URL" "$archive_file"
+        if ! download_file "$RESOLVED_ARCHIVE_URL" "$archive_file"; then
+            log_error "Failed to download release archive from ${RESOLVED_ARCHIVE_URL}"
+            rm -rf "$temp_dir"
+            TEMP_DIR=""
+            return 1
+        fi
 
         if [[ -n "${RESOLVED_CHECKSUM_URL:-}" ]]; then
             log_info "Downloading checksum ${RESOLVED_CHECKSUM_URL}..."
-            download_file "$RESOLVED_CHECKSUM_URL" "$checksum_file"
+            if ! download_file "$RESOLVED_CHECKSUM_URL" "$checksum_file"; then
+                log_error "Failed to download checksum sidecar from ${RESOLVED_CHECKSUM_URL}"
+                rm -rf "$temp_dir"
+                TEMP_DIR=""
+                return 1
+            fi
         fi
     fi
 
-    # Verify checksum if available
+    # Verify checksum
     if [[ -n "$checksum_file" && -f "$checksum_file" ]]; then
         verify_checksum "$archive_file" "$checksum_file"
+    elif [[ -z "$LOCAL_ARCHIVE" ]]; then
+        log_error "Missing SHA-256 sidecar file for remote release archive."
+        rm -rf "$temp_dir"
+        TEMP_DIR=""
+        return 1
     else
-        log_warn "No SHA-256 sidecar found; skipping checksum verification."
+        log_warn "No SHA-256 sidecar found; skipping checksum verification for local archive."
     fi
 
     # Validate archive layout safety
@@ -815,9 +1023,24 @@ main() {
     local bundle_dir="${staging_dir}/Polpo"
     verify_extracted_bundle "$bundle_dir"
 
+    # Detect version from extracted binary if not resolved from metadata
+    if [[ -z "$version_id" || "$version_id" == "latest" ]]; then
+        local detected_ver=""
+        if [[ -x "${bundle_dir}/Polpo" ]]; then
+            detected_ver="$("${bundle_dir}/Polpo" --version 2>/dev/null | awk '{print $2}' || true)"
+        fi
+        if [[ -n "$detected_ver" ]]; then
+            version_id="$detected_ver"
+            log_info "Detected application version from binary: ${version_id}"
+        else
+            version_id="0.1.0"
+        fi
+    fi
+
     if [[ "$DRY_RUN" == "true" ]]; then
         log_info "Dry-run mode: verified bundle ${version_id} successfully. Skipping filesystem switch."
         rm -rf "$temp_dir"
+        TEMP_DIR=""
         return 0
     fi
 
@@ -826,6 +1049,7 @@ main() {
 
     # Clean up temp directory
     rm -rf "$temp_dir"
+    TEMP_DIR=""
 
     # Run non-destructive dependency check if polpo-deps exists
     if [[ -x "${BIN_DIR}/polpo-deps" ]]; then

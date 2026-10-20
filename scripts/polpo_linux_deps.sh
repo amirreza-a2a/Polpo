@@ -358,7 +358,7 @@ run_gui_install() {
         echo -n "Do you want to proceed with installing these packages? [y/N] "
         if read -r reply; then
             :
-        elif [[ -t 0 ]] && [[ -c /dev/tty ]]; then
+        elif [[ -t 1 && -r /dev/tty && -c /dev/tty ]]; then
             read -r reply </dev/tty || reply="n"
         else
             echo ""
@@ -555,7 +555,7 @@ run_pdf_install() {
         echo -n "Do you want to proceed with installing system TeX packages? [y/N] "
         if read -r reply; then
             :
-        elif [[ -t 0 ]] && [[ -c /dev/tty ]]; then
+        elif [[ -t 1 && -r /dev/tty && -c /dev/tty ]]; then
             read -r reply </dev/tty || reply="n"
         else
             echo ""
@@ -568,19 +568,22 @@ run_pdf_install() {
         fi
     fi
 
+    local -a pkgs_array=()
+    read -ra pkgs_array <<< "$pdf_pkgs"
+
     echo "Executing package manager command with elevated privileges..."
     case "$DISTRO_FAMILY" in
         debian)
-            sudo apt-get update && sudo apt-get install -y $pdf_pkgs
+            sudo apt-get update && sudo apt-get install -y "${pkgs_array[@]}"
             ;;
         fedora)
-            sudo dnf install -y $pdf_pkgs
+            sudo dnf install -y "${pkgs_array[@]}"
             ;;
         arch)
-            sudo pacman -S --needed --noconfirm $pdf_pkgs
+            sudo pacman -S --needed --noconfirm "${pkgs_array[@]}"
             ;;
         suse)
-            sudo zypper install -y $pdf_pkgs
+            sudo zypper install -y "${pkgs_array[@]}"
             ;;
     esac
 }

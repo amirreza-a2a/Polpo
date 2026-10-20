@@ -32,6 +32,10 @@ deps_script = repo_root / "scripts" / "polpo_linux_deps.sh"
 if deps_script.is_file():
     datas.append((str(deps_script), "scripts"))
 
+installer_script = repo_root / "install.sh"
+if installer_script.is_file():
+    datas.append((str(installer_script), "scripts"))
+
 entitlements_file = repo_root / "resources" / "entitlements.plist"
 if entitlements_file.is_file():
     datas.append((str(entitlements_file), "resources"))
