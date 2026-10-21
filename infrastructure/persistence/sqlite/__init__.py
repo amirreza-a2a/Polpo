@@ -19,8 +19,11 @@ from infrastructure.persistence.sqlite.repositories import (
     SQLitePipeline2JobRepository,
 )
 
+from infrastructure.persistence.sqlite.instance_lock import SQLiteInstanceLock
+
 __all__ = [
     "SQLiteDatabaseManager",
+    "SQLiteInstanceLock",
     "SQLiteMigrationRunner",
     "MigrationError",
     "SQLiteUnitOfWork",
