@@ -40,18 +40,27 @@ class TestStartupRecoveryOwnership(unittest.TestCase):
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
         self.vault_path = Path(self.temp_dir.name) / "credentials.enc"
         self.events: List[object] = []
+        self._active_containers: List[DesktopAppContainer] = []
 
     def tearDown(self):
+        for container in self._active_containers:
+            try:
+                container.shutdown()
+            except Exception:
+                pass
+        self._active_containers.clear()
         self.temp_dir.cleanup()
 
     def _create_container(self) -> DesktopAppContainer:
-        return DesktopAppContainer(
+        container = DesktopAppContainer(
             db_path=self.db_path,
             artifacts_dir=self.artifacts_dir,
             vault_path=self.vault_path,
             passphrase="TestPassword123!",
             scheduler_tick_interval=100.0,
         )
+        self._active_containers.append(container)
+        return container
 
     # -------------------------------------------------------------------------
     # 1. Second instance cannot perform unsafe recovery while active instance owns DB
@@ -482,25 +491,86 @@ time.sleep(30)
     def test_sqlite_instance_lock_unit_lifecycle(self):
         """Tests acquire, is_locked, contention, get_holder_pid, and release."""
         lock1 = SQLiteInstanceLock(self.db_path)
-        self.assertFalse(lock1.is_locked)
+        try:
+            self.assertFalse(lock1.is_locked)
 
-        self.assertTrue(lock1.acquire())
-        self.assertTrue(lock1.is_locked)
+            self.assertTrue(lock1.acquire())
+            self.assertTrue(lock1.is_locked)
 
-        # Second lock attempt on same file path fails
-        lock2 = SQLiteInstanceLock(self.db_path)
-        self.assertFalse(lock2.acquire())
-        self.assertFalse(lock2.is_locked)
-        self.assertEqual(lock2.get_holder_pid(), os.getpid())
+            # Second lock attempt on same file path fails
+            lock2 = SQLiteInstanceLock(self.db_path)
+            try:
+                self.assertFalse(lock2.acquire())
+                self.assertFalse(lock2.is_locked)
+                self.assertEqual(lock2.get_holder_pid(), os.getpid())
+            finally:
+                lock2.release()
 
-        # Release lock1
-        lock1.release()
-        self.assertFalse(lock1.is_locked)
+            # Release lock1
+            lock1.release()
+            self.assertFalse(lock1.is_locked)
 
-        # Now lock2 can acquire
-        self.assertTrue(lock2.acquire())
-        self.assertTrue(lock2.is_locked)
-        lock2.release()
+            # Now lock2 can acquire
+            self.assertTrue(lock2.acquire())
+            self.assertTrue(lock2.is_locked)
+            lock2.release()
+        finally:
+            lock1.release()
+
+    def test_sqlite_instance_lock_windows_simulated_path(self):
+        """
+        Verifies that on Windows, SQLiteInstanceLock uses _winapi file sharing
+        and out-of-band offset locking, allowing readers to inspect the PID
+        without file contention.
+        """
+        import types
+
+        lock_path = Path(self.temp_dir.name) / "sim_win.lock"
+        real_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0))
+
+        mock_winapi = types.ModuleType("_winapi")
+        mock_winapi.GENERIC_READ = 0x80000000
+        mock_winapi.GENERIC_WRITE = 0x40000000
+        mock_winapi.FILE_SHARE_READ = 1
+        mock_winapi.FILE_SHARE_WRITE = 2
+        mock_winapi.FILE_SHARE_DELETE = 4
+        mock_winapi.OPEN_ALWAYS = 4
+        mock_winapi.OPEN_EXISTING = 3
+        mock_winapi.FILE_ATTRIBUTE_NORMAL = 128
+        mock_winapi.CreateFile = MagicMock(return_value=999)
+        mock_winapi.CloseHandle = MagicMock()
+
+        mock_msvcrt = types.ModuleType("msvcrt")
+        mock_msvcrt.LK_NBLCK = 2
+        mock_msvcrt.LK_UNLCK = 0
+        mock_msvcrt.open_osfhandle = MagicMock(return_value=real_fd)
+        mock_msvcrt.locking = MagicMock()
+
+        with patch("infrastructure.persistence.sqlite.instance_lock._winapi", mock_winapi), \
+             patch("infrastructure.persistence.sqlite.instance_lock.msvcrt", mock_msvcrt):
+
+            lock = SQLiteInstanceLock(self.db_path, lock_path=lock_path)
+            try:
+                self.assertTrue(lock._acquire_windows())
+                self.assertTrue(lock.is_locked)
+
+                mock_winapi.CreateFile.assert_called_once_with(
+                    str(lock_path),
+                    mock_winapi.GENERIC_READ | mock_winapi.GENERIC_WRITE,
+                    mock_winapi.FILE_SHARE_READ | mock_winapi.FILE_SHARE_WRITE | mock_winapi.FILE_SHARE_DELETE,
+                    0,
+                    mock_winapi.OPEN_ALWAYS,
+                    mock_winapi.FILE_ATTRIBUTE_NORMAL,
+                    0,
+                )
+                mock_msvcrt.locking.assert_called_with(real_fd, mock_msvcrt.LK_NBLCK, 1)
+
+                self.assertEqual(lock.get_holder_pid(), os.getpid())
+            finally:
+                lock.release()
+
+            self.assertFalse(lock.is_locked)
+            mock_msvcrt.locking.assert_called_with(real_fd, mock_msvcrt.LK_UNLCK, 1)
 
 
 if __name__ == "__main__":

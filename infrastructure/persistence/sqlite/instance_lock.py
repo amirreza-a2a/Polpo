@@ -20,6 +20,11 @@ try:
 except ImportError:
     msvcrt = None  # Non-Windows systems (e.g. Linux, macOS)
 
+try:
+    import _winapi
+except ImportError:
+    _winapi = None  # Windows-only built-in
+
 from core.exceptions.domain_exceptions import ApplicationInstanceLockedError
 
 
@@ -30,13 +35,15 @@ class SQLiteInstanceLock:
 
     Uses OS kernel advisory file locking:
       - POSIX (Linux, macOS): `fcntl.flock` with `LOCK_EX | LOCK_NB`.
-      - Windows: `msvcrt.locking` with `LK_NBLCK` on the first byte.
+      - Windows: `msvcrt.locking` with `LK_NBLCK` on an out-of-band offset beyond metadata.
 
     Kernel locks are tied to the process lifecycle: if the owning process crashes,
     is killed via SIGKILL / TerminateProcess, or terminates unexpectedly, the OS
     kernel automatically releases the lock. The lock file remains on disk to
     prevent inode race conditions upon re-acquisition.
     """
+
+    _WINDOWS_LOCK_OFFSET: int = 1_048_576  # 1 MB offset, well beyond header metadata
 
     def __init__(self, db_path: Path | str, lock_path: Optional[Path | str] = None):
         self.db_path = str(db_path)
@@ -49,6 +56,7 @@ class SQLiteInstanceLock:
             self.lock_path = p.with_suffix(p.suffix + ".lock")
 
         self._file_obj = None
+        self._fd: Optional[int] = None
         self._is_locked: bool = False
 
     @property
@@ -70,7 +78,7 @@ class SQLiteInstanceLock:
             self._is_locked = True
             return True
 
-        if self._is_locked and self._file_obj is not None:
+        if self._is_locked and (self._file_obj is not None or self._fd is not None):
             return True
 
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -112,36 +120,63 @@ class SQLiteInstanceLock:
             return False
 
     def _acquire_windows(self) -> bool:
-        file_obj = None
+        if self.lock_path is None:
+            return True
+
+        handle = None
+        fd = None
         try:
-            file_obj = open(self.lock_path, "a+b")
-            file_obj.seek(0, os.SEEK_END)
-            if file_obj.tell() == 0:
-                file_obj.write(b" ")
-                file_obj.flush()
-            file_obj.seek(0)
+            if _winapi is not None:
+                # Open with full sharing flags (read, write, delete) so other
+                # inspection handles or tempdir cleanup can open/read metadata
+                # without ERROR_SHARING_VIOLATION (WinError 32).
+                handle = _winapi.CreateFile(
+                    str(self.lock_path),
+                    _winapi.GENERIC_READ | _winapi.GENERIC_WRITE,
+                    _winapi.FILE_SHARE_READ | _winapi.FILE_SHARE_WRITE | _winapi.FILE_SHARE_DELETE,
+                    0,
+                    _winapi.OPEN_ALWAYS,
+                    _winapi.FILE_ATTRIBUTE_NORMAL,
+                    0,
+                )
+                fd = msvcrt.open_osfhandle(handle, os.O_RDWR | getattr(os, "O_BINARY", 0))
+            else:
+                fd = os.open(
+                    self.lock_path,
+                    os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0),
+                )
 
-            msvcrt.locking(file_obj.fileno(), msvcrt.LK_NBLCK, 1)
+            # Move pointer to lock region beyond metadata header to avoid blocking
+            # cooperative readers attempting to inspect holder PID.
+            os.lseek(fd, self._WINDOWS_LOCK_OFFSET, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
 
+            # Successfully locked advisory byte. Now write metadata header at offset 0.
+            metadata = {
+                "pid": os.getpid(),
+                "acquired_at": datetime.now(timezone.utc).isoformat(),
+                "process_name": sys.argv[0] if sys.argv else "polpo",
+            }
+            payload = (json.dumps(metadata) + "\n").encode("utf-8")
+            os.lseek(fd, 0, os.SEEK_SET)
+            os.write(fd, payload)
             try:
-                metadata = {
-                    "pid": os.getpid(),
-                    "acquired_at": datetime.now(timezone.utc).isoformat(),
-                    "process_name": sys.argv[0] if sys.argv else "polpo",
-                }
-                file_obj.seek(0)
-                file_obj.write(json.dumps(metadata).encode("utf-8") + b"\n")
-                file_obj.flush()
+                os.ftruncate(fd, len(payload))
             except Exception:
                 pass
 
-            self._file_obj = file_obj
+            self._fd = fd
             self._is_locked = True
             return True
         except (OSError, IOError):
-            if file_obj is not None:
+            if fd is not None:
                 try:
-                    file_obj.close()
+                    os.close(fd)
+                except Exception:
+                    pass
+            elif handle is not None and _winapi is not None:
+                try:
+                    _winapi.CloseHandle(handle)
                 except Exception:
                     pass
             return False
@@ -151,29 +186,36 @@ class SQLiteInstanceLock:
         Releases the acquired lock and closes the file descriptor.
         The lock file is intentionally not unlinked to avoid inode race conditions.
         """
-        if not self._is_locked or self._file_obj is None:
-            self._is_locked = False
+        if not self._is_locked:
             self._file_obj = None
+            self._fd = None
             return
 
         try:
-            if fcntl is not None:
+            if fcntl is not None and self._file_obj is not None:
                 try:
                     fcntl.flock(self._file_obj.fileno(), fcntl.LOCK_UN)
                 except Exception:
                     pass
-            elif msvcrt is not None:
+            elif msvcrt is not None and self._fd is not None:
                 try:
-                    self._file_obj.seek(0)
-                    msvcrt.locking(self._file_obj.fileno(), msvcrt.LK_UNLCK, 1)
+                    os.lseek(self._fd, self._WINDOWS_LOCK_OFFSET, os.SEEK_SET)
+                    msvcrt.locking(self._fd, msvcrt.LK_UNLCK, 1)
                 except Exception:
                     pass
         finally:
-            try:
-                self._file_obj.close()
-            except Exception:
-                pass
-            self._file_obj = None
+            if self._file_obj is not None:
+                try:
+                    self._file_obj.close()
+                except Exception:
+                    pass
+                self._file_obj = None
+            if self._fd is not None:
+                try:
+                    os.close(self._fd)
+                except Exception:
+                    pass
+                self._fd = None
             self._is_locked = False
 
     def get_holder_pid(self) -> Optional[int]:
@@ -181,18 +223,50 @@ class SQLiteInstanceLock:
         Attempts to read the PID of the current lock holder from the lock file.
         Returns None if the file cannot be read or parsed.
         """
+        if self._is_locked:
+            return os.getpid()
+
         if self.lock_path is None or not self.lock_path.is_file():
             return None
-        try:
-            with open(self.lock_path, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read().strip()
-                if content:
-                    data = json.loads(content)
-                    pid = data.get("pid")
-                    if isinstance(pid, int):
-                        return pid
-        except Exception:
-            pass
+
+        content = ""
+        if _winapi is not None and msvcrt is not None:
+            handle = None
+            try:
+                handle = _winapi.CreateFile(
+                    str(self.lock_path),
+                    _winapi.GENERIC_READ,
+                    _winapi.FILE_SHARE_READ | _winapi.FILE_SHARE_WRITE | _winapi.FILE_SHARE_DELETE,
+                    0,
+                    _winapi.OPEN_EXISTING,
+                    _winapi.FILE_ATTRIBUTE_NORMAL,
+                    0,
+                )
+                fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+                with os.fdopen(fd, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+            except Exception:
+                if handle is not None and _winapi is not None:
+                    try:
+                        _winapi.CloseHandle(handle)
+                    except Exception:
+                        pass
+                content = ""
+        else:
+            try:
+                with open(self.lock_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+            except Exception:
+                content = ""
+
+        if content:
+            try:
+                data = json.loads(content.strip())
+                pid = data.get("pid")
+                if isinstance(pid, int):
+                    return pid
+            except Exception:
+                pass
         return None
 
     def __enter__(self):
