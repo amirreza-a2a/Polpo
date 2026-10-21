@@ -385,6 +385,14 @@ class JobExecutionService:
             if not p2_job:
                 raise EntityNotFoundError("Pipeline2Job", p2_job_id)
 
+            if p2_job.status == JobStatus.CANCELLED:
+                return p2_job
+
+            if isinstance(getattr(p2_job, "status", None), JobStatus) and p2_job.status != JobStatus.PROCESSING:
+                raise DomainError(
+                    f"Cannot execute Pipeline 2 job {p2_job_id} in status '{p2_job.status.value}'. Expected PROCESSING."
+                )
+
             if not p2_job.prompt_text:
                 if p2_job.prompt_id:
                     p = uow.prompts.get_by_id(p2_job.prompt_id)
@@ -397,7 +405,13 @@ class JobExecutionService:
 
         logger.info(f"[Pipeline2 Job {p2_job.id}] Started execution.")
 
+        # Checkpoint 1 (before loading input artifact)
+        if self._is_pipeline2_cancellation_requested(p2_job.id):
+            return self._handle_pipeline2_cancellation(p2_job)
+
         try:
+            if not p2_job.input_path:
+                raise ValueError("Pipeline 2 job input_path is missing or empty.")
             source_handle = ArtifactHandle(
                 storage_backend=StorageBackendType.LOCAL_FS,
                 uri=p2_job.input_path,
@@ -408,30 +422,52 @@ class JobExecutionService:
             raw_text = self.storage.retrieve(source_handle).decode("utf-8")
         except Exception as e:
             logger.error(f"[Pipeline2 Job {p2_job.id}] Failed to load input text: {e}")
+            clean_err = sanitize_error_message(f"Input artifact missing: {e}")
             with self.uow_factory.create() as uow:
-                uow.pipeline2_jobs.update_status(p2_job.id, JobStatus.FAILED, error_message=f"Input artifact missing: {e}")
+                uow.pipeline2_jobs.update_status(p2_job.id, JobStatus.FAILED, error_message=clean_err)
                 uow.commit()
             p2_job.status = JobStatus.FAILED
-            p2_job.error_message = f"Input artifact missing: {e}"
+            p2_job.error_message = clean_err
             self._publish_state_changed(p2_job.source_job_id, JobStatus.PROCESSING, JobStatus.FAILED)
-            self._publish_failed(p2_job.source_job_id, f"Input artifact missing: {e}", is_retryable=False)
+            self._publish_failed(p2_job.source_job_id, clean_err, is_retryable=False)
             return p2_job
 
-        result, used_slot = self.ai_executor.execute_text_with_fallback(
-            chain=p2_job.api_chain,
-            prompt=p2_job.prompt_text or "Refine and structure markdown content",
-            input_text=raw_text,
-        )
+        # Checkpoint 2 (before AI execution)
+        if self._is_pipeline2_cancellation_requested(p2_job.id):
+            return self._handle_pipeline2_cancellation(p2_job)
+
+        try:
+            result, used_slot = self.ai_executor.execute_text_with_fallback(
+                chain=p2_job.api_chain,
+                prompt=p2_job.prompt_text or "Refine and structure markdown content",
+                input_text=raw_text,
+            )
+        except Exception as e:
+            logger.error(f"[Pipeline2 Job {p2_job.id}] Unexpected AI failure: {e}")
+            clean_err = sanitize_error_message(f"AI text refinement failed: {e}")
+            with self.uow_factory.create() as uow:
+                uow.pipeline2_jobs.update_status(p2_job.id, JobStatus.FAILED, error_message=clean_err)
+                uow.commit()
+            p2_job.status = JobStatus.FAILED
+            p2_job.error_message = clean_err
+            self._publish_state_changed(p2_job.source_job_id, JobStatus.PROCESSING, JobStatus.FAILED)
+            self._publish_failed(p2_job.source_job_id, clean_err, is_retryable=False)
+            return p2_job
 
         if result is None:
+            clean_msg = sanitize_error_message("All APIs exhausted for Pipeline 2.")
             with self.uow_factory.create() as uow:
-                uow.pipeline2_jobs.update_status(p2_job.id, JobStatus.PAUSED, error_message="All APIs exhausted for Pipeline 2.")
+                uow.pipeline2_jobs.update_status(p2_job.id, JobStatus.PAUSED, error_message=clean_msg)
                 uow.commit()
             p2_job.status = JobStatus.PAUSED
-            p2_job.error_message = "All APIs exhausted for Pipeline 2."
+            p2_job.error_message = clean_msg
             self._publish_state_changed(p2_job.source_job_id, JobStatus.PROCESSING, JobStatus.PAUSED)
-            self._publish_failed(p2_job.source_job_id, "All APIs exhausted for Pipeline 2.", is_retryable=True)
+            self._publish_failed(p2_job.source_job_id, clean_msg, is_retryable=True)
             return p2_job
+
+        # Checkpoint 3 (after AI execution, before storing artifact)
+        if self._is_pipeline2_cancellation_requested(p2_job.id):
+            return self._handle_pipeline2_cancellation(p2_job)
 
         output_handle = self.storage.store(
             job_id=p2_job.source_job_id,
@@ -441,7 +477,21 @@ class JobExecutionService:
             mime_type="text/markdown",
         )
 
+        # Checkpoint 4 (inside final commit transaction)
         with self.uow_factory.create() as uow:
+            current_p2 = uow.pipeline2_jobs.get_by_id(p2_job.id)
+            if current_p2 and (getattr(current_p2, "cancel_requested", False) is True or current_p2.status == JobStatus.CANCELLED):
+                already_cancelled = (current_p2.status == JobStatus.CANCELLED)
+                if not already_cancelled:
+                    JobStateTransitionPolicy.validate_transition(p2_job.status, JobStatus.CANCELLED)
+                    uow.pipeline2_jobs.update_status(p2_job.id, JobStatus.CANCELLED)
+                    uow.commit()
+                p2_job.status = JobStatus.CANCELLED
+                if not already_cancelled:
+                    self._publish_state_changed(p2_job.source_job_id, JobStatus.PROCESSING, JobStatus.CANCELLED)
+                    self._publish_cancelled(p2_job.source_job_id)
+                return p2_job
+
             uow.pipeline2_jobs.update_output_path(p2_job.id, output_handle.uri)
             uow.pipeline2_jobs.update_status(p2_job.id, JobStatus.DONE)
             uow.commit()
@@ -572,6 +622,63 @@ class JobExecutionService:
         self._publish_state_changed(job.id, JobStatus.PROCESSING, JobStatus.CANCELLED)
         self._publish_cancelled(job.id)
         return job
+
+    def cancel_pipeline2_job(self, p2_job_id: int) -> bool:
+        """
+        Canonical cancellation entry point for Pipeline 2 jobs.
+        Transitions PENDING/PAUSED jobs immediately to CANCELLED, or flags cancel_requested for PROCESSING jobs.
+        """
+        with self.uow_factory.create() as uow:
+            p2_job = uow.pipeline2_jobs.get_by_id(p2_job_id)
+            if not p2_job:
+                raise EntityNotFoundError("Pipeline2Job", p2_job_id)
+
+            if p2_job.status in (JobStatus.PENDING, JobStatus.PAUSED):
+                old_status = p2_job.status
+                JobStateTransitionPolicy.validate_transition(old_status, JobStatus.CANCELLED)
+                uow.pipeline2_jobs.update_status(p2_job_id, JobStatus.CANCELLED)
+                uow.commit()
+                p2_job.status = JobStatus.CANCELLED
+                self._publish_state_changed(p2_job.source_job_id, old_status, JobStatus.CANCELLED)
+                self._publish_cancelled(p2_job.source_job_id)
+                return True
+
+            elif p2_job.status == JobStatus.PROCESSING:
+                if hasattr(uow.pipeline2_jobs, "request_cancellation"):
+                    uow.pipeline2_jobs.request_cancellation(p2_job_id)
+                else:
+                    p2_job.cancel_requested = True
+                    uow.pipeline2_jobs.save(p2_job)
+                uow.commit()
+                return True
+
+            elif p2_job.status == JobStatus.CANCELLED:
+                return True
+
+            else:
+                raise DomainError(f"Pipeline2Job {p2_job_id} is in status '{p2_job.status.value}' and cannot be cancelled.")
+
+    def _is_pipeline2_cancellation_requested(self, p2_job_id: int) -> bool:
+        with self.uow_factory.create() as uow:
+            p2 = uow.pipeline2_jobs.get_by_id(p2_job_id)
+            return bool(p2 and (getattr(p2, "cancel_requested", False) is True or p2.status == JobStatus.CANCELLED))
+
+    def _handle_pipeline2_cancellation(self, p2_job: Pipeline2Job) -> Pipeline2Job:
+        already_cancelled = False
+        with self.uow_factory.create() as uow:
+            db_p2 = uow.pipeline2_jobs.get_by_id(p2_job.id)
+            if db_p2 and db_p2.status == JobStatus.CANCELLED:
+                already_cancelled = True
+            else:
+                JobStateTransitionPolicy.validate_transition(p2_job.status, JobStatus.CANCELLED)
+                uow.pipeline2_jobs.update_status(p2_job.id, JobStatus.CANCELLED)
+                uow.commit()
+            p2_job.status = JobStatus.CANCELLED
+
+        if not already_cancelled:
+            self._publish_state_changed(p2_job.source_job_id, JobStatus.PROCESSING, JobStatus.CANCELLED)
+            self._publish_cancelled(p2_job.source_job_id)
+        return p2_job
 
     def _pause_job(self, job: Job, error_msg: str) -> Job:
         sanitized = sanitize_error_message(error_msg)

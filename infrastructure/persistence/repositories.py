@@ -147,6 +147,49 @@ class MySQLJobRepository(IJobRepository):
                 (status.value, error_message, job_id),
             )
 
+    def request_cancellation(self, job_id: int) -> bool:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE jobs
+                SET cancel_requested = 1,
+                    status = CASE WHEN status = 'pending' THEN 'cancelled' ELSE status END,
+                    updated_at = NOW()
+                WHERE id = %s
+                """,
+                (job_id,),
+            )
+            if hasattr(self.conn, "commit"):
+                self.conn.commit()
+            return cur.rowcount > 0
+
+    def reconcile_stale_jobs(self, older_than: Optional[datetime] = None) -> int:
+        with self.conn.cursor() as cur:
+            if older_than:
+                cur.execute(
+                    """
+                    UPDATE jobs
+                    SET status = 'paused',
+                        error_message = 'Interrupted by application crash or unexpected shutdown',
+                        updated_at = NOW()
+                    WHERE status = 'processing' AND (claimed_at IS NULL OR claimed_at <= %s)
+                    """,
+                    (older_than,),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE jobs
+                    SET status = 'paused',
+                        error_message = 'Interrupted by application crash or unexpected shutdown',
+                        updated_at = NOW()
+                    WHERE status = 'processing'
+                    """,
+                )
+            if hasattr(self.conn, "commit"):
+                self.conn.commit()
+            return cur.rowcount
+
     def _row_to_entity(self, row: dict) -> Job:
         chain_raw = json.loads(row["api_chain"]) if row.get("api_chain") else []
         chain = [ApiSlot.from_dict(s) if isinstance(s, dict) else s for s in chain_raw]
@@ -196,28 +239,44 @@ class MySQLPipeline2JobRepository(IPipeline2JobRepository):
             return self._row_to_entity(row)
 
     def claim_next_pending(self) -> Optional[Pipeline2Job]:
-        with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
-            cur.execute(
-                """
-                SELECT id FROM pipeline2_jobs
-                WHERE status = 'pending' AND cancel_requested = 0
-                ORDER BY id ASC LIMIT 1
-                FOR UPDATE
-                """
-            )
-            row = cur.fetchone()
-            if not row:
-                return None
-            job_id = row["id"]
-            cur.execute(
-                "UPDATE pipeline2_jobs SET status = 'processing', claimed_at = NOW(), updated_at = NOW() WHERE id = %s AND status = 'pending'",
-                (job_id,),
-            )
-            if cur.rowcount != 1:
-                return None
-            if hasattr(self.conn, "commit"):
-                self.conn.commit()
-            return self.get_by_id(job_id)
+        try:
+            with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT id FROM pipeline2_jobs
+                    WHERE status = 'pending' AND cancel_requested = 0
+                    ORDER BY id ASC LIMIT 1
+                    FOR UPDATE
+                    """
+                )
+                row = cur.fetchone()
+                if not row:
+                    if hasattr(self.conn, "rollback"):
+                        self.conn.rollback()
+                    return None
+                job_id = row["id"]
+                cur.execute(
+                    "UPDATE pipeline2_jobs SET status = 'processing', claimed_at = NOW(), updated_at = NOW() WHERE id = %s AND status = 'pending'",
+                    (job_id,),
+                )
+                if cur.rowcount != 1:
+                    if hasattr(self.conn, "rollback"):
+                        self.conn.rollback()
+                    return None
+                cur.execute("SELECT * FROM pipeline2_jobs WHERE id = %s", (job_id,))
+                claimed_row = cur.fetchone()
+                if not claimed_row:
+                    if hasattr(self.conn, "rollback"):
+                        self.conn.rollback()
+                    return None
+                entity = self._row_to_entity(claimed_row)
+                if hasattr(self.conn, "commit"):
+                    self.conn.commit()
+                return entity
+        except Exception:
+            if hasattr(self.conn, "rollback"):
+                self.conn.rollback()
+            raise
 
     def save(self, job: Pipeline2Job) -> Pipeline2Job:
         with self.conn.cursor() as cur:
@@ -273,6 +332,65 @@ class MySQLPipeline2JobRepository(IPipeline2JobRepository):
 
     def update_output_path(self, p2_job_id: int, output_path: str) -> None:
         self.update_paths(p2_job_id, output_path=output_path)
+
+    def request_cancellation(self, p2_job_id: int) -> bool:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE pipeline2_jobs
+                SET cancel_requested = 1,
+                    status = CASE WHEN status = 'pending' THEN 'cancelled' ELSE status END,
+                    updated_at = NOW()
+                WHERE id = %s
+                """,
+                (p2_job_id,),
+            )
+            if hasattr(self.conn, "commit"):
+                self.conn.commit()
+            return cur.rowcount > 0
+
+    def reconcile_stale_jobs(self, older_than: Optional[datetime] = None) -> int:
+        with self.conn.cursor() as cur:
+            if older_than:
+                cur.execute(
+                    """
+                    UPDATE pipeline2_jobs
+                    SET status = 'paused',
+                        error_message = 'Interrupted by application crash or unexpected shutdown',
+                        updated_at = NOW()
+                    WHERE status = 'processing' AND (claimed_at IS NULL OR claimed_at <= %s)
+                    """,
+                    (older_than,),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE pipeline2_jobs
+                    SET status = 'paused',
+                        error_message = 'Interrupted by application crash or unexpected shutdown',
+                        updated_at = NOW()
+                    WHERE status = 'processing'
+                    """,
+                )
+            if hasattr(self.conn, "commit"):
+                self.conn.commit()
+            return cur.rowcount
+
+    def list(self, limit: int = 50, offset: int = 0, status: Optional[JobStatus] = None) -> List[Pipeline2Job]:
+        with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
+            if status:
+                status_val = status.value if hasattr(status, "value") else str(status)
+                cur.execute(
+                    "SELECT * FROM pipeline2_jobs WHERE status = %s ORDER BY id DESC LIMIT %s OFFSET %s",
+                    (status_val, limit, offset),
+                )
+            else:
+                cur.execute(
+                    "SELECT * FROM pipeline2_jobs ORDER BY id DESC LIMIT %s OFFSET %s",
+                    (limit, offset),
+                )
+            rows = cur.fetchall()
+            return [self._row_to_entity(r) for r in rows]
 
 
     def _row_to_entity(self, row: dict) -> Pipeline2Job:

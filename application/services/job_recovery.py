@@ -18,6 +18,14 @@ from core.policies.retry_policy import RetryPolicy
 from core.exceptions.domain_exceptions import EntityNotFoundError, DomainError
 
 
+def _normalize_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 class JobRecoveryService:
     """
     Application service for startup crash reconciliation, missed-schedule reconciliation,
@@ -34,22 +42,87 @@ class JobRecoveryService:
         self.uow_factory = uow_factory
         self.event_publisher = event_publisher
 
-    def reconcile_stale_jobs(self) -> int:
+    def reconcile_stale_jobs(self, older_than: Optional[datetime] = None) -> int:
         """
-        Startup crash recovery method. Finds all jobs left in PROCESSING state from previous
-        interrupted runs, transitions them to PAUSED, and publishes JobStateChangedEvents
-        after successful database commit.
+        Startup crash recovery method. Finds all standard jobs and Pipeline 2 jobs left
+        in PROCESSING state from previous interrupted runs, transitions them to PAUSED,
+        and publishes JobStateChangedEvents after successful database commit.
         """
         recovered_job_ids: List[int] = []
+        count = 0
+        older_than_utc = _normalize_utc(older_than)
         with self.uow_factory.create() as uow:
-            if hasattr(uow.jobs, "list"):
-                stale_jobs = uow.jobs.list(status=JobStatus.PROCESSING, limit=1000)
-                recovered_job_ids = [j.id for j in stale_jobs]
-            count = uow.jobs.reconcile_stale_jobs()
+            if hasattr(uow, "jobs") and uow.jobs:
+                if hasattr(uow.jobs, "list"):
+                    stale_jobs = uow.jobs.list(status=JobStatus.PROCESSING, limit=1000)
+                    if older_than_utc:
+                        stale_jobs = [
+                            j for j in stale_jobs
+                            if j.claimed_at is None or _normalize_utc(j.claimed_at) <= older_than_utc
+                        ]
+                    recovered_job_ids.extend([j.id for j in stale_jobs if j.id is not None])
+                if hasattr(uow.jobs, "reconcile_stale_jobs"):
+                    try:
+                        count += uow.jobs.reconcile_stale_jobs(older_than=older_than)
+                    except TypeError:
+                        count += uow.jobs.reconcile_stale_jobs()
+
+            if hasattr(uow, "pipeline2_jobs") and uow.pipeline2_jobs:
+                if hasattr(uow.pipeline2_jobs, "list"):
+                    stale_p2 = uow.pipeline2_jobs.list(status=JobStatus.PROCESSING, limit=1000)
+                    if older_than_utc:
+                        stale_p2 = [
+                            j for j in stale_p2
+                            if j.claimed_at is None or _normalize_utc(j.claimed_at) <= older_than_utc
+                        ]
+                    recovered_job_ids.extend([j.source_job_id for j in stale_p2 if j.source_job_id is not None])
+                if hasattr(uow.pipeline2_jobs, "reconcile_stale_jobs"):
+                    try:
+                        count += uow.pipeline2_jobs.reconcile_stale_jobs(older_than=older_than)
+                    except TypeError:
+                        count += uow.pipeline2_jobs.reconcile_stale_jobs()
+
             uow.commit()
 
         if self.event_publisher and recovered_job_ids:
-            for jid in recovered_job_ids:
+            for jid in list(dict.fromkeys(recovered_job_ids)):
+                self.event_publisher.publish(
+                    JobStateChangedEvent(
+                        job_id=jid,
+                        old_status=JobStatus.PROCESSING,
+                        new_status=JobStatus.PAUSED,
+                    )
+                )
+
+        return count
+
+    def reconcile_stale_pipeline2_jobs(self, older_than: Optional[datetime] = None) -> int:
+        """
+        Reconciles in-flight Pipeline 2 jobs left in PROCESSING state from previous
+        interrupted runs, transitions them to PAUSED, and publishes JobStateChangedEvents.
+        """
+        recovered_job_ids: List[int] = []
+        count = 0
+        older_than_utc = _normalize_utc(older_than)
+        with self.uow_factory.create() as uow:
+            if hasattr(uow, "pipeline2_jobs") and uow.pipeline2_jobs:
+                if hasattr(uow.pipeline2_jobs, "list"):
+                    stale_p2 = uow.pipeline2_jobs.list(status=JobStatus.PROCESSING, limit=1000)
+                    if older_than_utc:
+                        stale_p2 = [
+                            j for j in stale_p2
+                            if j.claimed_at is None or _normalize_utc(j.claimed_at) <= older_than_utc
+                        ]
+                    recovered_job_ids.extend([j.source_job_id for j in stale_p2 if j.source_job_id is not None])
+                if hasattr(uow.pipeline2_jobs, "reconcile_stale_jobs"):
+                    try:
+                        count += uow.pipeline2_jobs.reconcile_stale_jobs(older_than=older_than)
+                    except TypeError:
+                        count += uow.pipeline2_jobs.reconcile_stale_jobs()
+            uow.commit()
+
+        if self.event_publisher and recovered_job_ids:
+            for jid in list(dict.fromkeys(recovered_job_ids)):
                 self.event_publisher.publish(
                     JobStateChangedEvent(
                         job_id=jid,
