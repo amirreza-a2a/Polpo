@@ -45,6 +45,16 @@ class SQLiteInstanceLock:
 
     _WINDOWS_LOCK_OFFSET: int = 1_048_576  # 1 MB offset, well beyond header metadata
 
+    # Win32 CreateFile constants (not exported by internal _winapi module)
+    _GENERIC_READ: int = 0x80000000
+    _GENERIC_WRITE: int = 0x40000000
+    _FILE_SHARE_READ: int = 0x00000001
+    _FILE_SHARE_WRITE: int = 0x00000002
+    _FILE_SHARE_DELETE: int = 0x00000004
+    _OPEN_EXISTING: int = 3
+    _OPEN_ALWAYS: int = 4
+    _FILE_ATTRIBUTE_NORMAL: int = 0x00000080
+
     def __init__(self, db_path: Path | str, lock_path: Optional[Path | str] = None):
         self.db_path = str(db_path)
         if self.db_path == ":memory:":
@@ -132,11 +142,11 @@ class SQLiteInstanceLock:
                 # without ERROR_SHARING_VIOLATION (WinError 32).
                 handle = _winapi.CreateFile(
                     str(self.lock_path),
-                    _winapi.GENERIC_READ | _winapi.GENERIC_WRITE,
-                    _winapi.FILE_SHARE_READ | _winapi.FILE_SHARE_WRITE | _winapi.FILE_SHARE_DELETE,
+                    self._GENERIC_READ | self._GENERIC_WRITE,
+                    self._FILE_SHARE_READ | self._FILE_SHARE_WRITE | self._FILE_SHARE_DELETE,
                     0,
-                    _winapi.OPEN_ALWAYS,
-                    _winapi.FILE_ATTRIBUTE_NORMAL,
+                    self._OPEN_ALWAYS,
+                    self._FILE_ATTRIBUTE_NORMAL,
                     0,
                 )
                 fd = msvcrt.open_osfhandle(handle, os.O_RDWR | getattr(os, "O_BINARY", 0))
@@ -235,11 +245,11 @@ class SQLiteInstanceLock:
             try:
                 handle = _winapi.CreateFile(
                     str(self.lock_path),
-                    _winapi.GENERIC_READ,
-                    _winapi.FILE_SHARE_READ | _winapi.FILE_SHARE_WRITE | _winapi.FILE_SHARE_DELETE,
+                    self._GENERIC_READ,
+                    self._FILE_SHARE_READ | self._FILE_SHARE_WRITE | self._FILE_SHARE_DELETE,
                     0,
-                    _winapi.OPEN_EXISTING,
-                    _winapi.FILE_ATTRIBUTE_NORMAL,
+                    self._OPEN_EXISTING,
+                    self._FILE_ATTRIBUTE_NORMAL,
                     0,
                 )
                 fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | getattr(os, "O_BINARY", 0))

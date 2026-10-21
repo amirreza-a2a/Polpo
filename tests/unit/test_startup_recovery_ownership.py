@@ -556,11 +556,11 @@ time.sleep(30)
 
                 mock_winapi.CreateFile.assert_called_once_with(
                     str(lock_path),
-                    mock_winapi.GENERIC_READ | mock_winapi.GENERIC_WRITE,
-                    mock_winapi.FILE_SHARE_READ | mock_winapi.FILE_SHARE_WRITE | mock_winapi.FILE_SHARE_DELETE,
+                    SQLiteInstanceLock._GENERIC_READ | SQLiteInstanceLock._GENERIC_WRITE,
+                    SQLiteInstanceLock._FILE_SHARE_READ | SQLiteInstanceLock._FILE_SHARE_WRITE | SQLiteInstanceLock._FILE_SHARE_DELETE,
                     0,
-                    mock_winapi.OPEN_ALWAYS,
-                    mock_winapi.FILE_ATTRIBUTE_NORMAL,
+                    SQLiteInstanceLock._OPEN_ALWAYS,
+                    SQLiteInstanceLock._FILE_ATTRIBUTE_NORMAL,
                     0,
                 )
                 mock_msvcrt.locking.assert_called_with(real_fd, mock_msvcrt.LK_NBLCK, 1)
