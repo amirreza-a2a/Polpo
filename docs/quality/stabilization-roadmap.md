@@ -37,19 +37,19 @@ This document serves as the **single source of truth** for stabilization. Future
 ## 2. Verified Repository Baseline & Dated Evidence Snapshot
 
 *Initial Roadmap Baseline Snapshot: 2026-10-21 14:22 UTC+03:30 (Commit `9b8c54e`, PR #122)*<br/>
-*STAB-00 Verified Execution Baseline Snapshot: 2026-10-21 16:05 UTC+03:30 (Commit `55fd3d5`, PR #123)*
+*STAB-00 Verified Execution Baseline Snapshot: 2026-10-21 21:55 UTC+03:30 (Commit `b1c41aa`, PR #129)*
 
 ### 2.1 Git and Working Tree State
 
 | Property | Verified Value | Evidence Source |
 | :--- | :--- | :--- |
 | **Active Baseline Branch** | `main` | `git status` |
-| **HEAD Commit SHA (main)** | `726cd03ba429f8cc45428caf3fc3320f09504d83` | `git rev-parse HEAD` |
-| **Commit Message** | `fix(runtime): dispatch pipeline2 jobs in desktop runtime (P2-01) (#126)` | `git log -1` |
+| **HEAD Commit SHA (main)** | `b1c41aa583c0e52032045414e6606d7f6160fb2c` | `git rev-parse HEAD` |
+| **Commit Message** | `fix(pipeline2): harden lifecycle, cooperative cancellation, and recovery (P2-02) (#129)` | `git log -1` |
 | **Remote Synchronization** | Up to date with `origin/main` | `git status -sb` |
 | **Working Tree Status** | Clean (no modified, untracked, or staged files) | `git status --porcelain` |
 | **Latest Git Tag** | `v0.1.0-rc.1` | `git tag -l` |
-| **Git Describe** | `v0.1.0-rc.1-8-g726cd03` | `git describe --tags --always` |
+| **Git Describe** | `v0.1.0-rc.1-11-gb1c41aa` | `git describe --tags --always` |
 | **GitHub Releases** | Exactly 1 Pre-release: `v0.1.0-rc.1` (Zero stable releases published) | `gh release list` |
 | **Application Version** | `APP_NAME = "Polpo"`, `__version__ = "0.1.0"`, `VERSION_INFO = (0, 1, 0)` | `core/version.py:9-11`, `pyproject.toml:7` |
 
@@ -262,12 +262,12 @@ flowchart TD
 
 ---
 
-### [ ] P2-02 — Harden Pipeline 2 Job Lifecycle and Concurrency
+### [x] P2-02 — Harden Pipeline 2 Job Lifecycle and Concurrency
 
 - **ID:** `P2-02`
 - **Title:** Harden Pipeline 2 Concurrency, Atomic Claiming, and Recovery
 - **Priority:** P1 (High)
-- **Status:** `NOT_STARTED`
+- **Status:** `COMPLETED`
 - **Dependencies:** `P2-01`
 - **Scope:**
   - Audit atomic claiming: `execute_next_pipeline2_job()` currently calls `uow.pipeline2_jobs.get_next_pending()` followed by a separate `update_status(PROCESSING)`. Replace with atomic `claim_next_pending()` under `BEGIN IMMEDIATE` transaction semantics (`AGENTS.md` Rule 13).
@@ -278,23 +278,27 @@ flowchart TD
   - Implement startup reconciliation: recover stale `PROCESSING` Pipeline 2 jobs after unexpected application termination.
 - **Non-Goals:** Redesigning AI provider fallback logic or changing LLM prompt formats.
 - **Evidence & File Paths:**
-  - `application/services/job_execution.py:364-423`
-  - `infrastructure/persistence/sqlite/repositories/pipeline2_job_repository.py`
-  - `core/policies/job_state_policy.py`
+  - `application/services/job_execution.py`
+  - `application/services/job_recovery.py`
+  - `infrastructure/persistence/sqlite/repositories.py`
+  - `infrastructure/persistence/repositories.py`
+  - `interfaces/desktop/workers/runtime.py`
+  - `tests/unit/test_pipeline2_concurrency.py`
+  - `tests/unit/test_pipeline2_lifecycle.py`
 - **Recommended Skill Sequence:**
   `diagnosing-bugs → tdd → implement → code-review → concurrency/runtime verification`
 - **Acceptance Criteria:**
-  1. `claim_next_pending()` for `pipeline2_jobs` is atomic and protected against double-claiming across concurrent workers.
-  2. Failure during input artifact retrieval or AI invocation cleanly transitions job status and records sanitized error details.
-  3. Startup recovery cleans up interrupted `PROCESSING` Pipeline 2 jobs.
-  4. Unit and concurrency tests cover two workers attempting to claim the same Pipeline 2 job.
+  1. `claim_next_pending()` for `pipeline2_jobs` is atomic and protected against double-claiming across concurrent workers. [Verified — 25 unit tests]
+  2. Failure during input artifact retrieval or AI invocation cleanly transitions job status and records sanitized error details. [Verified — test_missing_input_artifact_transitions_to_failed_with_sanitized_error, test_unexpected_ai_exception_transitions_to_failed_with_sanitized_error]
+  3. Startup recovery cleans up interrupted `PROCESSING` Pipeline 2 jobs. [Verified — test_startup_recovery_reconciles_interrupted_processing_pipeline2_jobs, test_startup_recovery_respects_active_ownership_lease]
+  4. Unit and concurrency tests cover two workers attempting to claim the same Pipeline 2 job. [Verified — test_two_workers_competing_for_single_pipeline2_job, test_multi_worker_atomic_claiming_no_duplicates]
 - **Verification Commands:**
   ```bash
   ./.venv/bin/pytest tests/unit/test_pipeline2_concurrency.py -v
   ./.venv/bin/pytest tests/unit/test_pipeline2_lifecycle.py -v
   ```
 - **Branch Suggestion:** `fix/pipeline2-lifecycle-concurrency`
-- **PR / CI / Merge Record:** Unstarted
+- **PR / CI / Merge Record:** [PR #129](https://github.com/amirreza-a2a/Polpo/pull/129) merged into `main` at `b1c41aa583c0e52032045414e6606d7f6160fb2c`. All 4 required CI status checks passed: `quality-gates` (34s), `secret-scan` (6s), `test-linux` (1m49s), `test-windows` (4m7s). Full test suite: 2092 passed, 6 skipped.
 - **Notes & Risks:** Ensure SQLite transactions on `pipeline2_jobs` use worker-local connections and busy timeouts to prevent lock contention.
 
 ---
@@ -914,6 +918,7 @@ The following standing constraints apply to all stabilization operations:
 | **2026-10-21** | `INIT` | Stabilization roadmap established as single source of truth. | N/A | Full repository audit completed. Release freeze confirmed. Zero fixes implemented during roadmap authoring. |
 | **2026-10-21** | `STAB-00` | Established reproducible verification baseline and environment contract. Classified all 2063 tests across local Linux, CI Linux (13 skips), and CI Windows (50 skips). Zero failures. | [#124](https://github.com/amirreza-a2a/Polpo/pull/124) / `4ce951f` | Merged cleanly into `main` after all 4 required status checks passed. |
 | **2026-10-21** | `P2-01` | Diagnosed desktop runtime dispatch gap for Pipeline 2; implemented atomic `claim_next_pending()`, `execute_claimed_pipeline2_job()`, and concurrent desktop worker dispatching with capacity controls, start gates, and crash isolation. Added comprehensive regression and integration suite. | [#126](https://github.com/amirreza-a2a/Polpo/pull/126) / `726cd03` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates`, `secret-scan`, `test-linux` [2056 passed], `test-windows` [2019 passed]). |
+| **2026-10-21** | `P2-02` | Hardened Pipeline 2 lifecycle, atomic claiming deserialization rollback, cooperative cancellation at 4 checkpoints, sanitized failure handling for missing artifacts / AI exceptions, and startup recovery with active ownership safety. Added 25 unit tests. | [#129](https://github.com/amirreza-a2a/Polpo/pull/129) / `b1c41aa` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [34s], `secret-scan` [6s], `test-linux` [1m49s], `test-windows` [4m7s]). Full test suite: 2092 passed, 6 skipped. |
 
 ---
 
