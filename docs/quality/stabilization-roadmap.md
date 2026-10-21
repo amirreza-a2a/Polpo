@@ -37,19 +37,19 @@ This document serves as the **single source of truth** for stabilization. Future
 ## 2. Verified Repository Baseline & Dated Evidence Snapshot
 
 *Initial Roadmap Baseline Snapshot: 2026-10-21 14:22 UTC+03:30 (Commit `9b8c54e`, PR #122)*<br/>
-*STAB-00 Verified Execution Baseline Snapshot: 2026-10-21 21:55 UTC+03:30 (Commit `b1c41aa`, PR #129)*
+*STAB-00 Verified Execution Baseline Snapshot: 2026-10-21 23:14 UTC+03:30 (Commit `144be72`, PR #131)*
 
 ### 2.1 Git and Working Tree State
 
 | Property | Verified Value | Evidence Source |
 | :--- | :--- | :--- |
 | **Active Baseline Branch** | `main` | `git status` |
-| **HEAD Commit SHA (main)** | `b1c41aa583c0e52032045414e6606d7f6160fb2c` | `git rev-parse HEAD` |
-| **Commit Message** | `fix(pipeline2): harden lifecycle, cooperative cancellation, and recovery (P2-02) (#129)` | `git log -1` |
+| **HEAD Commit SHA (main)** | `144be722fe0718bcac36553336546ef32d5c6d0f` | `git rev-parse HEAD` |
+| **Commit Message** | `fix(lifecycle): make startup recovery ownership-safe with cross-process database locking (P2-02-R1) (#131)` | `git log -1` |
 | **Remote Synchronization** | Up to date with `origin/main` | `git status -sb` |
 | **Working Tree Status** | Clean (no modified, untracked, or staged files) | `git status --porcelain` |
 | **Latest Git Tag** | `v0.1.0-rc.1` | `git tag -l` |
-| **Git Describe** | `v0.1.0-rc.1-11-gb1c41aa` | `git describe --tags --always` |
+| **Git Describe** | `v0.1.0-rc.1-13-g144be72` | `git describe --tags --always` |
 | **GitHub Releases** | Exactly 1 Pre-release: `v0.1.0-rc.1` (Zero stable releases published) | `gh release list` |
 | **Application Version** | `APP_NAME = "Polpo"`, `__version__ = "0.1.0"`, `VERSION_INFO = (0, 1, 0)` | `core/version.py:9-11`, `pyproject.toml:7` |
 
@@ -298,7 +298,9 @@ flowchart TD
   ./.venv/bin/pytest tests/unit/test_pipeline2_lifecycle.py -v
   ```
 - **Branch Suggestion:** `fix/pipeline2-lifecycle-concurrency`
-- **PR / CI / Merge Record:** [PR #129](https://github.com/amirreza-a2a/Polpo/pull/129) merged into `main` at `b1c41aa583c0e52032045414e6606d7f6160fb2c`. All 4 required CI status checks passed: `quality-gates` (34s), `secret-scan` (6s), `test-linux` (1m49s), `test-windows` (4m7s). Full test suite: 2092 passed, 6 skipped.
+- **PR / CI / Merge Record:**
+  - Initial Implementation: [PR #129](https://github.com/amirreza-a2a/Polpo/pull/129) merged into `main` at `b1c41aa583c0e52032045414e6606d7f6160fb2c`. All 4 required CI status checks passed: `quality-gates` (34s), `secret-scan` (6s), `test-linux` (1m49s), `test-windows` (4m7s). Full test suite: 2092 passed, 6 skipped.
+  - Reviewer Remediation (P2-02-R1): [PR #131](https://github.com/amirreza-a2a/Polpo/pull/131) merged into `main` at `144be722fe0718bcac36553336546ef32d5c6d0f`. Enforced cross-process single-instance database ownership (`SQLiteInstanceLock`), serialized recovery via `BEGIN IMMEDIATE`, and eliminated broad `TypeError` swallowing in `JobRecoveryService`. All 4 required CI status checks passed: `quality-gates` (37s), `secret-scan` (6s), `test-linux` (1m38s), `test-windows` (3m46s). Full test suite: 2105 passed, 6 skipped on Linux; 2071 passed on Windows.
 - **Notes & Risks:** Ensure SQLite transactions on `pipeline2_jobs` use worker-local connections and busy timeouts to prevent lock contention.
 
 ---
@@ -919,6 +921,7 @@ The following standing constraints apply to all stabilization operations:
 | **2026-10-21** | `STAB-00` | Established reproducible verification baseline and environment contract. Classified all 2063 tests across local Linux, CI Linux (13 skips), and CI Windows (50 skips). Zero failures. | [#124](https://github.com/amirreza-a2a/Polpo/pull/124) / `4ce951f` | Merged cleanly into `main` after all 4 required status checks passed. |
 | **2026-10-21** | `P2-01` | Diagnosed desktop runtime dispatch gap for Pipeline 2; implemented atomic `claim_next_pending()`, `execute_claimed_pipeline2_job()`, and concurrent desktop worker dispatching with capacity controls, start gates, and crash isolation. Added comprehensive regression and integration suite. | [#126](https://github.com/amirreza-a2a/Polpo/pull/126) / `726cd03` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates`, `secret-scan`, `test-linux` [2056 passed], `test-windows` [2019 passed]). |
 | **2026-10-21** | `P2-02` | Hardened Pipeline 2 lifecycle, atomic claiming deserialization rollback, cooperative cancellation at 4 checkpoints, sanitized failure handling for missing artifacts / AI exceptions, and startup recovery with active ownership safety. Added 25 unit tests. | [#129](https://github.com/amirreza-a2a/Polpo/pull/129) / `b1c41aa` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [34s], `secret-scan` [6s], `test-linux` [1m49s], `test-windows` [4m7s]). Full test suite: 2092 passed, 6 skipped. |
+| **2026-10-21** | `P2-02-R1` | Hardened startup recovery ownership with cross-process database locking (`fcntl` on POSIX, `msvcrt.locking` with out-of-band offset and `_winapi` full sharing on Windows); eliminated broad `TypeError` handling in `JobRecoveryService`; serialized concurrent recovery with `BEGIN IMMEDIATE`. Added 13 unit tests for multi-process safety and crash recovery. | [#131](https://github.com/amirreza-a2a/Polpo/pull/131) / `144be72` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [37s], `secret-scan` [6s], `test-linux` [1m38s], `test-windows` [3m46s]). Full test suite: 2105 passed, 6 skipped on Linux; 2071 passed on Windows. |
 
 ---
 
