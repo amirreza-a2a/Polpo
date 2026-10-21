@@ -195,6 +195,30 @@ class MySQLPipeline2JobRepository(IPipeline2JobRepository):
                 return None
             return self._row_to_entity(row)
 
+    def claim_next_pending(self) -> Optional[Pipeline2Job]:
+        with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
+            cur.execute(
+                """
+                SELECT id FROM pipeline2_jobs
+                WHERE status = 'pending' AND cancel_requested = 0
+                ORDER BY id ASC LIMIT 1
+                FOR UPDATE
+                """
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            job_id = row["id"]
+            cur.execute(
+                "UPDATE pipeline2_jobs SET status = 'processing', updated_at = NOW() WHERE id = %s AND status = 'pending'",
+                (job_id,),
+            )
+            if cur.rowcount == 0:
+                return None
+            cur.execute("SELECT * FROM pipeline2_jobs WHERE id = %s", (job_id,))
+            claimed_row = cur.fetchone()
+            return self._row_to_entity(claimed_row) if claimed_row else None
+
     def save(self, job: Pipeline2Job) -> Pipeline2Job:
         with self.conn.cursor() as cur:
             chain_json = json.dumps([slot.to_dict() for slot in job.api_chain], ensure_ascii=False)

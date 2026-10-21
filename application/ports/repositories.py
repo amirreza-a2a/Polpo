@@ -94,6 +94,9 @@ class IPipeline2JobRepository(ABC):
     def get_next_pending(self) -> Optional[Pipeline2Job]: ...
 
     @abstractmethod
+    def claim_next_pending(self) -> Optional[Pipeline2Job]: ...
+
+    @abstractmethod
     def save(self, job: Pipeline2Job) -> Pipeline2Job: ...
 
     @abstractmethod

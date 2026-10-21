@@ -14,7 +14,7 @@ from application.services.job_execution import JobExecutionService
 from application.services.settings_service import LocalSettingsService
 from application.events import JobStateChangedEvent, JobFailedEvent
 from application.sanitizer import sanitize_error_message
-from core.entities.job import JobStatus
+from core.entities.job import Job, Pipeline2Job, JobStatus
 
 logger = logging.getLogger("desktop.runtime")
 
@@ -48,6 +48,7 @@ class DesktopJobRuntime:
 
         self._lock = threading.Lock()
         self._active_jobs: Dict[int, Future] = {}
+        self._active_p2_jobs: Dict[int, Future] = {}
         self._running = False
         self._paused = False
         self._wake_event = threading.Event()
@@ -74,7 +75,7 @@ class DesktopJobRuntime:
     @property
     def active_worker_count(self) -> int:
         with self._lock:
-            return len(self._active_jobs)
+            return len(self._active_jobs) + len(self._active_p2_jobs)
 
     def wake(self) -> None:
         """Signals the dispatcher loop to evaluate pending work immediately."""
@@ -150,12 +151,12 @@ class DesktopJobRuntime:
             deadline = time.monotonic() + max(0.05, timeout)
             while time.monotonic() < deadline:
                 with self._lock:
-                    if len(self._active_jobs) == 0:
+                    if len(self._active_jobs) == 0 and len(self._active_p2_jobs) == 0:
                         break
                 time.sleep(0.05)
 
             with self._lock:
-                remaining_count = len(self._active_jobs)
+                remaining_count = len(self._active_jobs) + len(self._active_p2_jobs)
 
             if remaining_count > 0:
                 logger.warning(
@@ -193,10 +194,10 @@ class DesktopJobRuntime:
         with self._lock:
             if not self._running or self._paused:
                 return
-            if len(self._active_jobs) >= limit:
+            if len(self._active_jobs) + len(self._active_p2_jobs) >= limit:
                 return
 
-        # Atomically claim next pending job in dedicated transaction
+        # 1. Atomically claim next pending standard job in dedicated transaction
         claimed_job = None
         try:
             with self.uow_factory.create() as uow:
@@ -206,9 +207,26 @@ class DesktopJobRuntime:
             logger.error("Failed to claim next pending job: %s", e)
             return
 
-        if not claimed_job:
+        if claimed_job:
+            self._dispatch_standard_job(claimed_job)
             return
 
+        # 2. If no standard job claimed, atomically claim next pending Pipeline 2 job
+        claimed_p2_job = None
+        try:
+            with self.uow_factory.create() as uow:
+                if hasattr(uow.pipeline2_jobs, "claim_next_pending"):
+                    claimed_p2_job = uow.pipeline2_jobs.claim_next_pending()
+                uow.commit()
+        except Exception as e:
+            logger.error("Failed to claim next pending pipeline2 job: %s", e)
+            return
+
+        if claimed_p2_job:
+            self._dispatch_pipeline2_job(claimed_p2_job)
+            return
+
+    def _dispatch_standard_job(self, claimed_job: Job) -> None:
         job_id = claimed_job.id
         start_gate = threading.Event()
 
@@ -238,6 +256,44 @@ class DesktopJobRuntime:
         logger.info("Runtime claimed job %d. Releasing worker start gate.", job_id)
         start_gate.set()
 
+        # If capacity still available, wake immediately to evaluate next job
+        if self.active_worker_count < self.max_concurrent_jobs:
+            self._wake_event.set()
+
+    def _dispatch_pipeline2_job(self, claimed_p2_job: Pipeline2Job) -> None:
+        p2_job_id = claimed_p2_job.id
+        start_gate = threading.Event()
+
+        # Atomic dispatch registration under lock
+        with self._lock:
+            if not self._running:
+                # Runtime was stopped during claim: compensate immediately
+                self._compensate_unsubmitted_pipeline2_claim(p2_job_id)
+                return
+
+            try:
+                future = self._executor.submit(self._execute_pipeline2_worker, p2_job_id, start_gate)
+                self._active_p2_jobs[p2_job_id] = future
+                future.add_done_callback(lambda f: self._on_pipeline2_worker_done(p2_job_id, f))
+            except Exception as submit_err:
+                logger.error("Executor submit failed for claimed pipeline2 job %d: %s", p2_job_id, submit_err)
+                self._compensate_unsubmitted_pipeline2_claim(p2_job_id)
+                return
+
+        # Deterministic Event Ordering Protocol:
+        # Publish PENDING -> PROCESSING state event on dispatcher thread BEFORE releasing worker start gate
+        if self.event_publisher:
+            self.event_publisher.publish(
+                JobStateChangedEvent(job_id=claimed_p2_job.source_job_id, old_status=JobStatus.PENDING, new_status=JobStatus.PROCESSING)
+            )
+
+        logger.info("Runtime claimed pipeline2 job %d (source job %d). Releasing worker start gate.", p2_job_id, claimed_p2_job.source_job_id)
+        start_gate.set()
+
+        # If capacity still available, wake immediately to evaluate next job
+        if self.active_worker_count < self.max_concurrent_jobs:
+            self._wake_event.set()
+
     def _compensate_unsubmitted_claim(self, job_id: int) -> None:
         """Reverts a claimed job back to PENDING if dispatch cannot be completed."""
         try:
@@ -247,6 +303,16 @@ class DesktopJobRuntime:
             logger.info("Compensated claimed job %d back to PENDING due to aborted dispatch.", job_id)
         except Exception as e:
             logger.error("Failed to compensate unsubmitted claim for job %d: %s", job_id, e)
+
+    def _compensate_unsubmitted_pipeline2_claim(self, p2_job_id: int) -> None:
+        """Reverts a claimed Pipeline 2 job back to PENDING if dispatch cannot be completed."""
+        try:
+            with self.uow_factory.create() as uow:
+                uow.pipeline2_jobs.update_status(p2_job_id, JobStatus.PENDING)
+                uow.commit()
+            logger.info("Compensated claimed pipeline2 job %d back to PENDING due to aborted dispatch.", p2_job_id)
+        except Exception as e:
+            logger.error("Failed to compensate unsubmitted claim for pipeline2 job %d: %s", p2_job_id, e)
 
     def _execute_worker(self, job_id: int, start_gate: Optional[threading.Event] = None) -> None:
         if start_gate is not None:
@@ -281,7 +347,51 @@ class DesktopJobRuntime:
             except Exception as db_err:
                 logger.error("Failed to record worker crash in database for job %d: %s", job_id, db_err)
 
+    def _execute_pipeline2_worker(self, p2_job_id: int, start_gate: Optional[threading.Event] = None) -> None:
+        if start_gate is not None:
+            # Wait until PENDING -> PROCESSING state event has been published by the dispatcher
+            start_gate.wait()
+
+        with self._lock:
+            if not self._running:
+                return
+
+        try:
+            self.job_execution_service.execute_claimed_pipeline2_job(p2_job_id)
+        except Exception as e:
+            clean_error = sanitize_error_message(str(e))
+            logger.error(
+                "CRITICAL: Unhandled worker thread crash on pipeline2 job %d: %s",
+                p2_job_id,
+                clean_error,
+            )
+            try:
+                source_job_id = None
+                with self.uow_factory.create() as uow:
+                    p2_rec = uow.pipeline2_jobs.get_by_id(p2_job_id)
+                    if p2_rec:
+                        source_job_id = p2_rec.source_job_id
+                    uow.pipeline2_jobs.update_status(p2_job_id, JobStatus.FAILED, error_message=f"Unhandled worker error: {clean_error}")
+                    uow.commit()
+
+                if self.event_publisher and source_job_id is not None:
+                    self.event_publisher.publish(
+                        JobStateChangedEvent(job_id=source_job_id, old_status=JobStatus.PROCESSING, new_status=JobStatus.FAILED)
+                    )
+                    self.event_publisher.publish(
+                        JobFailedEvent(job_id=source_job_id, error_message=f"Unhandled worker error: {clean_error}", is_retryable=False)
+                    )
+            except Exception as db_err:
+                logger.error("Failed to record worker crash in database for pipeline2 job %d: %s", p2_job_id, db_err)
+
     def _on_worker_done(self, job_id: int, future: Future) -> None:
         with self._lock:
             self._active_jobs.pop(job_id, None)
         logger.debug("Worker completed for job %d.", job_id)
+        self.wake()
+
+    def _on_pipeline2_worker_done(self, p2_job_id: int, future: Future) -> None:
+        with self._lock:
+            self._active_p2_jobs.pop(p2_job_id, None)
+        logger.debug("Worker completed for pipeline2 job %d.", p2_job_id)
+        self.wake()

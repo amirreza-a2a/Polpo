@@ -229,7 +229,7 @@ flowchart TD
 - **ID:** `P2-01`
 - **Title:** Diagnose and Trace Pipeline 2 Execution in Desktop Runtime
 - **Priority:** P0 (Highest Functional Investigation)
-- **Status:** `NOT_STARTED`
+- **Status:** `IN_PROGRESS`
 - **Dependencies:** `STAB-00`
 - **Scope:**
   - Validate preliminary architectural finding: `interfaces/desktop/workers/runtime.py` claims only standard jobs via `uow.jobs.claim_next_pending()`, whereas `execute_next_pipeline2_job()` is only invoked by legacy `services/worker.py`.
