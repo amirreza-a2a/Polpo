@@ -44,12 +44,12 @@ This document serves as the **single source of truth** for stabilization. Future
 | Property | Verified Value | Evidence Source |
 | :--- | :--- | :--- |
 | **Active Baseline Branch** | `main` | `git status` |
-| **HEAD Commit SHA (main)** | `4ce951f1198fdaba04b0c4db231fed4a1d410916` | `git rev-parse HEAD` |
-| **Commit Message** | `docs(quality): establish reproducible test baseline (STAB-00) (#124)` | `git log -1` |
+| **HEAD Commit SHA (main)** | `726cd03ba429f8cc45428caf3fc3320f09504d83` | `git rev-parse HEAD` |
+| **Commit Message** | `fix(runtime): dispatch pipeline2 jobs in desktop runtime (P2-01) (#126)` | `git log -1` |
 | **Remote Synchronization** | Up to date with `origin/main` | `git status -sb` |
 | **Working Tree Status** | Clean (no modified, untracked, or staged files) | `git status --porcelain` |
 | **Latest Git Tag** | `v0.1.0-rc.1` | `git tag -l` |
-| **Git Describe** | `v0.1.0-rc.1-6-g4ce951f` | `git describe --tags --always` |
+| **Git Describe** | `v0.1.0-rc.1-8-g726cd03` | `git describe --tags --always` |
 | **GitHub Releases** | Exactly 1 Pre-release: `v0.1.0-rc.1` (Zero stable releases published) | `gh release list` |
 | **Application Version** | `APP_NAME = "Polpo"`, `__version__ = "0.1.0"`, `VERSION_INFO = (0, 1, 0)` | `core/version.py:9-11`, `pyproject.toml:7` |
 
@@ -224,12 +224,12 @@ flowchart TD
 
 ---
 
-### [ ] P2-01 — Diagnose Pipeline 2's Desktop Execution Path
+### [x] P2-01 — Diagnose Pipeline 2's Desktop Execution Path
 
 - **ID:** `P2-01`
 - **Title:** Diagnose and Trace Pipeline 2 Execution in Desktop Runtime
 - **Priority:** P0 (Highest Functional Investigation)
-- **Status:** `IN_PROGRESS`
+- **Status:** `COMPLETED`
 - **Dependencies:** `STAB-00`
 - **Scope:**
   - Validate preliminary architectural finding: `interfaces/desktop/workers/runtime.py` claims only standard jobs via `uow.jobs.claim_next_pending()`, whereas `execute_next_pipeline2_job()` is only invoked by legacy `services/worker.py`.
@@ -257,7 +257,7 @@ flowchart TD
   ./.venv/bin/pytest tests/integration/test_pipeline2_desktop_e2e.py -v  # newly added test
   ```
 - **Branch Suggestion:** `fix/pipeline2-desktop-runtime`
-- **PR / CI / Merge Record:** Unstarted
+- **PR / CI / Merge Record:** [PR #126](https://github.com/amirreza-a2a/Polpo/pull/126) merged into `main` at `726cd03ba429f8cc45428caf3fc3320f09504d83`. All 4 required CI status checks passed: `quality-gates` (48s), `secret-scan` (10s), `test-linux` (1m30s; 2056 passed, 13 skipped), `test-windows` (3m37s; 2019 passed, 50 skipped).
 - **Notes & Risks:** Care must be taken not to violate `AGENTS.md` Rule 12 (Desktop Concurrency) and Rule 13 (Atomic Job Ownership).
 
 ---
@@ -913,6 +913,7 @@ The following standing constraints apply to all stabilization operations:
 | :--- | :--- | :--- | :--- | :--- |
 | **2026-10-21** | `INIT` | Stabilization roadmap established as single source of truth. | N/A | Full repository audit completed. Release freeze confirmed. Zero fixes implemented during roadmap authoring. |
 | **2026-10-21** | `STAB-00` | Established reproducible verification baseline and environment contract. Classified all 2063 tests across local Linux, CI Linux (13 skips), and CI Windows (50 skips). Zero failures. | [#124](https://github.com/amirreza-a2a/Polpo/pull/124) / `4ce951f` | Merged cleanly into `main` after all 4 required status checks passed. |
+| **2026-10-21** | `P2-01` | Diagnosed desktop runtime dispatch gap for Pipeline 2; implemented atomic `claim_next_pending()`, `execute_claimed_pipeline2_job()`, and concurrent desktop worker dispatching with capacity controls, start gates, and crash isolation. Added comprehensive regression and integration suite. | [#126](https://github.com/amirreza-a2a/Polpo/pull/126) / `726cd03` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates`, `secret-scan`, `test-linux` [2056 passed], `test-windows` [2019 passed]). |
 
 ---
 
