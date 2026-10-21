@@ -907,17 +907,17 @@ class SQLitePipeline2JobRepository(IPipeline2JobRepository):
                 """,
                 (now_iso, now_iso, job_id),
             )
-            if cur.rowcount == 0:
-                self.conn.execute("COMMIT")
+            if cur.rowcount != 1:
+                self.conn.execute("ROLLBACK")
                 return None
 
-            cur.execute("SELECT * FROM pipeline2_jobs WHERE id = ?", (job_id,))
-            claimed_row = cur.fetchone()
             self.conn.execute("COMMIT")
-            return self._row_to_entity(claimed_row) if claimed_row else None
         except Exception:
-            self.conn.execute("ROLLBACK")
+            if self.conn.in_transaction:
+                self.conn.execute("ROLLBACK")
             raise
+
+        return self.get_by_id(job_id)
 
     def save(self, job: Pipeline2Job) -> Pipeline2Job:
         _ensure_transaction(self.conn)

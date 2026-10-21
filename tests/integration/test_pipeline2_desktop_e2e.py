@@ -490,6 +490,116 @@ class TestPipeline2DesktopExecutionGap(unittest.TestCase):
         self.assertEqual(p2.status, JobStatus.FAILED)
         self.assertIn("Simulated LLM connection failure", p2.error_message or "")
 
+    def test_simultaneous_standard_and_pipeline2_job_execution(self):
+        """
+        Verifies that a standard job (Pipeline 1) and a Pipeline 2 job execute
+        simultaneously in parallel when capacity allows (max_workers=2).
+        """
+        import threading
+
+        p1_started = threading.Event()
+        p2_started = threading.Event()
+        release_workers = threading.Event()
+
+        class SynchronizedAIExecutor(FakeAIExecutor):
+            def execute_vision_with_fallback(self, *args, **kwargs):
+                p1_started.set()
+                release_workers.wait(timeout=3.0)
+                return super().execute_vision_with_fallback(*args, **kwargs)
+
+            def execute_text_with_fallback(self, *args, **kwargs):
+                p2_started.set()
+                release_workers.wait(timeout=3.0)
+                return super().execute_text_with_fallback(*args, **kwargs)
+
+        sync_ai = SynchronizedAIExecutor(delay=0.0)
+        sync_exec_service = JobExecutionService(
+            uow_factory=self.uow_factory,
+            storage=self.storage,
+            doc_processor=self.doc_processor,
+            ai_executor=sync_ai,
+            event_publisher=self.event_bus,
+        )
+
+        # 1. Enqueue standard job (P1)
+        dto_p1 = self.submission_service.submit_job(
+            SubmitJobCommand(
+                user_id=1,
+                filename="p1_sync.pdf",
+                file_bytes=b"%PDF-1.4 dummy",
+                auto_pipeline2=False,
+            )
+        )
+
+        # 2. Enqueue standalone Pipeline 2 job
+        with self.uow_factory.create() as uow:
+            src_job = Job(id=None, file_name="p2_src_sync.pdf", file_path="/in/p.pdf", status=JobStatus.DONE)
+            saved_src = uow.jobs.save(src_job)
+            uow.commit()
+
+        in_handle = self.storage.store(
+            job_id=saved_src.id,
+            artifact_type=ArtifactType.OUTPUT_MARKDOWN,
+            filename="p2_sync_in.md",
+            data=b"# Content for P2",
+            mime_type="text/markdown",
+        )
+
+        with self.uow_factory.create() as uow:
+            slot = uow.apis.list_all()[0]
+            p2_job = Pipeline2Job(
+                id=None,
+                source_job_id=saved_src.id,
+                prompt_id=2,
+                status=JobStatus.PENDING,
+                input_path=in_handle.uri,
+                api_chain=[slot],
+            )
+            saved_p2 = uow.pipeline2_jobs.save(p2_job)
+            uow.commit()
+
+        runtime = DesktopJobRuntime(
+            uow_factory=self.uow_factory,
+            job_execution_service=sync_exec_service,
+            settings_service=self.settings_service,
+            event_publisher=self.event_bus,
+            poll_interval=0.02,
+            max_workers=2,
+        )
+
+        try:
+            runtime.start()
+
+            # Wait for both workers to enter their execution phase concurrently
+            self.assertTrue(p1_started.wait(timeout=2.0), "P1 worker failed to start within timeout.")
+            self.assertTrue(p2_started.wait(timeout=2.0), "P2 worker failed to start within timeout.")
+
+            # Both workers are actively executing in parallel!
+            self.assertEqual(runtime.active_worker_count, 2, "Both P1 and P2 workers must be concurrently active.")
+            with runtime._lock:
+                self.assertEqual(len(runtime._active_jobs), 1, "Exactly one standard job should be active.")
+                self.assertEqual(len(runtime._active_p2_jobs), 1, "Exactly one Pipeline 2 job should be active.")
+
+            # Release workers to finish
+            release_workers.set()
+
+            # Wait for both to reach DONE
+            start_wait = time.monotonic()
+            all_done = False
+            while time.monotonic() - start_wait < 3.0:
+                with self.uow_factory.create() as uow:
+                    j1 = uow.jobs.get_by_id(dto_p1.id)
+                    j2 = uow.pipeline2_jobs.get_by_id(saved_p2.id)
+                    if j1 and j1.status == JobStatus.DONE and j2 and j2.status == JobStatus.DONE:
+                        all_done = True
+                        break
+                time.sleep(0.02)
+
+            self.assertTrue(all_done, "Both P1 and P2 jobs should complete to DONE.")
+        finally:
+            release_workers.set()
+            runtime.shutdown(wait=True, timeout=2.0)
+
 
 if __name__ == "__main__":
     unittest.main()

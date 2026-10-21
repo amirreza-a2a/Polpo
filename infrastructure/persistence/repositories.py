@@ -210,14 +210,14 @@ class MySQLPipeline2JobRepository(IPipeline2JobRepository):
                 return None
             job_id = row["id"]
             cur.execute(
-                "UPDATE pipeline2_jobs SET status = 'processing', updated_at = NOW() WHERE id = %s AND status = 'pending'",
+                "UPDATE pipeline2_jobs SET status = 'processing', claimed_at = NOW(), updated_at = NOW() WHERE id = %s AND status = 'pending'",
                 (job_id,),
             )
-            if cur.rowcount == 0:
+            if cur.rowcount != 1:
                 return None
-            cur.execute("SELECT * FROM pipeline2_jobs WHERE id = %s", (job_id,))
-            claimed_row = cur.fetchone()
-            return self._row_to_entity(claimed_row) if claimed_row else None
+            if hasattr(self.conn, "commit"):
+                self.conn.commit()
+            return self.get_by_id(job_id)
 
     def save(self, job: Pipeline2Job) -> Pipeline2Job:
         with self.conn.cursor() as cur:
@@ -289,6 +289,8 @@ class MySQLPipeline2JobRepository(IPipeline2JobRepository):
             api_chain=chain,
             current_api_index=row.get("current_api_index") or 0,
             error_message=row.get("error_message"),
+            cancel_requested=bool(row.get("cancel_requested")),
+            claimed_at=row.get("claimed_at"),
             created_at=row.get("created_at"),
             updated_at=row.get("updated_at"),
         )
