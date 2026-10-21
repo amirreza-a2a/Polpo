@@ -3,6 +3,7 @@
 #  Deterministic Ownership-Safe Startup Recovery Tests
 # ============================================================
 
+import json
 import os
 import subprocess
 import sys
@@ -555,7 +556,7 @@ time.sleep(30)
                 self.assertTrue(lock.is_locked)
 
                 mock_winapi.CreateFile.assert_called_once_with(
-                    str(lock_path),
+                    str(lock.lock_path),
                     SQLiteInstanceLock._GENERIC_READ | SQLiteInstanceLock._GENERIC_WRITE,
                     SQLiteInstanceLock._FILE_SHARE_READ | SQLiteInstanceLock._FILE_SHARE_WRITE | SQLiteInstanceLock._FILE_SHARE_DELETE,
                     0,
@@ -571,6 +572,231 @@ time.sleep(30)
 
             self.assertFalse(lock.is_locked)
             mock_msvcrt.locking.assert_called_with(real_fd, mock_msvcrt.LK_UNLCK, 1)
+
+    # -------------------------------------------------------------------------
+    # 12. Root-cause reproduction test
+    # -------------------------------------------------------------------------
+    def test_root_cause_reproduction_recovery_without_lock_pauses_active_jobs_while_lock_blocks_it(self):
+        """
+        Reproduces the exact failure scenario from Section 3:
+        1. Instance A claims a Pipeline 1 and Pipeline 2 job (both PROCESSING).
+        2. If recovery runs without single-instance lock protection, it resets
+           active jobs to PAUSED (proving the pre-fix vulnerability).
+        3. With the single-instance lock, Instance B's initialization is rejected
+           with ApplicationInstanceLockedError before recovery can execute,
+           and Instance A's active jobs remain in PROCESSING.
+        """
+        container_a = self._create_container()
+        container_a.initialize()
+
+        with container_a.uow_factory.create() as uow:
+            p1 = Job(id=None, file_name="p1_repro.pdf", file_path="/p1.pdf", status=JobStatus.PENDING)
+            saved_p1 = uow.jobs.save(p1)
+            p2 = Pipeline2Job(id=None, source_job_id=saved_p1.id, status=JobStatus.PENDING, input_path="file:///in.md")
+            saved_p2 = uow.pipeline2_jobs.save(p2)
+            uow.commit()
+
+        with container_a.uow_factory.create() as uow:
+            claimed_p1 = uow.jobs.claim_job(saved_p1.id)
+            claimed_p2 = uow.pipeline2_jobs.claim_next_pending()
+            uow.commit()
+
+        self.assertEqual(claimed_p1.status, JobStatus.PROCESSING)
+        self.assertEqual(claimed_p2.status, JobStatus.PROCESSING)
+
+        # Vulnerability Demonstration: If recovery is invoked directly without the
+        # cross-process lock protection, it resets in-flight jobs to PAUSED.
+        vulnerable_recovery = JobRecoveryService(container_a.uow_factory)
+        reconciled_count = vulnerable_recovery.reconcile_stale_jobs()
+        self.assertEqual(reconciled_count, 2)
+
+        with container_a.uow_factory.create() as uow:
+            p1_post_vuln = uow.jobs.get_by_id(saved_p1.id)
+            p2_post_vuln = uow.pipeline2_jobs.get_by_id(saved_p2.id)
+            self.assertEqual(p1_post_vuln.status, JobStatus.PAUSED)
+            self.assertEqual(p2_post_vuln.status, JobStatus.PAUSED)
+
+        # Re-claim jobs to PROCESSING to test the guarded path
+        with container_a.uow_factory.create() as uow:
+            uow.jobs.update_status(saved_p1.id, JobStatus.PENDING)
+            uow.pipeline2_jobs.update_status(saved_p2.id, JobStatus.PENDING)
+            uow.commit()
+
+        with container_a.uow_factory.create() as uow:
+            uow.jobs.claim_job(saved_p1.id)
+            uow.pipeline2_jobs.claim_next_pending()
+            uow.commit()
+
+        # Guarded Demonstration: A second container attempting normal startup
+        # is rejected by the instance lock BEFORE recovery can mutate state.
+        container_b = self._create_container()
+        with self.assertRaises(ApplicationInstanceLockedError):
+            container_b.initialize()
+
+        with container_a.uow_factory.create() as uow:
+            p1_guarded = uow.jobs.get_by_id(saved_p1.id)
+            p2_guarded = uow.pipeline2_jobs.get_by_id(saved_p2.id)
+            self.assertEqual(p1_guarded.status, JobStatus.PROCESSING)
+            self.assertEqual(p2_guarded.status, JobStatus.PROCESSING)
+
+        container_a.shutdown()
+
+    # -------------------------------------------------------------------------
+    # 13. Filesystem permission errors are propagated, not masked
+    # -------------------------------------------------------------------------
+    def test_permission_error_is_propagated_not_masked_as_instance_locked(self):
+        """
+        When opening or creating the lock file encounters a PermissionError (e.g. read-only
+        filesystem), acquire() must propagate the OSError rather than returning False
+        and falsely diagnosing that another instance is running.
+        """
+        from infrastructure.persistence.sqlite import instance_lock as lock_mod
+        lock = SQLiteInstanceLock(self.db_path)
+        if getattr(lock_mod, "_winapi", None) is not None:
+            patcher = patch.object(lock_mod._winapi, "CreateFile", side_effect=PermissionError(13, "Permission denied"))
+        else:
+            patcher = patch("builtins.open", side_effect=PermissionError(13, "Permission denied"))
+
+        with patcher:
+            with self.assertRaises(PermissionError) as ctx:
+                lock.acquire()
+            self.assertIn("Permission denied", str(ctx.exception))
+
+    # -------------------------------------------------------------------------
+    # 14. In-memory SQLite paths bypass disk lock file safely
+    # -------------------------------------------------------------------------
+    def test_in_memory_sqlite_paths_bypass_lock_file_and_do_not_create_disk_files(self):
+        """
+        SQLite in-memory paths (:memory:, file:memdb?mode=memory, file::memory:)
+        must have lock_path=None and succeed without touching disk.
+        """
+        paths = [
+            ":memory:",
+            "file:memdb_shared?mode=memory&cache=shared",
+            "file::memory:?cache=shared",
+            "",
+        ]
+        for p in paths:
+            lock = SQLiteInstanceLock(p)
+            self.assertIsNone(lock.lock_path, f"Expected lock_path=None for path: {p}")
+            self.assertTrue(lock.acquire())
+            self.assertTrue(lock.is_locked)
+            self.assertEqual(lock.get_holder_pid(), os.getpid())
+            lock.release()
+            self.assertFalse(lock.is_locked)
+            self.assertIsNone(lock.get_holder_pid())
+
+    # -------------------------------------------------------------------------
+    # 15. Container shutdown releases lock even if subcomponent raises exception
+    # -------------------------------------------------------------------------
+    def test_container_shutdown_transient_failure_preserves_lock_and_allows_retry(self):
+        """
+        If a subcomponent (such as scheduler.shutdown) raises a transient exception
+        during DesktopAppContainer.shutdown(), _is_shut_down remains False allowing recovery,
+        and the lock remains held. Once the transient issue is resolved, retrying shutdown
+        succeeds and releases the lock.
+        """
+        container = self._create_container()
+        container.initialize()
+        self.assertTrue(container.instance_lock.is_locked)
+
+        def failing_scheduler_shutdown():
+            raise RuntimeError("Unexpected transient scheduler shutdown explosion")
+
+        container.scheduler.shutdown = failing_scheduler_shutdown
+
+        with self.assertRaises(RuntimeError) as ctx:
+            container.shutdown()
+        self.assertIn("Unexpected transient scheduler shutdown explosion", str(ctx.exception))
+
+        # Transient failure must allow shutdown retry, so lock remains held
+        self.assertFalse(container._is_shut_down)
+        self.assertTrue(container.instance_lock.is_locked)
+
+        # Fix condition and retry shutdown: cleanly marks _is_shut_down and releases lock
+        container.scheduler.shutdown = MagicMock()
+        container.shutdown()
+        self.assertTrue(container._is_shut_down)
+        self.assertFalse(container.instance_lock.is_locked)
+
+    # -------------------------------------------------------------------------
+    # 16. Container initialize idempotency protects active in-flight jobs
+    # -------------------------------------------------------------------------
+    def test_container_initialize_is_idempotent_and_does_not_pause_active_jobs_on_second_call(self):
+        """
+        Invoking container.initialize() a second time on an already initialized container
+        is a no-op and does not re-run reconcile_stale_jobs against active in-flight jobs.
+        """
+        container = self._create_container()
+        container.initialize()
+
+        with container.uow_factory.create() as uow:
+            job = uow.jobs.save(Job(id=None, file_name="active.pdf", file_path="/a.pdf", status=JobStatus.PENDING))
+            uow.commit()
+
+        with container.uow_factory.create() as uow:
+            uow.jobs.claim_job(job.id)
+            uow.commit()
+
+        with container.uow_factory.create() as uow:
+            self.assertEqual(uow.jobs.get_by_id(job.id).status, JobStatus.PROCESSING)
+
+        # Second call to initialize()
+        container.initialize()
+
+        with container.uow_factory.create() as uow:
+            # Must still be PROCESSING, NOT PAUSED
+            self.assertEqual(uow.jobs.get_by_id(job.id).status, JobStatus.PROCESSING)
+
+        container.shutdown()
+
+    # -------------------------------------------------------------------------
+    # 17. Container initialize rejects already shut down container
+    # -------------------------------------------------------------------------
+    def test_container_initialize_rejects_already_shutdown_container(self):
+        """Calling initialize() on an already shut down DesktopAppContainer raises RuntimeError."""
+        container = self._create_container()
+        container.initialize()
+        container.shutdown()
+
+        with self.assertRaises(RuntimeError) as ctx:
+            container.initialize()
+        self.assertIn("Cannot initialize a shut down DesktopAppContainer", str(ctx.exception))
+
+    # -------------------------------------------------------------------------
+    # 18. get_holder_pid returns None on free lock and handles multiline payloads
+    # -------------------------------------------------------------------------
+    def test_get_holder_pid_returns_none_on_free_lock_and_handles_shorter_overwrites(self):
+        """
+        Verifies that get_holder_pid():
+        1. Returns None when the lock is free even if a lock file exists on disk.
+        2. Accurately parses current JSON line without failing on un-truncated trailing data.
+        """
+        lock_path = Path(self.temp_dir.name) / "test_probe.lock"
+
+        # 1. Unlocked file containing stale content: get_holder_pid() returns None
+        lock_path.write_text(json.dumps({"pid": 99999}) + "\n")
+        lock = SQLiteInstanceLock(self.db_path, lock_path=lock_path)
+        self.assertIsNone(lock.get_holder_pid(), "Expected None when no process holds the lock")
+
+        # 2. When lock is acquired, holder PID is returned
+        self.assertTrue(lock.acquire())
+        self.assertEqual(lock.get_holder_pid(), os.getpid())
+
+        # 3. Clean release clears metadata so lock returns None
+        lock.release()
+        self.assertIsNone(lock.get_holder_pid())
+
+        # 4. Overwrite with multiline/trailing garbage while lock is held
+        self.assertTrue(lock.acquire())
+        # Simulate trailing text from previous run:
+        with open(lock_path, "a") as f:
+            f.write("garbage trailing text that would cause JSONDecodeError on full read\n")
+
+        # Other inspector reading the locked file can parse line 1 cleanly
+        inspector_lock = SQLiteInstanceLock(self.db_path, lock_path=lock_path)
+        self.assertEqual(inspector_lock.get_holder_pid(), os.getpid())
+        lock.release()
 
 
 if __name__ == "__main__":
