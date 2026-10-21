@@ -36,21 +36,22 @@ This document serves as the **single source of truth** for stabilization. Future
 
 ## 2. Verified Repository Baseline & Dated Evidence Snapshot
 
-*Snapshot taken: 2026-10-21 14:22 UTC+03:30*
+*Initial Roadmap Baseline Snapshot: 2026-10-21 14:22 UTC+03:30 (Commit `9b8c54e`, PR #122)*<br/>
+*STAB-00 Verified Execution Baseline Snapshot: 2026-10-21 16:05 UTC+03:30 (Commit `55fd3d5`, PR #123)*
 
 ### 2.1 Git and Working Tree State
 
 | Property | Verified Value | Evidence Source |
 | :--- | :--- | :--- |
-| **Active Branch** | `main` | `git status` |
-| **HEAD Commit SHA** | `9b8c54eb92bed2ae5c9ebcca45eb4e1e8413aee3` | `git rev-parse HEAD` |
-| **Commit Message** | `docs: align release-readiness docs and allowlist synthetic test canary in gitleaks (#122)` | `git log -1` |
+| **Active Baseline Branch** | `main` (task branch: `docs/verification-baseline`) | `git status` |
+| **HEAD Commit SHA (main)** | `55fd3d5bae48e275e0443d00e92d3065642540ec` | `git rev-parse HEAD` |
+| **Commit Message** | `docs(quality): add persistent stabilization roadmap and agent workflow (#123)` | `git log -1` |
 | **Remote Synchronization** | Up to date with `origin/main` | `git status -sb` |
 | **Working Tree Status** | Clean (no modified, untracked, or staged files) | `git status --porcelain` |
 | **Latest Git Tag** | `v0.1.0-rc.1` | `git tag -l` |
-| **Git Describe** | `v0.1.0-rc.1-4-g9b8c54e` | `git describe --tags --always` |
+| **Git Describe** | `v0.1.0-rc.1-5-g55fd3d5` | `git describe --tags --always` |
 | **GitHub Releases** | Exactly 1 Pre-release: `v0.1.0-rc.1` (Zero stable releases published) | `gh release list` |
-| **Application Version** | `APP_NAME = "Polpo"`, `__version__ = "0.1.0"`, `VERSION_INFO = (0, 1, 0)` | `core/version.py:9-11` |
+| **Application Version** | `APP_NAME = "Polpo"`, `__version__ = "0.1.0"`, `VERSION_INFO = (0, 1, 0)` | `core/version.py:9-11`, `pyproject.toml:7` |
 
 ### 2.2 Branch Protection & Merge-Gating Invariants
 
@@ -70,22 +71,68 @@ The `main` branch is protected by GitHub Classic Branch Protection (`docs/ci-rep
 
 ### 2.3 Continuous Integration Verification Status
 
-Verified from GitHub Actions run `39494645119` (triggered on push to `main` at commit `9b8c54e`):
+Verified from GitHub Actions run `39598309337` (triggered on push to `main` at commit `55fd3d5`):
 
 | Check / Job Name | Runner Environment | Outcome | Duration | Notes / Evidence |
 | :--- | :--- | :--- | :--- | :--- |
-| `quality-gates` | `ubuntu-24.04` (Python 3.12) | **PASSED** | 56s | Whitespace check, bytecode compilation, 48 AST architecture invariant tests. |
-| `secret-scan` | `ubuntu-24.04` | **PASSED** | 9s | Gitleaks Action (`v3.0.0`, SHA `e0c47f4f...`), 0 leaks detected. |
-| `test-linux` | `ubuntu-24.04` (Python 3.12, offscreen Qt) | **PASSED** | 1m 51s | **2050 passed, 13 skipped, 2 warnings in 62.98s**. |
-| `test-windows` | `windows-2025` (Python 3.12, offscreen Qt) | **PASSED** | 3m 50s | **2013 passed, 50 skipped, 2 warnings in 129.94s**. |
+| `quality-gates` | `ubuntu-24.04` (Python 3.12) | **PASSED** | 37s | Whitespace check, bytecode compilation across 5 packages, 48 AST architecture invariant tests. |
+| `secret-scan` | `ubuntu-24.04` | **PASSED** | 11s | Gitleaks Action (`v3.0.0`, SHA `e0c47f4f...`), 0 leaks detected. |
+| `test-linux` | `ubuntu-24.04` (Python 3.12, offscreen Qt) | **PASSED** | 1m 43s | **2050 passed, 13 skipped, 2 warnings in 60.07s** (2063 total collected). |
+| `test-windows` | `windows-2025` (Python 3.12, offscreen Qt) | **PASSED** | 5m 14s | **2013 passed, 50 skipped, 2 warnings in 198.63s** (2063 total collected). |
+
+*(Historical reference: Previous run `39494645119` on commit `9b8c54e` also passed all 4 checks: quality-gates 56s, secret-scan 9s, test-linux 1m 51s, test-windows 3m 50s).*
 
 *Known CI Annotations:* GitHub Actions emitted deprecation notices for Node.js 20 targeting in `actions/cache@v4.2.2` and `actions/setup-node@v4.2.0`, currently forced to run on Node.js 24 on runners.
 
-### 2.4 Local Verification Environment
+### 2.4 Local Verification Environment (Linux Tier-1 Reference Host)
 
-- **Python Environment:** `./.venv/bin/python` (Python 3.12), `./.venv/bin/pytest` (pytest 9.1.1).
-- **Test Collection:** 2063 test items collected across `tests/unit/`, `tests/integration/`, and `tests/characterization/`.
-- **Quality Gates Script:** `./.venv/bin/python scripts/run_quality_gates.py` passed in 3.51s (all 48 architecture tests passing).
+Verified on local workstation host environment under `./.venv`:
+
+- **Operating System:** Linux C137 `7.0.0-38-generic #38~24.04.4-Ubuntu SMP PREEMPT_DYNAMIC` x86_64 (`Ubuntu 24.04.5 LTS (Noble Numbat)`).
+- **Python Environment:** `./.venv/bin/python` (Python 3.12.3), pytest 9.1.1, pip 24.0, PySide6 6.8.0.2.
+- **Node & NPM:** Node.js v22.23.2, npm 10.9.8.
+- **System Document Tools on PATH:** System Pandoc 3.1.3 (`/usr/bin/pandoc`), Quarto 1.9.38 (`/usr/local/bin/quarto`), XeLaTeX (`XeTeX 3.141592653-2.6-0.999995 TeX Live 2023/Debian`), actionlint (`/home/amirreza-a2a/go/bin/actionlint`).
+- **Project-Bundled Standalone Runtimes:**
+  - Bundled Pandoc: `resources/bin/linux-x86_64/pandoc` (version 3.1.11, matches `resources/runtimes.json`).
+  - Bundled Node: `resources/mathjax/node` (version v22.23.2, matches `resources/runtimes.json`).
+  - Headless MathJax Worker: 8/8 contract checks verified passing via `python scripts/verify_mathjax_worker.py` (MathJax 3.2.2).
+- **Quality Gates Execution:**
+  - Command: `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python scripts/run_quality_gates.py --mode=working-tree`
+  - Outcome: **PASSED (exit code 0)** in 3.44s.
+  - Scope: Whitespace check clean, Python bytecode compilation across `core`, `application`, `infrastructure`, `interfaces`, `tests` clean, 48 AST architecture invariant tests passed.
+- **Independent Test Suite Executions:**
+  - **Unit Tests:** `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/unit/ -q -rs`
+    - Outcome: **1980 passed, 0 skipped, 2 warnings in 72.42s** (exit code 0).
+  - **Characterization Tests:** `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/characterization/ -q -rs`
+    - Outcome: **32 passed, 0 skipped in 0.44s** (exit code 0).
+  - **Integration Tests:** `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/integration/ -q -rs`
+    - Outcome: **45 passed, 6 skipped in 29.98s** (exit code 0, 51 collected items).
+  - **Complete Test Suite:** `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/ -q -rs`
+    - Outcome: **2057 passed, 6 skipped, 2 warnings in 120.01s** (exit code 0, 2063 total collected items).
+- **Observed Warnings (2 ResourceWarnings):**
+  - `tests/unit/test_ai_adapters.py:46`: `ResourceWarning: unclosed file <.../core/ai/types.py>`
+  - `tests/unit/test_ai_adapters.py:46`: `ResourceWarning: unclosed file <.../core/ai/exceptions.py>`
+  *(Present in both local and CI test runs; benign static file read without explicit context manager in test helper).*
+
+### 2.5 Cross-Platform Skip Classification Matrix
+
+A full AST audit and log reconciliation verified all 2063 test items across local Linux, CI Linux, and CI Windows:
+
+| # | Test Identifier / Module | Skip Reason & Condition | Local Linux | CI Linux | CI Windows | Category |
+| :- | :--- | :--- | :-: | :-: | :-: | :--- |
+| 1–6 | `tests/integration/test_windows_process_tree.py` (6 tests: timeout, cancellation, lingering root exit, assignment failure, cleanup, concurrent launch) | `Windows Job Object integration tests require Windows platform` (`sys.platform != 'win32'`) | **SKIPPED** | **SKIPPED** | **PASSED** | OS Platform (Windows-only) |
+| 7–9 | `tests/integration/test_quarto_pdf_export_e2e.py` (3 live compilation tests: #71 bilingual Persian RTL & TikZ, #72 KaTeX math, #76 Persian RTL callouts & 4-dash regression) | `Quarto or XeLaTeX not available on host` (`not is_quarto_installed()`) | **PASSED** | **SKIPPED** | **SKIPPED** | Optional Host Tooling (Quarto/XeLaTeX) |
+| 10 | `tests/unit/test_pandoc_binary.py::test_real_system_pandoc_integration` | `Pandoc not installed on test host` (`shutil.which("pandoc") is None`) | **PASSED** | **SKIPPED** | **SKIPPED** | Optional Host Tooling (System Pandoc) |
+| 11 | `tests/unit/test_pandoc_runner.py::test_real_system_pandoc_runner_integration` | `Pandoc not installed on test host` (`shutil.which("pandoc") is None`) | **PASSED** | **SKIPPED** | **SKIPPED** | Optional Host Tooling (System Pandoc) |
+| 12 | `tests/unit/test_release_workflow_contract.py::TestReleaseWorkflowContract::test_actionlint_validation` | `actionlint executable not found in PATH` (`shutil.which("actionlint") is None`) | **PASSED** | **SKIPPED** | **SKIPPED** | Optional Host Tooling (actionlint) |
+| 13 | `tests/unit/test_sqlite_persistence.py::TestSQLitePersistence::test_real_desktop_app_database_upgrades_cleanly` | `Real desktop database does not exist on this environment.` (`not ~/.local/share/polpot/polpot.db exists`) | **PASSED** | **SKIPPED** | **SKIPPED** | Local State (User DB) |
+| 14–36 | `tests/unit/test_linux_installer.py` (23 tests: install, upgrade, rollback, uninstall, archive safety, checksums, distro checks) | `Linux installer tests require a Linux environment` (`sys.platform != 'linux'`) | **PASSED** | **PASSED** | **SKIPPED** | OS Platform (Linux-only) |
+| 37–49 | `tests/unit/test_polpo_deps.py` (13 tests: distro detection, GUI dry runs, package manager fallbacks) | `Linux dependency helper tests require a Linux environment` (`sys.platform != 'linux'`) | **PASSED** | **PASSED** | **SKIPPED** | OS Platform (Linux-only) |
+| 50 | `tests/unit/test_legacy_data_migration.py::test_get_user_data_dir_respects_xdg_data_home` | `XDG_DATA_HOME is honored only on Linux/POSIX per ADR-003 and AGENTS.md` (`sys.platform.startswith(('win', 'darwin'))`) | **PASSED** | **PASSED** | **SKIPPED** | OS Platform (POSIX-only) |
+| 51 | `tests/unit/test_mathjax_worker_headless.py::test_subprocess_clean_exit_on_sigterm` | `SIGTERM is POSIX-specific` (`os.name == 'nt'`) | **PASSED** | **PASSED** | **SKIPPED** | OS Platform (POSIX-only) |
+| 52–54 | `tests/unit/test_pandoc_binary.py` (3 tests: chmod success, chmod failure, remains not executable) | `POSIX-specific permission handling` (`os.name != 'posix'`) | **PASSED** | **PASSED** | **SKIPPED** | OS Platform (POSIX-only) |
+| 55–56 | `tests/unit/test_subprocess_supervisor.py` (2 tests: POSIX process group tree kill, session leader exited) | `POSIX process group termination is POSIX-only` (`os.name == 'nt'`) | **PASSED** | **PASSED** | **SKIPPED** | OS Platform (POSIX-only) |
+| **Total** | **All 2063 Collected Test Items** | | **6 skipped** / 2057 passed | **13 skipped** / 2050 passed | **50 skipped** / 2013 passed | Zero Unexpected Skips |
 
 ---
 
@@ -130,7 +177,7 @@ flowchart TD
 - **ID:** `STAB-00`
 - **Title:** Establish Reproducible Verification Baseline and Environment Contract
 - **Priority:** P0 (Precondition)
-- **Status:** `NOT_STARTED`
+- **Status:** `READY_FOR_REVIEW`
 - **Dependencies:** None
 - **Scope:**
   - Record and verify exact commands for running quality gates, unit tests, characterization tests, integration tests, and headless desktop checks.
@@ -138,26 +185,42 @@ flowchart TD
   - Document local environment setup prerequisites (`.venv`, Qt system dependencies, Pandoc, MathJax worker).
 - **Non-Goals:** Modifying application code or changing test assertions.
 - **Evidence & File Paths:**
-  - `scripts/run_quality_gates.py`
-  - `.github/workflows/ci.yml`
-  - `tests/unit/test_quarto_pdf_export_e2e.py:431` (Quarto skip condition)
-  - `tests/unit/test_mathjax_client.py:101-109`
+  - `scripts/run_quality_gates.py` (whitespace, bytecode, 48 AST architecture invariant tests)
+  - `.github/workflows/ci.yml` (CI reference matrix and runtime provisioning)
+  - `tests/integration/test_quarto_pdf_export_e2e.py:517,617,857` (Quarto & XeLaTeX live compilation skip conditions)
+  - `tests/integration/test_windows_process_tree.py:39` (Windows Job Object platform skip)
+  - `tests/unit/test_mathjax_client.py:101-109` (Node & mathjax-full skip fixture)
+  - `tests/unit/test_mathjax_worker_headless.py:90,95,108,440` (Node, version, mathjax-full, SIGTERM skips)
+  - `tests/unit/test_pandoc_binary.py:446` & `tests/unit/test_pandoc_runner.py:347` (Host Pandoc binary skips)
+  - `tests/unit/test_release_workflow_contract.py:32` (actionlint executable skip)
+  - `tests/unit/test_sqlite_persistence.py:356` (Real user database existence skip)
+  - `tests/unit/test_linux_installer.py:17` & `tests/unit/test_polpo_deps.py:9` (Linux platform skips)
 - **Recommended Skill Sequence:**
   `triage → diagnosing-bugs` (if test execution fails locally) → `code-review`
 - **Acceptance Criteria:**
-  1. Exact reproducible shell commands for running all quality gates and test categories are documented.
-  2. Skipped test count and reasons (13 on Linux, 50 on Windows) are explicitly classified.
-  3. Commands execute cleanly in `./.venv` on the host machine.
+  1. Exact reproducible shell commands for running all quality gates and test categories are documented. [Verified — Section 2.4 & Verification Commands]
+  2. Skipped test count and reasons (13 on Linux CI, 50 on Windows CI, 6 on Local Linux) are explicitly classified. [Verified — Section 2.5 Skip Classification Matrix]
+  3. Commands execute cleanly in `./.venv` on the host machine. [Verified — Exit code 0 across all quality gates and test suites]
 - **Verification Commands:**
   ```bash
-  ./.venv/bin/python scripts/run_quality_gates.py --mode=working-tree
-  ./.venv/bin/pytest tests/unit/ -q
-  ./.venv/bin/pytest tests/characterization/ -q
-  ./.venv/bin/pytest tests/integration/ -q
+  # 1. Quality Gates (diff hygiene, bytecode compilation across 5 packages, 48 AST architecture tests)
+  QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python scripts/run_quality_gates.py --mode=working-tree
+
+  # 2. Unit Tests (1980 passed, 0 skipped, 2 warnings in ~72s)
+  QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/unit/ -q -rs
+
+  # 3. Characterization Tests (32 passed, 0 skipped in ~0.5s)
+  QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/characterization/ -q -rs
+
+  # 4. Integration Tests (45 passed, 6 skipped in ~30s)
+  QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/integration/ -q -rs
+
+  # 5. Full Configured Test Suite (2057 passed, 6 skipped, 2 warnings in ~120s; 2063 items collected)
+  QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/ -q -rs
   ```
 - **Branch Suggestion:** `docs/verification-baseline`
-- **PR / CI / Merge Record:** Unstarted
-- **Notes & Risks:** Python 3.12 in `./.venv` requires system Qt libraries (`libgl1`, `libegl1`, `libxkbcommon-x11-0`, `libdbus-1-3`) when running Qt tests.
+- **PR / CI / Merge Record:** Branch `docs/verification-baseline` prepared; PR pending review and CI checks.
+- **Notes & Risks:** Python 3.12 in `./.venv` requires system Qt libraries (`libgl1`, `libegl1`, `libxkbcommon-x11-0`, `libdbus-1-3`) when running Qt tests. Headless runs require `QT_QPA_PLATFORM=offscreen` and `QSG_RHI_BACKEND=software`. Optional tools (Quarto, XeLaTeX, Pandoc, actionlint) determine whether live integration compilation tests run or skip cleanly.
 
 ---
 
