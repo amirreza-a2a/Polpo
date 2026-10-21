@@ -556,7 +556,7 @@ time.sleep(30)
                 self.assertTrue(lock.is_locked)
 
                 mock_winapi.CreateFile.assert_called_once_with(
-                    str(lock_path),
+                    str(lock.lock_path),
                     SQLiteInstanceLock._GENERIC_READ | SQLiteInstanceLock._GENERIC_WRITE,
                     SQLiteInstanceLock._FILE_SHARE_READ | SQLiteInstanceLock._FILE_SHARE_WRITE | SQLiteInstanceLock._FILE_SHARE_DELETE,
                     0,
@@ -650,8 +650,14 @@ time.sleep(30)
         filesystem), acquire() must propagate the OSError rather than returning False
         and falsely diagnosing that another instance is running.
         """
-        with patch("builtins.open", side_effect=PermissionError(13, "Permission denied")):
-            lock = SQLiteInstanceLock(self.db_path)
+        from infrastructure.persistence.sqlite import instance_lock as lock_mod
+        lock = SQLiteInstanceLock(self.db_path)
+        if getattr(lock_mod, "_winapi", None) is not None:
+            patcher = patch.object(lock_mod._winapi, "CreateFile", side_effect=PermissionError(13, "Permission denied"))
+        else:
+            patcher = patch("builtins.open", side_effect=PermissionError(13, "Permission denied"))
+
+        with patcher:
             with self.assertRaises(PermissionError) as ctx:
                 lock.acquire()
             self.assertIn("Permission denied", str(ctx.exception))
