@@ -213,6 +213,7 @@ class MySQLJobRepository(IJobRepository):
             retry_count=row.get("retry_count") or 0,
             auto_pipeline2=bool(row.get("auto_pipeline2")),
             pipeline2_prompt_id=row.get("pipeline2_prompt_id"),
+            claimed_at=row.get("claimed_at"),
             created_at=row.get("created_at"),
             updated_at=row.get("updated_at"),
         )

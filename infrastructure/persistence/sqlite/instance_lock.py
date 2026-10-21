@@ -57,12 +57,18 @@ class SQLiteInstanceLock:
 
     def __init__(self, db_path: Path | str, lock_path: Optional[Path | str] = None):
         self.db_path = str(db_path)
-        if self.db_path == ":memory:":
+        # Check for in-memory SQLite paths (e.g. :memory:, file:memdb?mode=memory, file::memory:)
+        if (
+            self.db_path == ":memory:"
+            or not self.db_path
+            or "mode=memory" in self.db_path
+            or self.db_path.startswith("file::memory:")
+        ):
             self.lock_path: Optional[Path] = None
         elif lock_path is not None:
-            self.lock_path = Path(lock_path)
+            self.lock_path = Path(lock_path).resolve()
         else:
-            p = Path(db_path)
+            p = Path(db_path).resolve()
             self.lock_path = p.with_suffix(p.suffix + ".lock")
 
         self._file_obj = None
@@ -82,6 +88,7 @@ class SQLiteInstanceLock:
             True if ownership was acquired, or False if another process holds it.
 
         Raises:
+            OSError: If opening or creating the lock file encounters filesystem/permission errors.
             NotImplementedError: If neither fcntl nor msvcrt is available.
         """
         if self.lock_path is None:
@@ -104,10 +111,33 @@ class SQLiteInstanceLock:
 
     def _acquire_posix(self) -> bool:
         file_obj = None
+        # Step 1: Open or create the lock file. Propagate filesystem/permission errors instead of masking them.
         try:
             file_obj = open(self.lock_path, "a+")
-            fcntl.flock(file_obj.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise
 
+        # Step 2: Attempt non-blocking advisory lock.
+        try:
+            fcntl.flock(file_obj.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (BlockingIOError, OSError) as exc:
+            import errno
+            if file_obj is not None:
+                try:
+                    file_obj.close()
+                except Exception:
+                    pass
+            # Lock contention surfaces as BlockingIOError or EAGAIN / EWOULDBLOCK / EACCES
+            if isinstance(exc, BlockingIOError) or getattr(exc, "errno", None) in (
+                errno.EACCES,
+                errno.EAGAIN,
+                errno.EWOULDBLOCK,
+            ):
+                return False
+            raise
+
+        # Step 3: Write process metadata into the lock file
+        try:
             file_obj.seek(0)
             file_obj.truncate()
             metadata = {
@@ -121,13 +151,16 @@ class SQLiteInstanceLock:
             self._file_obj = file_obj
             self._is_locked = True
             return True
-        except (BlockingIOError, OSError):
-            if file_obj is not None:
-                try:
-                    file_obj.close()
-                except Exception:
-                    pass
-            return False
+        except Exception:
+            try:
+                fcntl.flock(file_obj.fileno(), fcntl.LOCK_UN)
+            except Exception:
+                pass
+            try:
+                file_obj.close()
+            except Exception:
+                pass
+            raise
 
     def _acquire_windows(self) -> bool:
         if self.lock_path is None:
@@ -155,29 +188,14 @@ class SQLiteInstanceLock:
                     self.lock_path,
                     os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0),
                 )
+        except OSError:
+            raise
 
+        try:
             # Move pointer to lock region beyond metadata header to avoid blocking
             # cooperative readers attempting to inspect holder PID.
             os.lseek(fd, self._WINDOWS_LOCK_OFFSET, os.SEEK_SET)
             msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-
-            # Successfully locked advisory byte. Now write metadata header at offset 0.
-            metadata = {
-                "pid": os.getpid(),
-                "acquired_at": datetime.now(timezone.utc).isoformat(),
-                "process_name": sys.argv[0] if sys.argv else "polpo",
-            }
-            payload = (json.dumps(metadata) + "\n").encode("utf-8")
-            os.lseek(fd, 0, os.SEEK_SET)
-            os.write(fd, payload)
-            try:
-                os.ftruncate(fd, len(payload))
-            except Exception:
-                pass
-
-            self._fd = fd
-            self._is_locked = True
-            return True
         except (OSError, IOError):
             if fd is not None:
                 try:
@@ -191,9 +209,37 @@ class SQLiteInstanceLock:
                     pass
             return False
 
+        try:
+            # Successfully locked advisory byte. Now write padded metadata header at offset 0.
+            metadata = {
+                "pid": os.getpid(),
+                "acquired_at": datetime.now(timezone.utc).isoformat(),
+                "process_name": sys.argv[0] if sys.argv else "polpo",
+            }
+            payload = (json.dumps(metadata) + "\n").encode("utf-8")
+            os.lseek(fd, 0, os.SEEK_SET)
+            os.write(fd, payload.ljust(1024))
+
+            self._fd = fd
+            self._is_locked = True
+            return True
+        except Exception:
+            try:
+                os.lseek(fd, self._WINDOWS_LOCK_OFFSET, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            except Exception:
+                pass
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+            raise
+
     def release(self) -> None:
         """
         Releases the acquired lock and closes the file descriptor.
+        Clears the metadata in the lock file before releasing so that subsequent
+        inspectors do not see stale holder PIDs.
         The lock file is intentionally not unlinked to avoid inode race conditions.
         """
         if not self._is_locked:
@@ -204,10 +250,21 @@ class SQLiteInstanceLock:
         try:
             if fcntl is not None and self._file_obj is not None:
                 try:
+                    self._file_obj.seek(0)
+                    self._file_obj.truncate(0)
+                    self._file_obj.flush()
+                except Exception:
+                    pass
+                try:
                     fcntl.flock(self._file_obj.fileno(), fcntl.LOCK_UN)
                 except Exception:
                     pass
             elif msvcrt is not None and self._fd is not None:
+                try:
+                    os.lseek(self._fd, 0, os.SEEK_SET)
+                    os.write(self._fd, b" " * 1024)
+                except Exception:
+                    pass
                 try:
                     os.lseek(self._fd, self._WINDOWS_LOCK_OFFSET, os.SEEK_SET)
                     msvcrt.locking(self._fd, msvcrt.LK_UNLCK, 1)
@@ -231,7 +288,7 @@ class SQLiteInstanceLock:
     def get_holder_pid(self) -> Optional[int]:
         """
         Attempts to read the PID of the current lock holder from the lock file.
-        Returns None if the file cannot be read or parsed.
+        Returns None if no process currently holds the lock, or if the file cannot be read/parsed.
         """
         if self._is_locked:
             return os.getpid()
@@ -239,22 +296,57 @@ class SQLiteInstanceLock:
         if self.lock_path is None or not self.lock_path.is_file():
             return None
 
-        content = ""
-        if _winapi is not None and msvcrt is not None:
+        # Verify whether the lock is actively held before reporting a PID
+        if fcntl is not None:
+            try:
+                with open(self.lock_path, "r+") as probe_f:
+                    try:
+                        fcntl.flock(probe_f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        # Exclusive lock succeeded: lock is FREE, no current holder!
+                        fcntl.flock(probe_f.fileno(), fcntl.LOCK_UN)
+                        return None
+                    except (BlockingIOError, OSError):
+                        # Lock is actively held by another process
+                        pass
+            except OSError:
+                pass
+
+            content = ""
+            try:
+                with open(self.lock_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+            except Exception:
+                content = ""
+
+        elif _winapi is not None and msvcrt is not None:
             handle = None
+            content = ""
             try:
                 handle = _winapi.CreateFile(
                     str(self.lock_path),
-                    self._GENERIC_READ,
+                    self._GENERIC_READ | self._GENERIC_WRITE,
                     self._FILE_SHARE_READ | self._FILE_SHARE_WRITE | self._FILE_SHARE_DELETE,
                     0,
                     self._OPEN_EXISTING,
                     self._FILE_ATTRIBUTE_NORMAL,
                     0,
                 )
-                fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | getattr(os, "O_BINARY", 0))
-                with os.fdopen(fd, "r", encoding="utf-8", errors="ignore") as f:
-                    content = f.read()
+                fd = msvcrt.open_osfhandle(handle, os.O_RDWR | getattr(os, "O_BINARY", 0))
+                try:
+                    os.lseek(fd, self._WINDOWS_LOCK_OFFSET, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    # Succeeded in acquiring lock byte: lock is FREE!
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                    os.close(fd)
+                    return None
+                except (OSError, IOError):
+                    # Actively locked by another process
+                    pass
+                os.lseek(fd, 0, os.SEEK_SET)
+                data_bytes = os.read(fd, 1024)
+                content = data_bytes.decode("utf-8", errors="ignore")
+                os.close(fd)
+                handle = None
             except Exception:
                 if handle is not None and _winapi is not None:
                     try:
@@ -263,6 +355,7 @@ class SQLiteInstanceLock:
                         pass
                 content = ""
         else:
+            content = ""
             try:
                 with open(self.lock_path, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read()
@@ -271,10 +364,13 @@ class SQLiteInstanceLock:
 
         if content:
             try:
-                data = json.loads(content.strip())
-                pid = data.get("pid")
-                if isinstance(pid, int):
-                    return pid
+                lines = content.splitlines()
+                first_line = lines[0].strip() if lines else ""
+                if first_line:
+                    data = json.loads(first_line)
+                    pid = data.get("pid")
+                    if isinstance(pid, int):
+                        return pid
             except Exception:
                 pass
         return None

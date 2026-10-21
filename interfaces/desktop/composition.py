@@ -278,15 +278,21 @@ class DesktopAppContainer:
     def initialize(self) -> None:
         """
         Executes deterministic startup sequence:
-        1. Acquires cross-process database ownership lock before any mutations.
-        2. Applies SQLite schema migrations (applies 004).
-        3. Atomically seeds curated default prompts if table is empty.
-        4. Reconciles legacy unversioned canonical documents (idempotent backfill).
-        5. Reconciles crashed publication intents.
-        6. Reconciles stale processing jobs to PAUSED.
-        7. Reconciles missed schedules according to AppSettings policy.
+        1. Idempotency guard: returns immediately if already initialized.
+        2. Acquires cross-process database ownership lock before any mutations.
+        3. Applies SQLite schema migrations (applies 004).
+        4. Atomically seeds curated default prompts if table is empty.
+        5. Reconciles legacy unversioned canonical documents (idempotent backfill).
+        6. Reconciles crashed publication intents.
+        7. Reconciles stale processing jobs to PAUSED.
+        8. Reconciles missed schedules according to AppSettings policy.
         Sets initialized state flag.
         """
+        if self._is_shut_down:
+            raise RuntimeError("Cannot initialize a shut down DesktopAppContainer.")
+        if self._initialized:
+            return
+
         if self.instance_lock is not None and not self.instance_lock.is_locked:
             if not self.instance_lock.acquire():
                 holder_pid = self.instance_lock.get_holder_pid()
