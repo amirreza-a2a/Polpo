@@ -2,8 +2,9 @@
 #  application/services/job_recovery.py
 # ============================================================
 
+import inspect
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 from application.ports.unit_of_work import IUnitOfWorkFactory
 from application.ports.notifier import IApplicationEventPublisher
 from application.events import (
@@ -24,6 +25,28 @@ def _normalize_utc(dt: Optional[datetime]) -> Optional[datetime]:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _call_repo_reconcile_stale_jobs(repo: Any, older_than: Optional[datetime]) -> int:
+    """
+    Safely invokes repository reconcile_stale_jobs without catching or swallowing internal TypeErrors.
+    Inspects signature beforehand to support legacy adapters when older_than is None.
+    """
+    fn = getattr(repo, "reconcile_stale_jobs", None)
+    if fn is None:
+        return 0
+    sig = inspect.signature(fn)
+    accepts_older_than = (
+        "older_than" in sig.parameters
+        or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+    )
+    if accepts_older_than:
+        return fn(older_than=older_than)
+    if older_than is None:
+        return fn()
+    raise TypeError(
+        f"{type(repo).__name__}.reconcile_stale_jobs() does not support 'older_than' filtering."
+    )
 
 
 class JobRecoveryService:
@@ -62,10 +85,7 @@ class JobRecoveryService:
                         ]
                     recovered_job_ids.extend([j.id for j in stale_jobs if j.id is not None])
                 if hasattr(uow.jobs, "reconcile_stale_jobs"):
-                    try:
-                        count += uow.jobs.reconcile_stale_jobs(older_than=older_than)
-                    except TypeError:
-                        count += uow.jobs.reconcile_stale_jobs()
+                    count += _call_repo_reconcile_stale_jobs(uow.jobs, older_than=older_than)
 
             if hasattr(uow, "pipeline2_jobs") and uow.pipeline2_jobs:
                 if hasattr(uow.pipeline2_jobs, "list"):
@@ -77,10 +97,7 @@ class JobRecoveryService:
                         ]
                     recovered_job_ids.extend([j.source_job_id for j in stale_p2 if j.source_job_id is not None])
                 if hasattr(uow.pipeline2_jobs, "reconcile_stale_jobs"):
-                    try:
-                        count += uow.pipeline2_jobs.reconcile_stale_jobs(older_than=older_than)
-                    except TypeError:
-                        count += uow.pipeline2_jobs.reconcile_stale_jobs()
+                    count += _call_repo_reconcile_stale_jobs(uow.pipeline2_jobs, older_than=older_than)
 
             uow.commit()
 
@@ -115,10 +132,7 @@ class JobRecoveryService:
                         ]
                     recovered_job_ids.extend([j.source_job_id for j in stale_p2 if j.source_job_id is not None])
                 if hasattr(uow.pipeline2_jobs, "reconcile_stale_jobs"):
-                    try:
-                        count += uow.pipeline2_jobs.reconcile_stale_jobs(older_than=older_than)
-                    except TypeError:
-                        count += uow.pipeline2_jobs.reconcile_stale_jobs()
+                    count += _call_repo_reconcile_stale_jobs(uow.pipeline2_jobs, older_than=older_than)
             uow.commit()
 
         if self.event_publisher and recovered_job_ids:

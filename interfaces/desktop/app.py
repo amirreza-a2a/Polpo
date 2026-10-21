@@ -15,6 +15,7 @@ if __package__ is None or __package__ == "":
         sys.path.insert(0, str(repo_root))
 
 from core.version import APP_NAME
+from core.exceptions.domain_exceptions import ApplicationInstanceLockedError
 from infrastructure.paths import get_runtime_resource_path, DataMigrationConflictError
 from infrastructure.logging.setup import setup_logging
 from interfaces.desktop.qt_compat import QGuiApplication, QQmlApplicationEngine
@@ -522,7 +523,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # Normal desktop application GUI startup with conflict and error guards
     try:
         app, engine, container = create_app(argv=qt_args)
-    except DataMigrationConflictError as exc:
+    except (DataMigrationConflictError, ApplicationInstanceLockedError) as exc:
         logger.critical("Fatal startup failure: %s", exc)
         sys.stderr.write(f"Fatal error: {exc}\n")
         return 1

@@ -177,3 +177,16 @@ class OfflineRecoveryError(PdfExportError):
     """Raised when LaTeX package recovery fails due to lack of network connectivity or CTAN unreachability."""
     def __init__(self, message: str = "LaTeX package recovery failed due to lack of network connectivity."):
         super().__init__(message)
+
+
+class ApplicationInstanceLockedError(DomainError):
+    """Raised when another application instance already holds the database or process lock."""
+    def __init__(
+        self,
+        message: str = "Another instance of Polpo is currently running and using this database.",
+        lock_path: Optional[str] = None,
+        holder_pid: Optional[int] = None,
+    ):
+        super().__init__(message)
+        self.lock_path = lock_path
+        self.holder_pid = holder_pid

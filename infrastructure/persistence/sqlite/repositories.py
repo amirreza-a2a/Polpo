@@ -57,6 +57,12 @@ def _ensure_transaction(conn: sqlite3.Connection) -> None:
         conn.execute("BEGIN")
 
 
+def _ensure_immediate_transaction(conn: sqlite3.Connection) -> None:
+    """Starts an IMMEDIATE write transaction if one is not already active."""
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+
+
 # ============================================================
 #  SQLiteSettingsRepository
 # ============================================================
@@ -761,7 +767,7 @@ class SQLiteJobRepository(IJobRepository):
         return cur.rowcount > 0
 
     def reconcile_stale_jobs(self, older_than: Optional[datetime] = None) -> int:
-        _ensure_transaction(self.conn)
+        _ensure_immediate_transaction(self.conn)
         now_iso = _format_iso_dt(datetime.now(timezone.utc))
         cur = self.conn.cursor()
         if older_than:
@@ -1047,7 +1053,7 @@ class SQLitePipeline2JobRepository(IPipeline2JobRepository):
         return cur.rowcount > 0
 
     def reconcile_stale_jobs(self, older_than: Optional[datetime] = None) -> int:
-        _ensure_transaction(self.conn)
+        _ensure_immediate_transaction(self.conn)
         now_iso = _format_iso_dt(datetime.now(timezone.utc))
         cur = self.conn.cursor()
         if older_than:

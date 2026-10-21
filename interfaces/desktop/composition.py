@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import Optional, Dict
 
 from core.entities.api_slot import ApiSlot
+from core.exceptions.domain_exceptions import ApplicationInstanceLockedError
 from application.ports.ai_provider import AIProviderPort
 from infrastructure.persistence.sqlite.connection import SQLiteDatabaseManager
+from infrastructure.persistence.sqlite.instance_lock import SQLiteInstanceLock
 from infrastructure.persistence.sqlite.migration_runner import SQLiteMigrationRunner
 from infrastructure.persistence.sqlite.unit_of_work import SQLiteUnitOfWorkFactory
 from infrastructure.security.keyring_resolver import KeyringCredentialResolver
@@ -76,6 +78,7 @@ class DesktopAppContainer:
         keyring_service_name: str = "polpot_desktop",
         default_rpms: Optional[Dict[str, int]] = None,
         scheduler_tick_interval: float = 5.0,
+        instance_lock: Optional[SQLiteInstanceLock] = None,
     ):
         self._initialized: bool = False
         self._is_shut_down: bool = False
@@ -101,6 +104,7 @@ class DesktopAppContainer:
         artifacts_dir.mkdir(parents=True, exist_ok=True)
 
         # 2. Persistence & Security Infrastructure
+        self.instance_lock = instance_lock if instance_lock is not None else SQLiteInstanceLock(db_path)
         self.db_manager = SQLiteDatabaseManager(db_path)
         self.migration_runner = SQLiteMigrationRunner(self.db_manager)
         self.uow_factory = SQLiteUnitOfWorkFactory(self.db_manager)
@@ -261,24 +265,52 @@ class DesktopAppContainer:
             tick_interval=scheduler_tick_interval,
         )
 
+        orig_runtime_shutdown = self.runtime.shutdown
+
+        def _runtime_shutdown_hook() -> None:
+            orig_runtime_shutdown()
+            if not self._is_shut_down:
+                if self.instance_lock is not None and self.instance_lock.is_locked:
+                    self.instance_lock.release()
+
+        self.runtime.shutdown = _runtime_shutdown_hook
+
     def initialize(self) -> None:
         """
         Executes deterministic startup sequence:
-        1. Applies SQLite schema migrations (applies 004).
-        2. Atomically seeds curated default prompts if table is empty.
-        3. Reconciles legacy unversioned canonical documents (idempotent backfill).
-        4. Reconciles crashed publication intents.
-        5. Reconciles stale processing jobs to PAUSED.
-        6. Reconciles missed schedules according to AppSettings policy.
+        1. Acquires cross-process database ownership lock before any mutations.
+        2. Applies SQLite schema migrations (applies 004).
+        3. Atomically seeds curated default prompts if table is empty.
+        4. Reconciles legacy unversioned canonical documents (idempotent backfill).
+        5. Reconciles crashed publication intents.
+        6. Reconciles stale processing jobs to PAUSED.
+        7. Reconciles missed schedules according to AppSettings policy.
         Sets initialized state flag.
         """
-        self.migration_runner.run_migrations()
-        self.prompt_seeding_service.seed_default_prompts()
-        self.document_publication_service.backfill_legacy_document_versions()
-        self.document_publication_service.reconcile_startup_intents()
-        self.job_recovery_service.reconcile_stale_jobs()
-        self.job_recovery_service.reconcile_missed_schedules()
-        self._initialized = True
+        if self.instance_lock is not None and not self.instance_lock.is_locked:
+            if not self.instance_lock.acquire():
+                holder_pid = self.instance_lock.get_holder_pid()
+                pid_info = f" (PID {holder_pid})" if holder_pid else ""
+                raise ApplicationInstanceLockedError(
+                    f"Another application instance{pid_info} is currently running and accessing "
+                    f"the database at '{self.db_manager.db_path}'. Only one instance may access "
+                    f"the database concurrently.",
+                    lock_path=str(self.instance_lock.lock_path) if self.instance_lock.lock_path else None,
+                    holder_pid=holder_pid,
+                )
+
+        try:
+            self.migration_runner.run_migrations()
+            self.prompt_seeding_service.seed_default_prompts()
+            self.document_publication_service.backfill_legacy_document_versions()
+            self.document_publication_service.reconcile_startup_intents()
+            self.job_recovery_service.reconcile_stale_jobs()
+            self.job_recovery_service.reconcile_missed_schedules()
+            self._initialized = True
+        except Exception:
+            if self.instance_lock is not None and not self._initialized:
+                self.instance_lock.release()
+            raise
 
     def start_runtime(self) -> None:
         """
@@ -310,18 +342,22 @@ class DesktopAppContainer:
         if self._is_shut_down:
             return
 
-        if hasattr(self, "mathjax_supervisor") and self.mathjax_supervisor:
-            self.mathjax_supervisor.shutdown()
-        if hasattr(self, "markdown_viewer_controller") and self.markdown_viewer_controller:
-            self.markdown_viewer_controller.shutdown()
-        if hasattr(self, "markdown_editor_controller") and self.markdown_editor_controller:
-            self.markdown_editor_controller.shutdown()
-        if hasattr(self, "document_viewer_controller") and self.document_viewer_controller:
-            self.document_viewer_controller.shutdown()
-        if hasattr(self, "export_controller") and self.export_controller:
-            self.export_controller.shutdown()
-        if hasattr(self, "pdf_setup_controller") and self.pdf_setup_controller:
-            self.pdf_setup_controller.shutdown()
-        self.scheduler.shutdown()
-        self.runtime.shutdown()
-        self._is_shut_down = True
+        try:
+            if hasattr(self, "mathjax_supervisor") and self.mathjax_supervisor:
+                self.mathjax_supervisor.shutdown()
+            if hasattr(self, "markdown_viewer_controller") and self.markdown_viewer_controller:
+                self.markdown_viewer_controller.shutdown()
+            if hasattr(self, "markdown_editor_controller") and self.markdown_editor_controller:
+                self.markdown_editor_controller.shutdown()
+            if hasattr(self, "document_viewer_controller") and self.document_viewer_controller:
+                self.document_viewer_controller.shutdown()
+            if hasattr(self, "export_controller") and self.export_controller:
+                self.export_controller.shutdown()
+            if hasattr(self, "pdf_setup_controller") and self.pdf_setup_controller:
+                self.pdf_setup_controller.shutdown()
+            self.scheduler.shutdown()
+            self.runtime.shutdown()
+            self._is_shut_down = True
+        finally:
+            if self.instance_lock is not None and self._is_shut_down:
+                self.instance_lock.release()
