@@ -43,13 +43,13 @@ This document serves as the **single source of truth** for stabilization. Future
 
 | Property | Verified Value | Evidence Source |
 | :--- | :--- | :--- |
-| **Active Baseline Branch** | `main` (task branch: `docs/verification-baseline`) | `git status` |
-| **HEAD Commit SHA (main)** | `55fd3d5bae48e275e0443d00e92d3065642540ec` | `git rev-parse HEAD` |
-| **Commit Message** | `docs(quality): add persistent stabilization roadmap and agent workflow (#123)` | `git log -1` |
+| **Active Baseline Branch** | `main` | `git status` |
+| **HEAD Commit SHA (main)** | `4ce951f1198fdaba04b0c4db231fed4a1d410916` | `git rev-parse HEAD` |
+| **Commit Message** | `docs(quality): establish reproducible test baseline (STAB-00) (#124)` | `git log -1` |
 | **Remote Synchronization** | Up to date with `origin/main` | `git status -sb` |
 | **Working Tree Status** | Clean (no modified, untracked, or staged files) | `git status --porcelain` |
 | **Latest Git Tag** | `v0.1.0-rc.1` | `git tag -l` |
-| **Git Describe** | `v0.1.0-rc.1-5-g55fd3d5` | `git describe --tags --always` |
+| **Git Describe** | `v0.1.0-rc.1-6-g4ce951f` | `git describe --tags --always` |
 | **GitHub Releases** | Exactly 1 Pre-release: `v0.1.0-rc.1` (Zero stable releases published) | `gh release list` |
 | **Application Version** | `APP_NAME = "Polpo"`, `__version__ = "0.1.0"`, `VERSION_INFO = (0, 1, 0)` | `core/version.py:9-11`, `pyproject.toml:7` |
 
@@ -172,12 +172,12 @@ flowchart TD
 
 ---
 
-### [ ] STAB-00 — Establish the Verification Baseline
+### [x] STAB-00 — Establish the Verification Baseline
 
 - **ID:** `STAB-00`
 - **Title:** Establish Reproducible Verification Baseline and Environment Contract
 - **Priority:** P0 (Precondition)
-- **Status:** `READY_FOR_REVIEW`
+- **Status:** `COMPLETED`
 - **Dependencies:** None
 - **Scope:**
   - Record and verify exact commands for running quality gates, unit tests, characterization tests, integration tests, and headless desktop checks.
@@ -219,7 +219,7 @@ flowchart TD
   QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/ -q -rs
   ```
 - **Branch Suggestion:** `docs/verification-baseline`
-- **PR / CI / Merge Record:** Branch `docs/verification-baseline` prepared; PR pending review and CI checks.
+- **PR / CI / Merge Record:** [PR #124](https://github.com/amirreza-a2a/Polpo/pull/124) merged into `main` at `4ce951f1198fdaba04b0c4db231fed4a1d410916`. All 4 required CI status checks passed: `quality-gates` (49s), `secret-scan` (6s), `test-linux` (2m0s; 2050 passed, 13 skipped), `test-windows` (3m24s; 2013 passed, 50 skipped).
 - **Notes & Risks:** Python 3.12 in `./.venv` requires system Qt libraries (`libgl1`, `libegl1`, `libxkbcommon-x11-0`, `libdbus-1-3`) when running Qt tests. Headless runs require `QT_QPA_PLATFORM=offscreen` and `QSG_RHI_BACKEND=software`. Optional tools (Quarto, XeLaTeX, Pandoc, actionlint) determine whether live integration compilation tests run or skip cleanly.
 
 ---
@@ -912,6 +912,7 @@ The following standing constraints apply to all stabilization operations:
 | Date | Task ID | Event / Outcome | PR / Commit SHA | Notes & Evidence |
 | :--- | :--- | :--- | :--- | :--- |
 | **2026-10-21** | `INIT` | Stabilization roadmap established as single source of truth. | N/A | Full repository audit completed. Release freeze confirmed. Zero fixes implemented during roadmap authoring. |
+| **2026-10-21** | `STAB-00` | Established reproducible verification baseline and environment contract. Classified all 2063 tests across local Linux, CI Linux (13 skips), and CI Windows (50 skips). Zero failures. | [#124](https://github.com/amirreza-a2a/Polpo/pull/124) / `4ce951f` | Merged cleanly into `main` after all 4 required status checks passed. |
 
 ---
 
