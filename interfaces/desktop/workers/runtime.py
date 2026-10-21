@@ -126,12 +126,19 @@ class DesktopJobRuntime:
         """Requests cooperative cancellation for all currently executing jobs."""
         with self._lock:
             job_ids = list(self._active_jobs.keys())
+            p2_job_ids = list(self._active_p2_jobs.keys())
 
         for jid in job_ids:
             try:
                 self.job_execution_service.cancel_job(jid)
             except Exception as e:
                 logger.warning("Failed to request cancellation for active job %d: %s", jid, e)
+
+        for p2_id in p2_job_ids:
+            try:
+                self.job_execution_service.cancel_pipeline2_job(p2_id)
+            except Exception as e:
+                logger.warning("Failed to request cancellation for active Pipeline 2 job %d: %s", p2_id, e)
 
     def shutdown(self, wait: bool = True, timeout: float = 10.0) -> None:
         """

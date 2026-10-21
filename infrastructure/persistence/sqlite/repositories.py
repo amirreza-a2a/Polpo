@@ -760,20 +760,33 @@ class SQLiteJobRepository(IJobRepository):
         )
         return cur.rowcount > 0
 
-    def reconcile_stale_jobs(self) -> int:
+    def reconcile_stale_jobs(self, older_than: Optional[datetime] = None) -> int:
         _ensure_transaction(self.conn)
         now_iso = _format_iso_dt(datetime.now(timezone.utc))
         cur = self.conn.cursor()
-        cur.execute(
-            """
-            UPDATE jobs
-            SET status = 'paused',
-                error_message = 'Interrupted by application crash or unexpected shutdown',
-                updated_at = ?
-            WHERE status = 'processing'
-            """,
-            (now_iso,),
-        )
+        if older_than:
+            older_iso = _format_iso_dt(older_than)
+            cur.execute(
+                """
+                UPDATE jobs
+                SET status = 'paused',
+                    error_message = 'Interrupted by application crash or unexpected shutdown',
+                    updated_at = ?
+                WHERE status = 'processing' AND (claimed_at IS NULL OR claimed_at <= ?)
+                """,
+                (now_iso, older_iso),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE jobs
+                SET status = 'paused',
+                    error_message = 'Interrupted by application crash or unexpected shutdown',
+                    updated_at = ?
+                WHERE status = 'processing'
+                """,
+                (now_iso,),
+            )
         return cur.rowcount
 
     def get_missed_schedules(self, as_of: Optional[datetime] = None) -> List[Job]:
@@ -911,13 +924,19 @@ class SQLitePipeline2JobRepository(IPipeline2JobRepository):
                 self.conn.execute("ROLLBACK")
                 return None
 
+            cur.execute("SELECT * FROM pipeline2_jobs WHERE id = ?", (job_id,))
+            claimed_row = cur.fetchone()
+            if not claimed_row:
+                self.conn.execute("ROLLBACK")
+                return None
+
+            entity = self._row_to_entity(claimed_row)
             self.conn.execute("COMMIT")
+            return entity
         except Exception:
             if self.conn.in_transaction:
                 self.conn.execute("ROLLBACK")
             raise
-
-        return self.get_by_id(job_id)
 
     def save(self, job: Pipeline2Job) -> Pipeline2Job:
         _ensure_transaction(self.conn)
@@ -1010,6 +1029,66 @@ class SQLitePipeline2JobRepository(IPipeline2JobRepository):
 
     def update_output_path(self, p2_job_id: int, output_path: str) -> None:
         self.update_paths(p2_job_id, output_path=output_path)
+
+    def request_cancellation(self, p2_job_id: int) -> bool:
+        _ensure_transaction(self.conn)
+        now_iso = _format_iso_dt(datetime.now(timezone.utc))
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            UPDATE pipeline2_jobs
+            SET cancel_requested = 1,
+                status = CASE WHEN status = 'pending' THEN 'cancelled' ELSE status END,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (now_iso, p2_job_id),
+        )
+        return cur.rowcount > 0
+
+    def reconcile_stale_jobs(self, older_than: Optional[datetime] = None) -> int:
+        _ensure_transaction(self.conn)
+        now_iso = _format_iso_dt(datetime.now(timezone.utc))
+        cur = self.conn.cursor()
+        if older_than:
+            older_iso = _format_iso_dt(older_than)
+            cur.execute(
+                """
+                UPDATE pipeline2_jobs
+                SET status = 'paused',
+                    error_message = 'Interrupted by application crash or unexpected shutdown',
+                    updated_at = ?
+                WHERE status = 'processing' AND (claimed_at IS NULL OR claimed_at <= ?)
+                """,
+                (now_iso, older_iso),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE pipeline2_jobs
+                SET status = 'paused',
+                    error_message = 'Interrupted by application crash or unexpected shutdown',
+                    updated_at = ?
+                WHERE status = 'processing'
+                """,
+                (now_iso,),
+            )
+        return cur.rowcount
+
+    def list(self, limit: int = 50, offset: int = 0, status: Optional[JobStatus] = None) -> List[Pipeline2Job]:
+        cur = self.conn.cursor()
+        if status:
+            status_val = status.value if hasattr(status, "value") else str(status)
+            cur.execute(
+                "SELECT * FROM pipeline2_jobs WHERE status = ? ORDER BY id DESC LIMIT ? OFFSET ?",
+                (status_val, limit, offset),
+            )
+        else:
+            cur.execute(
+                "SELECT * FROM pipeline2_jobs ORDER BY id DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            )
+        return [self._row_to_entity(r) for r in cur.fetchall()]
 
 
 # ============================================================

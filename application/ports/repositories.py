@@ -56,7 +56,7 @@ class IJobRepository(ABC):
         """Requests cooperative cancellation of a job."""
         raise NotImplementedError
 
-    def reconcile_stale_jobs(self) -> int:
+    def reconcile_stale_jobs(self, older_than: Optional[datetime] = None) -> int:
         """Reconciles in-flight jobs that were interrupted by an unexpected crash."""
         raise NotImplementedError
 
@@ -107,6 +107,18 @@ class IPipeline2JobRepository(ABC):
 
     @abstractmethod
     def update_output_path(self, p2_job_id: int, output_path: str) -> None: ...
+
+    def request_cancellation(self, p2_job_id: int) -> bool:
+        """Requests cooperative cancellation of a Pipeline 2 job."""
+        raise NotImplementedError
+
+    def reconcile_stale_jobs(self, older_than: Optional[datetime] = None) -> int:
+        """Reconciles in-flight Pipeline 2 jobs that were interrupted by an unexpected crash."""
+        raise NotImplementedError
+
+    def list(self, limit: int = 50, offset: int = 0, status: Optional[JobStatus] = None) -> List[Pipeline2Job]:
+        """Lists Pipeline 2 jobs optionally filtered by status."""
+        raise NotImplementedError
 
 
 class IPromptRepository(ABC):
