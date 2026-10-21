@@ -866,6 +866,59 @@ class SQLitePipeline2JobRepository(IPipeline2JobRepository):
         row = cur.fetchone()
         return self._row_to_entity(row) if row else None
 
+    def claim_next_pending(self) -> Optional[Pipeline2Job]:
+        """
+        Atomically claims the next eligible pending Pipeline 2 job.
+        Requires that no outer transaction is active to guarantee dedicated BEGIN IMMEDIATE execution.
+        """
+        if self.conn.in_transaction:
+            raise RuntimeError(
+                "claim_next_pending must execute in its own dedicated atomic transaction, "
+                "not within an existing active outer transaction."
+            )
+
+        now_iso = _format_iso_dt(datetime.now(timezone.utc))
+
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            cur = self.conn.cursor()
+            cur.execute(
+                """
+                SELECT id FROM pipeline2_jobs
+                WHERE status = 'pending'
+                  AND cancel_requested = 0
+                ORDER BY id ASC
+                LIMIT 1
+                """
+            )
+            row = cur.fetchone()
+            if not row:
+                self.conn.execute("COMMIT")
+                return None
+
+            job_id = row["id"]
+            cur.execute(
+                """
+                UPDATE pipeline2_jobs
+                SET status = 'processing',
+                    claimed_at = ?,
+                    updated_at = ?
+                WHERE id = ? AND status = 'pending'
+                """,
+                (now_iso, now_iso, job_id),
+            )
+            if cur.rowcount == 0:
+                self.conn.execute("COMMIT")
+                return None
+
+            cur.execute("SELECT * FROM pipeline2_jobs WHERE id = ?", (job_id,))
+            claimed_row = cur.fetchone()
+            self.conn.execute("COMMIT")
+            return self._row_to_entity(claimed_row) if claimed_row else None
+        except Exception:
+            self.conn.execute("ROLLBACK")
+            raise
+
     def save(self, job: Pipeline2Job) -> Pipeline2Job:
         _ensure_transaction(self.conn)
         now_iso = _format_iso_dt(datetime.now(timezone.utc))

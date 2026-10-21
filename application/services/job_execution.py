@@ -18,6 +18,7 @@ from application.events import (
 )
 from application.sanitizer import sanitize_error_message
 from core.entities.job import Job, JobStatus, Pipeline2Job
+from core.entities.prompt import PromptType
 from core.entities.artifact import ArtifactHandle, ArtifactType, StorageBackendType
 from core.entities.visual_region import VisualRegion, RegionOrigin, ReviewStatus, SyncStatus
 from core.entities.bounding_box_parser import BoundingBoxParser
@@ -341,10 +342,21 @@ class JobExecutionService:
                 uow.jobs.update_status(job.id, JobStatus.DONE)
 
                 if job.auto_pipeline2:
+                    p2_prompt_text = None
+                    if job.pipeline2_prompt_id:
+                        p_entity = uow.prompts.get_by_id(job.pipeline2_prompt_id)
+                        if p_entity:
+                            p2_prompt_text = p_entity.text
+                    if not p2_prompt_text:
+                        def_p = uow.prompts.get_default(PromptType.PIPELINE_2)
+                        if def_p:
+                            p2_prompt_text = def_p.text
+
                     p2_job = Pipeline2Job(
                         id=None,
                         source_job_id=job.id,
                         prompt_id=job.pipeline2_prompt_id,
+                        prompt_text=p2_prompt_text,
                         status=JobStatus.PENDING,
                         input_path=output_uri,
                         api_chain=job.api_chain,
@@ -361,17 +373,27 @@ class JobExecutionService:
             with self._lock:
                 self._pause_requested_jobs.discard(job.id)
 
-    def execute_next_pipeline2_job(self) -> Optional[Pipeline2Job]:
-        """Executes the next pending Pipeline 2 text refinement job."""
+    def execute_claimed_pipeline2_job(self, p2_job_id: int) -> Pipeline2Job:
+        """
+        Executes an already-claimed Pipeline 2 text refinement job.
+        Responsible for loading the input markdown artifact, invoking AI text refinement,
+        saving the PIPELINE2_MARKDOWN output artifact, updating status to DONE,
+        and publishing completion events.
+        """
         with self.uow_factory.create() as uow:
-            p2_job = uow.pipeline2_jobs.get_next_pending()
+            p2_job = uow.pipeline2_jobs.get_by_id(p2_job_id)
             if not p2_job:
-                return None
+                raise EntityNotFoundError("Pipeline2Job", p2_job_id)
 
-            JobStateTransitionPolicy.validate_transition(p2_job.status, JobStatus.PROCESSING)
-            p2_job.status = JobStatus.PROCESSING
-            uow.pipeline2_jobs.update_status(p2_job.id, JobStatus.PROCESSING)
-            uow.commit()
+            if not p2_job.prompt_text:
+                if p2_job.prompt_id:
+                    p = uow.prompts.get_by_id(p2_job.prompt_id)
+                    if p:
+                        p2_job.prompt_text = p.text
+                if not p2_job.prompt_text:
+                    def_p = uow.prompts.get_default(PromptType.PIPELINE_2)
+                    if def_p:
+                        p2_job.prompt_text = def_p.text
 
         logger.info(f"[Pipeline2 Job {p2_job.id}] Started execution.")
 
@@ -389,6 +411,10 @@ class JobExecutionService:
             with self.uow_factory.create() as uow:
                 uow.pipeline2_jobs.update_status(p2_job.id, JobStatus.FAILED, error_message=f"Input artifact missing: {e}")
                 uow.commit()
+            p2_job.status = JobStatus.FAILED
+            p2_job.error_message = f"Input artifact missing: {e}"
+            self._publish_state_changed(p2_job.source_job_id, JobStatus.PROCESSING, JobStatus.FAILED)
+            self._publish_failed(p2_job.source_job_id, f"Input artifact missing: {e}", is_retryable=False)
             return p2_job
 
         result, used_slot = self.ai_executor.execute_text_with_fallback(
@@ -401,6 +427,10 @@ class JobExecutionService:
             with self.uow_factory.create() as uow:
                 uow.pipeline2_jobs.update_status(p2_job.id, JobStatus.PAUSED, error_message="All APIs exhausted for Pipeline 2.")
                 uow.commit()
+            p2_job.status = JobStatus.PAUSED
+            p2_job.error_message = "All APIs exhausted for Pipeline 2."
+            self._publish_state_changed(p2_job.source_job_id, JobStatus.PROCESSING, JobStatus.PAUSED)
+            self._publish_failed(p2_job.source_job_id, "All APIs exhausted for Pipeline 2.", is_retryable=True)
             return p2_job
 
         output_handle = self.storage.store(
@@ -418,8 +448,27 @@ class JobExecutionService:
 
         p2_job.status = JobStatus.DONE
         p2_job.output_path = output_handle.uri
+        self._publish_state_changed(p2_job.source_job_id, JobStatus.PROCESSING, JobStatus.DONE)
         self._publish_completed(p2_job.source_job_id, output_handle.uri)
         return p2_job
+
+    def execute_next_pipeline2_job(self) -> Optional[Pipeline2Job]:
+        """Atomically claims and executes the next pending Pipeline 2 text refinement job."""
+        with self.uow_factory.create() as uow:
+            if hasattr(uow.pipeline2_jobs, "claim_next_pending"):
+                p2_job = uow.pipeline2_jobs.claim_next_pending()
+            else:
+                p2_job = uow.pipeline2_jobs.get_next_pending()
+                if p2_job:
+                    JobStateTransitionPolicy.validate_transition(p2_job.status, JobStatus.PROCESSING)
+                    p2_job.status = JobStatus.PROCESSING
+                    uow.pipeline2_jobs.update_status(p2_job.id, JobStatus.PROCESSING)
+            uow.commit()
+
+        if not p2_job:
+            return None
+
+        return self.execute_claimed_pipeline2_job(p2_job.id)
 
     def pause_job(self, job_id: int) -> bool:
         """
