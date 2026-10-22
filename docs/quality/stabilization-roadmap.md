@@ -39,19 +39,19 @@ This document serves as the **single source of truth** for stabilization. Future
 *Initial Roadmap Baseline Snapshot: 2026-10-21 14:22 UTC+03:30 (Commit `9b8c54e`, PR #122)*<br/>
 *STAB-00 Verified Execution Baseline Snapshot: 2026-10-22 00:15 UTC+03:30 (Commit `b9b7141`, PR #133)*<br/>
 *P2-03 Verified Execution Snapshot: 2026-10-22 12:25 UTC+03:30 (Commit `ec5854f`, PR #137)*<br/>
-*THEME-02 Verified Execution Snapshot: 2026-10-23 00:23 UTC+03:30 (Commit `f11c95c`, PR #141)*
+*THEME-02 Verified Execution Snapshot: 2026-10-23 01:10 UTC+03:30 (Commit `3d71f98`, PR #143)*
 
 ### 2.1 Git and Working Tree State
 
 | Property | Verified Value | Evidence Source |
 | :--- | :--- | :--- |
 | **Active Baseline Branch** | `main` | `git status` |
-| **HEAD Commit SHA (main)** | `f11c95cfdffaa7fa7808a70ff50ef550f789ef2e` | `git rev-parse HEAD` |
-| **Commit Message** | `refactor(desktop): verify theme lifecycle, eliminate fallbacks, and harden accessibility (THEME-02) (#141)` | `git log -1` |
+| **HEAD Commit SHA (main)** | `3d71f989938b8c2fc9c3a3cb853039d93c10a12e` | `git rev-parse HEAD` |
+| **Commit Message** | `fix(desktop): harden theme lifecycle startup palette, wire focus rings, and eliminate scanner false positives (#143)` | `git log -1` |
 | **Remote Synchronization** | Up to date with `origin/main` | `git status -sb` |
 | **Working Tree Status** | Clean (no modified, untracked, or staged files) | `git status --porcelain` |
 | **Latest Git Tag** | `v0.1.0-rc.1` | `git tag -l` |
-| **Git Describe** | `v0.1.0-rc.1-23-gf11c95c` | `git describe --tags --always` |
+| **Git Describe** | `v0.1.0-rc.1-25-g3d71f98` | `git describe --tags --always` |
 | **GitHub Releases** | Exactly 1 Pre-release: `v0.1.0-rc.1` (Zero stable releases published) | `gh release list` |
 | **Application Version** | `APP_NAME = "Polpo"`, `__version__ = "0.1.0"`, `VERSION_INFO = (0, 1, 0)` | `core/version.py:9-11`, `pyproject.toml:7` |
 
@@ -425,7 +425,7 @@ flowchart TD
   QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/pytest tests/characterization/test_theme_switching.py tests/unit/test_theme_controller.py tests/unit/test_contrast_accessibility.py tests/unit/test_math_image_provider.py tests/unit/test_theme_architecture_invariants.py -v
   ```
 - **Branch Suggestion:** `fix/theme-lifecycle-accessibility`
-- **PR / CI / Merge Record:** [PR #141](https://github.com/amirreza-a2a/Polpo/pull/141) merged into `main` at `f11c95cfdffaa7fa7808a70ff50ef550f789ef2e`. All 4 required CI status checks passed: `quality-gates` (42s), `secret-scan` (9s), `test-linux` (4m19s), `test-windows` (5m27s). Full test suite: 2,166 passed, 6 skipped on Linux. 82 focused theme/math/accessibility tests passed.
+- **PR / CI / Merge Record:** [PR #141](https://github.com/amirreza-a2a/Polpo/pull/141) merged into `main` at `f11c95cfdffaa7fa7808a70ff50ef550f789ef2e`. Hardening [PR #143](https://github.com/amirreza-a2a/Polpo/pull/143) merged at `3d71f989938b8c2fc9c3a3cb853039d93c10a12e`. All 4 required CI status checks passed on both PRs: `quality-gates` (43s), `secret-scan` (10s), `test-linux` (2m7s), `test-windows` (5m44s). Full test suite: 2,173 passed, 6 skipped on Linux. 71 focused unit & characterization tests passed.
 - **Notes & Risks:** `QStyleHints.colorSchemeChanged()` signal fires before the system palette updates in some Qt versions; Polpo's token-based approach prevents this lag, but must be verified on Linux.
 
 ---
@@ -936,7 +936,7 @@ The following standing constraints apply to all stabilization operations:
 | **2026-10-21** | `P2-02-R1` | Hardened startup recovery ownership with cross-process database locking (`fcntl` on POSIX, `msvcrt.locking` with out-of-band offset and `_winapi` full sharing on Windows); eliminated broad `TypeError` handling in `JobRecoveryService`; serialized concurrent recovery with `BEGIN IMMEDIATE`; hardened against permission error masking, in-memory SQLite URI bypass, and initialization non-idempotency. Added 20 unit tests. | [#131](https://github.com/amirreza-a2a/Polpo/pull/131) / `144be72`<br/>[#133](https://github.com/amirreza-a2a/Polpo/pull/133) / `b9b7141` | Merged cleanly into `main` after all 4 required status checks passed on both PRs. Full test suite: 2112 passed, 6 skipped on Linux. |
 | **2026-10-22** | `P2-03` | Clarified Pipeline 2 refinement output as auxiliary derivative artifact; added ADR-004; implemented SQLite Migration 005 for source_version lineage; implemented adopt_pipeline2_refinement under OCC in DocumentPublicationService; protected dirty human edits in MarkdownEditorController and QML. Hardened editor OCC rejection synchronization, job-switch refinement isolation, and zero-job event guards. Added 23 tests (16 integration, 6 migration, 1 controller). | [#135](https://github.com/amirreza-a2a/Polpo/pull/135) / `a2e2cfc`<br/>[#137](https://github.com/amirreza-a2a/Polpo/pull/137) / `ec5854f` | Merged cleanly into `main` after all 4 required status checks passed on both PRs (`quality-gates` [36s], `secret-scan` [6s], `test-linux` [1m56s], `test-windows` [3m54s]). Full test suite: 2131 passed, 6 skipped on Linux. |
 | **2026-10-22** | `THEME-01` | Audited and verified authoritative 41-token contract in ThemePalette; audited all 30 active QML files; replaced unauthorized RGBA and direct color literals in DocumentViewerView.qml and MarkdownView.qml; eliminated theme-bearing fallback literals in Main.qml and Sidebar.qml while guarding teardown; preserved CV coordinate overlay and math error badge constants; reconciled Polpo product branding in scoped presentation files; strengthened AST architecture invariant tests. | [#139](https://github.com/amirreza-a2a/Polpo/pull/139) / `d5716b2` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [48s], `secret-scan` [8s], `test-linux` [1m37s], `test-windows` [3m57s]). Full test suite: 2137 passed, 6 skipped on Linux. |
-| **2026-10-23** | `THEME-02` | Verified theme switching lifecycle across system/dark/light preferences; hardened ThemeController against missing style hints and portal errors; ensured Qt.ColorScheme.Unknown deterministically defaults to dark; eliminated spurious signal emissions; replaced all 231 unauthorized hardcoded fallback color literals across 24 QML files with transparent; coupled MathJax foreground colors to theme palette while preserving cache neutrality and URL pixmap isolation; verified WCAG 2.2 contrast compliance (14.64:1 to 17.39:1 text contrast, SC 1.4.11 focus ring contrast >= 3:1, and documented SC 1.4.3 inactive button exemptions); added 28 unit and characterization tests. | [#141](https://github.com/amirreza-a2a/Polpo/pull/141) / `f11c95c` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [42s], `secret-scan` [9s], `test-linux` [4m19s], `test-windows` [5m27s]). Full test suite: 2166 passed, 6 skipped on Linux. 82 focused theme/math/accessibility tests passed. |
+| **2026-10-23** | `THEME-02` | Verified theme switching lifecycle across system/dark/light preferences; hardened ThemeController against missing style hints and portal errors; ensured Qt.ColorScheme.Unknown deterministically defaults to dark; eliminated spurious signal emissions; replaced all 231 unauthorized hardcoded fallback color literals across 24 QML files with transparent; coupled MathJax foreground colors to theme palette while preserving cache neutrality and URL pixmap isolation; verified WCAG 2.2 contrast compliance (14.64:1 to 17.39:1 text contrast, SC 1.4.11 focus ring contrast >= 3:1, and documented SC 1.4.3 inactive button exemptions); synchronized QGuiApplication palette on startup; handled raw integer OS scheme signals; wired focus rings across representative interactive controls; eliminated scanner false positives on regular text strings; added 35 unit and characterization tests. | [#141](https://github.com/amirreza-a2a/Polpo/pull/141) / `f11c95c`<br/>[#143](https://github.com/amirreza-a2a/Polpo/pull/143) / `3d71f98` | Merged cleanly into `main` after all 4 required status checks passed on both PRs (`quality-gates` [43s], `secret-scan` [10s], `test-linux` [2m7s], `test-windows` [5m44s]). Full test suite: 2173 passed, 6 skipped on Linux. 71 focused theme/math/accessibility tests passed. |
 
 ---
 
