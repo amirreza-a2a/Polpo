@@ -38,19 +38,19 @@ This document serves as the **single source of truth** for stabilization. Future
 
 *Initial Roadmap Baseline Snapshot: 2026-10-21 14:22 UTC+03:30 (Commit `9b8c54e`, PR #122)*<br/>
 *STAB-00 Verified Execution Baseline Snapshot: 2026-10-22 00:15 UTC+03:30 (Commit `b9b7141`, PR #133)*<br/>
-*P2-03 Verified Execution Snapshot: 2026-10-22 11:44 UTC+03:30 (Commit `a2e2cfc`, PR #135)*
+*P2-03 Verified Execution Snapshot: 2026-10-22 12:25 UTC+03:30 (Commit `ec5854f`, PR #137)*
 
 ### 2.1 Git and Working Tree State
 
 | Property | Verified Value | Evidence Source |
 | :--- | :--- | :--- |
 | **Active Baseline Branch** | `main` | `git status` |
-| **HEAD Commit SHA (main)** | `a2e2cfc2307137f8933fa7f88424ef84c7e2d93e` | `git rev-parse HEAD` |
-| **Commit Message** | `fix(pipeline2): establish artifact lineage and OCC canonical publication contract (P2-03) (#135)` | `git log -1` |
+| **HEAD Commit SHA (main)** | `ec5854fe09d57a9cf58d34346765da76865239e2` | `git rev-parse HEAD` |
+| **Commit Message** | `fix(pipeline2): synchronize editor on OCC rejection and isolate refinement lifecycle state (#137)` | `git log -1` |
 | **Remote Synchronization** | Up to date with `origin/main` | `git status -sb` |
 | **Working Tree Status** | Clean (no modified, untracked, or staged files) | `git status --porcelain` |
 | **Latest Git Tag** | `v0.1.0-rc.1` | `git tag -l` |
-| **Git Describe** | `v0.1.0-rc.1-17-ga2e2cfc` | `git describe --tags --always` |
+| **Git Describe** | `v0.1.0-rc.1-19-gec5854f` | `git describe --tags --always` |
 | **GitHub Releases** | Exactly 1 Pre-release: `v0.1.0-rc.1` (Zero stable releases published) | `gh release list` |
 | **Application Version** | `APP_NAME = "Polpo"`, `__version__ = "0.1.0"`, `VERSION_INFO = (0, 1, 0)` | `core/version.py:9-11`, `pyproject.toml:7` |
 
@@ -344,7 +344,7 @@ flowchart TD
   ./.venv/bin/pytest tests/unit/test_migration_005_schema.py -v
   ```
 - **Branch Suggestion:** `fix/pipeline2-document-semantics`
-- **PR / CI / Merge Record:** [PR #135](https://github.com/amirreza-a2a/Polpo/pull/135) merged into `main` at `a2e2cfc2307137f8933fa7f88424ef84c7e2d93e`. All 4 required CI status checks passed: `quality-gates` (37s), `secret-scan` (8s), `test-linux` (1m35s), `test-windows` (3m51s). Full test suite: 2,128 passed, 6 skipped.
+- **PR / CI / Merge Record:** [PR #135](https://github.com/amirreza-a2a/Polpo/pull/135) merged into `main` at `a2e2cfc2307137f8933fa7f88424ef84c7e2d93e`. Hardening [PR #137](https://github.com/amirreza-a2a/Polpo/pull/137) merged at `ec5854fe09d57a9cf58d34346765da76865239e2`. All 4 required CI status checks passed on both PRs: `quality-gates` (36s), `secret-scan` (6s), `test-linux` (1m56s), `test-windows` (3m54s). Full test suite: 2,131 passed, 6 skipped.
 - **Notes & Risks:** `AGENTS.md` Rule 8 (Persistence Rules) and Rule 26 (Preserve Behavioral Compatibility).
 
 ---
@@ -929,7 +929,7 @@ The following standing constraints apply to all stabilization operations:
 | **2026-10-21** | `P2-01` | Diagnosed desktop runtime dispatch gap for Pipeline 2; implemented atomic `claim_next_pending()`, `execute_claimed_pipeline2_job()`, and concurrent desktop worker dispatching with capacity controls, start gates, and crash isolation. Added comprehensive regression and integration suite. | [#126](https://github.com/amirreza-a2a/Polpo/pull/126) / `726cd03` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates`, `secret-scan`, `test-linux` [2056 passed], `test-windows` [2019 passed]). |
 | **2026-10-21** | `P2-02` | Hardened Pipeline 2 lifecycle, atomic claiming deserialization rollback, cooperative cancellation at 4 checkpoints, sanitized failure handling for missing artifacts / AI exceptions, and startup recovery with active ownership safety. Added 25 unit tests. | [#129](https://github.com/amirreza-a2a/Polpo/pull/129) / `b1c41aa` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [34s], `secret-scan` [6s], `test-linux` [1m49s], `test-windows` [4m7s]). Full test suite: 2092 passed, 6 skipped. |
 | **2026-10-21** | `P2-02-R1` | Hardened startup recovery ownership with cross-process database locking (`fcntl` on POSIX, `msvcrt.locking` with out-of-band offset and `_winapi` full sharing on Windows); eliminated broad `TypeError` handling in `JobRecoveryService`; serialized concurrent recovery with `BEGIN IMMEDIATE`; hardened against permission error masking, in-memory SQLite URI bypass, and initialization non-idempotency. Added 20 unit tests. | [#131](https://github.com/amirreza-a2a/Polpo/pull/131) / `144be72`<br/>[#133](https://github.com/amirreza-a2a/Polpo/pull/133) / `b9b7141` | Merged cleanly into `main` after all 4 required status checks passed on both PRs. Full test suite: 2112 passed, 6 skipped on Linux. |
-| **2026-10-22** | `P2-03` | Clarified Pipeline 2 refinement output as auxiliary derivative artifact; added ADR-004; implemented SQLite Migration 005 for source_version lineage; implemented adopt_pipeline2_refinement under OCC in DocumentPublicationService; protected dirty human edits in MarkdownEditorController and QML. Added 20 tests (14 integration, 6 migration). | [#135](https://github.com/amirreza-a2a/Polpo/pull/135) / `a2e2cfc` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [37s], `secret-scan` [8s], `test-linux` [1m35s], `test-windows` [3m51s]). Full test suite: 2128 passed, 6 skipped on Linux. |
+| **2026-10-22** | `P2-03` | Clarified Pipeline 2 refinement output as auxiliary derivative artifact; added ADR-004; implemented SQLite Migration 005 for source_version lineage; implemented adopt_pipeline2_refinement under OCC in DocumentPublicationService; protected dirty human edits in MarkdownEditorController and QML. Hardened editor OCC rejection synchronization, job-switch refinement isolation, and zero-job event guards. Added 23 tests (16 integration, 6 migration, 1 controller). | [#135](https://github.com/amirreza-a2a/Polpo/pull/135) / `a2e2cfc`<br/>[#137](https://github.com/amirreza-a2a/Polpo/pull/137) / `ec5854f` | Merged cleanly into `main` after all 4 required status checks passed on both PRs (`quality-gates` [36s], `secret-scan` [6s], `test-linux` [1m56s], `test-windows` [3m54s]). Full test suite: 2131 passed, 6 skipped on Linux. |
 
 ---
 
