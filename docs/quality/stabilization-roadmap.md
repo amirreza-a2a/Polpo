@@ -37,19 +37,20 @@ This document serves as the **single source of truth** for stabilization. Future
 ## 2. Verified Repository Baseline & Dated Evidence Snapshot
 
 *Initial Roadmap Baseline Snapshot: 2026-10-21 14:22 UTC+03:30 (Commit `9b8c54e`, PR #122)*<br/>
-*STAB-00 Verified Execution Baseline Snapshot: 2026-10-22 00:15 UTC+03:30 (Commit `b9b7141`, PR #133)*
+*STAB-00 Verified Execution Baseline Snapshot: 2026-10-22 00:15 UTC+03:30 (Commit `b9b7141`, PR #133)*<br/>
+*P2-03 Verified Execution Snapshot: 2026-10-22 11:44 UTC+03:30 (Commit `a2e2cfc`, PR #135)*
 
 ### 2.1 Git and Working Tree State
 
 | Property | Verified Value | Evidence Source |
 | :--- | :--- | :--- |
 | **Active Baseline Branch** | `main` | `git status` |
-| **HEAD Commit SHA (main)** | `b9b71415ebc2826e2576b53a0f5a770335e38a44` | `git rev-parse HEAD` |
-| **Commit Message** | `fix(lifecycle): harden recovery ownership against permission masking, in-memory URIs, and non-idempotent init (#133)` | `git log -1` |
+| **HEAD Commit SHA (main)** | `a2e2cfc2307137f8933fa7f88424ef84c7e2d93e` | `git rev-parse HEAD` |
+| **Commit Message** | `fix(pipeline2): establish artifact lineage and OCC canonical publication contract (P2-03) (#135)` | `git log -1` |
 | **Remote Synchronization** | Up to date with `origin/main` | `git status -sb` |
 | **Working Tree Status** | Clean (no modified, untracked, or staged files) | `git status --porcelain` |
 | **Latest Git Tag** | `v0.1.0-rc.1` | `git tag -l` |
-| **Git Describe** | `v0.1.0-rc.1-15-gb9b7141` | `git describe --tags --always` |
+| **Git Describe** | `v0.1.0-rc.1-17-ga2e2cfc` | `git describe --tags --always` |
 | **GitHub Releases** | Exactly 1 Pre-release: `v0.1.0-rc.1` (Zero stable releases published) | `gh release list` |
 | **Application Version** | `APP_NAME = "Polpo"`, `__version__ = "0.1.0"`, `VERSION_INFO = (0, 1, 0)` | `core/version.py:9-11`, `pyproject.toml:7` |
 
@@ -306,39 +307,44 @@ flowchart TD
 
 ---
 
-### [ ] P2-03 — Clarify Pipeline 2 Output and Canonical-Document Semantics
+### [x] P2-03 — Clarify Pipeline 2 Output and Canonical-Document Semantics
 
 - **ID:** `P2-03`
 - **Title:** Clarify Pipeline 2 Output Artifact vs Canonical Document Versioning
 - **Priority:** P1 (High)
-- **Status:** `NOT_STARTED`
+- **Status:** `COMPLETED`
 - **Dependencies:** `P2-01`, `P2-02`
 - **Scope:**
-  - Audit output publication: `execute_next_pipeline2_job()` stores output as `ArtifactType.PIPELINE2_MARKDOWN` (`p2_output_{id}.md`) and updates `pipeline2_jobs.output_path`, but bypasses `DocumentPublicationService`.
-  - Determine product contract: Does Pipeline 2 advance the canonical document (`output_{job_id}_v{version}.md`) under OCC, or does it exist as an auxiliary refinement artifact?
-  - If advancing canonical document: ensure publication goes through `DocumentPublicationService` to avoid violating monotonic version watermarks, and check for concurrent human edits in `ReviewWorkspace`.
-  - If auxiliary artifact: verify how the desktop UI presents the Pipeline 2 result to the user (e.g. comparison view, accept/replace button).
+  - Audit output publication: `execute_claimed_pipeline2_job()` stores output as `ArtifactType.PIPELINE2_MARKDOWN` (`p2_output_{id}.md`) and updates `pipeline2_jobs.output_path`, while strictly preserving `jobs.output_path` and document versions.
+  - Determine product contract: Pipeline 2 output is strictly an auxiliary refinement artifact (`ADR-004`). Canonical adoption is an explicit, deliberate user action in desktop UI / `MarkdownEditorPane.qml`.
+  - Canonical publication passes exclusively through `DocumentPublicationService.publish_version(base_version=source_version)` under Optimistic Concurrency Control (OCC).
+  - Unsaved human edits in `ReviewWorkspace` block adoption to prevent silent data loss.
 - **Non-Goals:** Eliminating `DocumentPublicationService` or bypassing OCC.
 - **Evidence & File Paths:**
-  - `application/services/job_execution.py:406-422`
+  - `application/services/job_execution.py`
+  - `application/services/markdown_editor_service.py`
   - `application/services/document_publication_service.py`
   - `core/entities/artifact.py:ArtifactType.PIPELINE2_MARKDOWN`
+  - `interfaces/desktop/bridge.py`
   - `interfaces/desktop/controllers/job_controller.py`
-  - `interfaces/desktop/qml/views/ReviewWorkspaceView.qml`
+  - `interfaces/desktop/controllers/markdown_editor_controller.py`
+  - `interfaces/desktop/qml/components/MarkdownEditorPane.qml`
+  - `docs/adr/2026-10-22-adr-004-pipeline2-artifact-lineage-and-canonical-publication-contract.md`
 - **Recommended Skill Sequence:**
   `grilling → domain-modeling → grill-with-docs → codebase-design` (if publication contract changes) → `tdd → implement → code-review`
 - **Acceptance Criteria:**
-  1. Architectural distinction between refinement artifacts and canonical document versions is documented in an ADR or `CONTEXT.md`.
-  2. User edits in `MarkdownEditorController` are never silently overwritten by Pipeline 2 completion.
-  3. Publication follows `DocumentPublicationService` or provides an explicit user-controlled adoption action in QML.
-  4. Integration tests verify conflict-free version advancement.
+  1. Architectural distinction between refinement artifacts and canonical document versions is documented in ADR-004. [Verified]
+  2. User edits in `MarkdownEditorController` are never silently overwritten by Pipeline 2 completion. [Verified — test_dirty_buffer_blocks_adoption_without_overwriting]
+  3. Publication follows `DocumentPublicationService` and provides an explicit user-controlled adoption action in QML. [Verified]
+  4. Integration tests verify conflict-free version advancement and stale-version OCC rejection. [Verified — 14 integration tests in test_pipeline2_publication.py]
 - **Verification Commands:**
   ```bash
   ./.venv/bin/pytest tests/integration/test_pipeline2_publication.py -v
   ./.venv/bin/pytest tests/unit/test_document_publication_service.py -v
+  ./.venv/bin/pytest tests/unit/test_migration_005_schema.py -v
   ```
 - **Branch Suggestion:** `fix/pipeline2-document-semantics`
-- **PR / CI / Merge Record:** Unstarted
+- **PR / CI / Merge Record:** [PR #135](https://github.com/amirreza-a2a/Polpo/pull/135) merged into `main` at `a2e2cfc2307137f8933fa7f88424ef84c7e2d93e`. All 4 required CI status checks passed: `quality-gates` (37s), `secret-scan` (8s), `test-linux` (1m35s), `test-windows` (3m51s). Full test suite: 2,128 passed, 6 skipped.
 - **Notes & Risks:** `AGENTS.md` Rule 8 (Persistence Rules) and Rule 26 (Preserve Behavioral Compatibility).
 
 ---
@@ -923,6 +929,7 @@ The following standing constraints apply to all stabilization operations:
 | **2026-10-21** | `P2-01` | Diagnosed desktop runtime dispatch gap for Pipeline 2; implemented atomic `claim_next_pending()`, `execute_claimed_pipeline2_job()`, and concurrent desktop worker dispatching with capacity controls, start gates, and crash isolation. Added comprehensive regression and integration suite. | [#126](https://github.com/amirreza-a2a/Polpo/pull/126) / `726cd03` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates`, `secret-scan`, `test-linux` [2056 passed], `test-windows` [2019 passed]). |
 | **2026-10-21** | `P2-02` | Hardened Pipeline 2 lifecycle, atomic claiming deserialization rollback, cooperative cancellation at 4 checkpoints, sanitized failure handling for missing artifacts / AI exceptions, and startup recovery with active ownership safety. Added 25 unit tests. | [#129](https://github.com/amirreza-a2a/Polpo/pull/129) / `b1c41aa` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [34s], `secret-scan` [6s], `test-linux` [1m49s], `test-windows` [4m7s]). Full test suite: 2092 passed, 6 skipped. |
 | **2026-10-21** | `P2-02-R1` | Hardened startup recovery ownership with cross-process database locking (`fcntl` on POSIX, `msvcrt.locking` with out-of-band offset and `_winapi` full sharing on Windows); eliminated broad `TypeError` handling in `JobRecoveryService`; serialized concurrent recovery with `BEGIN IMMEDIATE`; hardened against permission error masking, in-memory SQLite URI bypass, and initialization non-idempotency. Added 20 unit tests. | [#131](https://github.com/amirreza-a2a/Polpo/pull/131) / `144be72`<br/>[#133](https://github.com/amirreza-a2a/Polpo/pull/133) / `b9b7141` | Merged cleanly into `main` after all 4 required status checks passed on both PRs. Full test suite: 2112 passed, 6 skipped on Linux. |
+| **2026-10-22** | `P2-03` | Clarified Pipeline 2 refinement output as auxiliary derivative artifact; added ADR-004; implemented SQLite Migration 005 for source_version lineage; implemented adopt_pipeline2_refinement under OCC in DocumentPublicationService; protected dirty human edits in MarkdownEditorController and QML. Added 20 tests (14 integration, 6 migration). | [#135](https://github.com/amirreza-a2a/Polpo/pull/135) / `a2e2cfc` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [37s], `secret-scan` [8s], `test-linux` [1m35s], `test-windows` [3m51s]). Full test suite: 2128 passed, 6 skipped on Linux. |
 
 ---
 
