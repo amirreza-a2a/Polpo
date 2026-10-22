@@ -349,12 +349,12 @@ flowchart TD
 
 ---
 
-### [ ] THEME-01 — Audit Semantic Theme Tokens and Fixed Colors
+### [x] THEME-01 — Audit Semantic Theme Tokens and Fixed Colors
 
 - **ID:** `THEME-01`
 - **Title:** Audit Semantic Theme Tokens, Hardcoded Literals, and Token Registry
 - **Priority:** P2 (Medium)
-- **Status:** `NOT_STARTED`
+- **Status:** `COMPLETED`
 - **Dependencies:** `STAB-00`
 - **Scope:**
   - Audit `interfaces/desktop/theme.py`: `ThemePalette` defines 41 tokens, whereas historical investigation `P01-desktop-theme-system-validation.md` referenced 30 tokens. Reconcile code and documentation.
@@ -367,8 +367,8 @@ flowchart TD
 - **Evidence & File Paths:**
   - `interfaces/desktop/theme.py:12-80` (41 tokens defined in `ThemePalette`)
   - `interfaces/desktop/controllers/theme_controller.py`
-  - `docs/problems/investigations/P01-desktop-theme-system-validation.md:72-76` (stale 30-token claim)
-  - `interfaces/desktop/qml/` (26 QML files)
+  - `docs/problems/investigations/P01-desktop-theme-system-validation.md:72-108` (reconciled 41-token contract and exception policy)
+  - `interfaces/desktop/qml/` (30 active QML files)
   - `tests/unit/test_theme_architecture_invariants.py`
 - **Recommended Skill Sequence:**
   `research → code-review → tdd → implement → visual/runtime verification`
@@ -383,7 +383,7 @@ flowchart TD
   ./.venv/bin/pytest tests/unit/test_theme_controller.py -v
   ```
 - **Branch Suggestion:** `refactor/theme-tokens-audit`
-- **PR / CI / Merge Record:** Unstarted
+- **PR / CI / Merge Record:** [PR #139](https://github.com/amirreza-a2a/Polpo/pull/139) merged into `main` at `d5716b2da42ef0fb2723d7a8543a9fd00f523c31`. All 4 required CI status checks passed: `quality-gates` (48s), `secret-scan` (8s), `test-linux` (1m37s), `test-windows` (3m57s). Full test suite: 2,137 passed, 6 skipped on Linux.
 - **Notes & Risks:** Visual regression must be avoided; theme switches must not cause contrast inversions in text/background pairs.
 
 ---
@@ -930,6 +930,7 @@ The following standing constraints apply to all stabilization operations:
 | **2026-10-21** | `P2-02` | Hardened Pipeline 2 lifecycle, atomic claiming deserialization rollback, cooperative cancellation at 4 checkpoints, sanitized failure handling for missing artifacts / AI exceptions, and startup recovery with active ownership safety. Added 25 unit tests. | [#129](https://github.com/amirreza-a2a/Polpo/pull/129) / `b1c41aa` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [34s], `secret-scan` [6s], `test-linux` [1m49s], `test-windows` [4m7s]). Full test suite: 2092 passed, 6 skipped. |
 | **2026-10-21** | `P2-02-R1` | Hardened startup recovery ownership with cross-process database locking (`fcntl` on POSIX, `msvcrt.locking` with out-of-band offset and `_winapi` full sharing on Windows); eliminated broad `TypeError` handling in `JobRecoveryService`; serialized concurrent recovery with `BEGIN IMMEDIATE`; hardened against permission error masking, in-memory SQLite URI bypass, and initialization non-idempotency. Added 20 unit tests. | [#131](https://github.com/amirreza-a2a/Polpo/pull/131) / `144be72`<br/>[#133](https://github.com/amirreza-a2a/Polpo/pull/133) / `b9b7141` | Merged cleanly into `main` after all 4 required status checks passed on both PRs. Full test suite: 2112 passed, 6 skipped on Linux. |
 | **2026-10-22** | `P2-03` | Clarified Pipeline 2 refinement output as auxiliary derivative artifact; added ADR-004; implemented SQLite Migration 005 for source_version lineage; implemented adopt_pipeline2_refinement under OCC in DocumentPublicationService; protected dirty human edits in MarkdownEditorController and QML. Hardened editor OCC rejection synchronization, job-switch refinement isolation, and zero-job event guards. Added 23 tests (16 integration, 6 migration, 1 controller). | [#135](https://github.com/amirreza-a2a/Polpo/pull/135) / `a2e2cfc`<br/>[#137](https://github.com/amirreza-a2a/Polpo/pull/137) / `ec5854f` | Merged cleanly into `main` after all 4 required status checks passed on both PRs (`quality-gates` [36s], `secret-scan` [6s], `test-linux` [1m56s], `test-windows` [3m54s]). Full test suite: 2131 passed, 6 skipped on Linux. |
+| **2026-10-22** | `THEME-01` | Audited and verified authoritative 41-token contract in ThemePalette; audited all 30 active QML files; replaced unauthorized RGBA and direct color literals in DocumentViewerView.qml and MarkdownView.qml; eliminated theme-bearing fallback literals in Main.qml and Sidebar.qml while guarding teardown; preserved CV coordinate overlay and math error badge constants; reconciled Polpo product branding in scoped presentation files; strengthened AST architecture invariant tests. | [#139](https://github.com/amirreza-a2a/Polpo/pull/139) / `d5716b2` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [48s], `secret-scan` [8s], `test-linux` [1m37s], `test-windows` [3m57s]). Full test suite: 2137 passed, 6 skipped on Linux. |
 
 ---
 
