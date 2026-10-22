@@ -871,6 +871,7 @@ class SQLitePipeline2JobRepository(IPipeline2JobRepository):
             claimed_at=_parse_iso_dt(row["claimed_at"]),
             created_at=_parse_iso_dt(row["created_at"]),
             updated_at=_parse_iso_dt(row["updated_at"]),
+            source_version=row["source_version"] if "source_version" in row.keys() else None,
         )
 
     def get_by_id(self, p2_job_id: int) -> Optional[Pipeline2Job]:
@@ -958,8 +959,8 @@ class SQLitePipeline2JobRepository(IPipeline2JobRepository):
                 INSERT INTO pipeline2_jobs (
                     source_job_id, prompt_id, prompt_text, status, input_path,
                     output_path, api_chain, current_api_index, error_message,
-                    cancel_requested, claimed_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    cancel_requested, claimed_at, created_at, updated_at, source_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job.source_job_id,
@@ -975,6 +976,7 @@ class SQLitePipeline2JobRepository(IPipeline2JobRepository):
                     claimed_iso,
                     created_iso,
                     now_iso,
+                    job.source_version,
                 ),
             )
             job.id = cur.lastrowid
@@ -987,7 +989,7 @@ class SQLitePipeline2JobRepository(IPipeline2JobRepository):
                     source_job_id = ?, prompt_id = ?, prompt_text = ?, status = ?,
                     input_path = ?, output_path = ?, api_chain = ?,
                     current_api_index = ?, error_message = ?, cancel_requested = ?,
-                    claimed_at = ?, updated_at = ?
+                    claimed_at = ?, updated_at = ?, source_version = ?
                 WHERE id = ?
                 """,
                 (
@@ -1003,6 +1005,7 @@ class SQLitePipeline2JobRepository(IPipeline2JobRepository):
                     1 if job.cancel_requested else 0,
                     claimed_iso,
                     now_iso,
+                    job.source_version,
                     job.id,
                 ),
             )
@@ -1095,6 +1098,15 @@ class SQLitePipeline2JobRepository(IPipeline2JobRepository):
                 (limit, offset),
             )
         return [self._row_to_entity(r) for r in cur.fetchall()]
+
+    def get_latest_for_source_job(self, source_job_id: int) -> Optional[Pipeline2Job]:
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT * FROM pipeline2_jobs WHERE source_job_id = ? ORDER BY id DESC LIMIT 1",
+            (source_job_id,),
+        )
+        row = cur.fetchone()
+        return self._row_to_entity(row) if row else None
 
 
 # ============================================================

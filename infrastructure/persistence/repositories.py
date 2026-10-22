@@ -287,12 +287,13 @@ class MySQLPipeline2JobRepository(IPipeline2JobRepository):
                     """
                     INSERT INTO pipeline2_jobs (
                         source_job_id, user_id, prompt_id, prompt_text,
-                        status, input_path, output_path, api_chain, current_api_index
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        status, input_path, output_path, api_chain, current_api_index, source_version
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         job.source_job_id, getattr(job, "user_id", 1), job.prompt_id, job.prompt_text,
                         job.status.value, job.input_path, job.output_path, chain_json, job.current_api_index,
+                        job.source_version,
                     ),
                 )
                 job.id = cur.lastrowid
@@ -301,12 +302,14 @@ class MySQLPipeline2JobRepository(IPipeline2JobRepository):
                     """
                     UPDATE pipeline2_jobs SET
                         status = %s, input_path = %s, output_path = %s,
-                        api_chain = %s, current_api_index = %s, error_message = %s, updated_at = NOW()
+                        api_chain = %s, current_api_index = %s, error_message = %s,
+                        source_version = %s, updated_at = NOW()
                     WHERE id = %s
                     """,
                     (
                         job.status.value, job.input_path, job.output_path,
-                        chain_json, job.current_api_index, job.error_message, job.id,
+                        chain_json, job.current_api_index, job.error_message,
+                        job.source_version, job.id,
                     ),
                 )
         return job
@@ -393,6 +396,14 @@ class MySQLPipeline2JobRepository(IPipeline2JobRepository):
             rows = cur.fetchall()
             return [self._row_to_entity(r) for r in rows]
 
+    def get_latest_for_source_job(self, source_job_id: int) -> Optional[Pipeline2Job]:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM pipeline2_jobs WHERE source_job_id = %s ORDER BY id DESC LIMIT 1",
+                (source_job_id,),
+            )
+            row = cur.fetchone()
+            return self._row_to_entity(row) if row else None
 
     def _row_to_entity(self, row: dict) -> Pipeline2Job:
         chain_raw = json.loads(row["api_chain"]) if row.get("api_chain") else []
@@ -412,6 +423,7 @@ class MySQLPipeline2JobRepository(IPipeline2JobRepository):
             claimed_at=row.get("claimed_at"),
             created_at=row.get("created_at"),
             updated_at=row.get("updated_at"),
+            source_version=row.get("source_version"),
         )
 
 

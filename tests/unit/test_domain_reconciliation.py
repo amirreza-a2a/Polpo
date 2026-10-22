@@ -28,6 +28,8 @@ from application.events import (
     JobFailedEvent,
     JobCancelledEvent,
     JobStateChangedEvent,
+    Pipeline2CompletedEvent,
+    Pipeline2FailedEvent,
 )
 from application.ports.notifier import (
     IApplicationEventPublisher,
@@ -354,6 +356,12 @@ class TestApplicationEventsAndNotifierBoundary(unittest.TestCase):
 
         adapter.publish(JobFailedEvent(job_id=42, error_message="Failed"))
         mock_legacy.notify_job_failed.assert_called_once_with(1, 42, "Failed")
+
+        adapter.publish(Pipeline2CompletedEvent(job_id=99, source_job_id=42, output_artifact_uri="uri://p2"))
+        mock_legacy.notify_job_completed.assert_called_with(1, 42, "uri://p2")
+
+        adapter.publish(Pipeline2FailedEvent(job_id=99, error_message="P2 Failed", is_retryable=False, source_job_id=42))
+        mock_legacy.notify_job_failed.assert_called_with(1, 42, "P2 Failed")
 
     def test_job_progress_event(self):
         ev = JobProgressEvent(job_id=42, processed_pages=5, total_pages=10, percent=50.0)

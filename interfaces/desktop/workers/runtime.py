@@ -12,7 +12,12 @@ from application.ports.unit_of_work import IUnitOfWorkFactory
 from application.ports.notifier import IApplicationEventPublisher
 from application.services.job_execution import JobExecutionService
 from application.services.settings_service import LocalSettingsService
-from application.events import JobStateChangedEvent, JobFailedEvent
+from application.events import (
+    JobStateChangedEvent,
+    JobFailedEvent,
+    Pipeline2StateChangedEvent,
+    Pipeline2FailedEvent,
+)
 from application.sanitizer import sanitize_error_message
 from core.entities.job import Job, Pipeline2Job, JobStatus
 
@@ -291,7 +296,12 @@ class DesktopJobRuntime:
         # Publish PENDING -> PROCESSING state event on dispatcher thread BEFORE releasing worker start gate
         if self.event_publisher:
             self.event_publisher.publish(
-                JobStateChangedEvent(job_id=claimed_p2_job.source_job_id, old_status=JobStatus.PENDING, new_status=JobStatus.PROCESSING)
+                Pipeline2StateChangedEvent(
+                    job_id=p2_job_id,
+                    old_status=JobStatus.PENDING,
+                    new_status=JobStatus.PROCESSING,
+                    source_job_id=claimed_p2_job.source_job_id,
+                )
             )
 
         logger.info("Runtime claimed pipeline2 job %d (source job %d). Releasing worker start gate.", p2_job_id, claimed_p2_job.source_job_id)
@@ -381,12 +391,22 @@ class DesktopJobRuntime:
                     uow.pipeline2_jobs.update_status(p2_job_id, JobStatus.FAILED, error_message=f"Unhandled worker error: {clean_error}")
                     uow.commit()
 
-                if self.event_publisher and source_job_id is not None:
+                if self.event_publisher:
                     self.event_publisher.publish(
-                        JobStateChangedEvent(job_id=source_job_id, old_status=JobStatus.PROCESSING, new_status=JobStatus.FAILED)
+                        Pipeline2StateChangedEvent(
+                            job_id=p2_job_id,
+                            old_status=JobStatus.PROCESSING,
+                            new_status=JobStatus.FAILED,
+                            source_job_id=source_job_id or 0,
+                        )
                     )
                     self.event_publisher.publish(
-                        JobFailedEvent(job_id=source_job_id, error_message=f"Unhandled worker error: {clean_error}", is_retryable=False)
+                        Pipeline2FailedEvent(
+                            job_id=p2_job_id,
+                            error_message=f"Unhandled worker error: {clean_error}",
+                            is_retryable=False,
+                            source_job_id=source_job_id or 0,
+                        )
                     )
             except Exception as db_err:
                 logger.error("Failed to record worker crash in database for pipeline2 job %d: %s", p2_job_id, db_err)

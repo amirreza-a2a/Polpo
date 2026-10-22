@@ -7,6 +7,7 @@ from application.ports.unit_of_work import IUnitOfWorkFactory
 from application.ports.storage import IArtifactStorage
 from application.ports.document_processor import IDocumentProcessor
 from application.ports.notifier import IApplicationEventPublisher
+from pathlib import Path
 from application.ports.ai_executor import IAIExecutionService
 from application.events import (
     JobProgressEvent,
@@ -15,18 +16,127 @@ from application.events import (
     JobFailedEvent,
     JobCancelledEvent,
     JobStateChangedEvent,
+    Pipeline2CompletedEvent,
+    Pipeline2StateChangedEvent,
+    Pipeline2FailedEvent,
+    Pipeline2CancelledEvent,
 )
 from application.sanitizer import sanitize_error_message
 from core.entities.job import Job, JobStatus, Pipeline2Job
 from core.entities.prompt import PromptType
 from core.entities.artifact import ArtifactHandle, ArtifactType, StorageBackendType
+from core.entities.document_version import DocumentVersionRecord
 from core.entities.visual_region import VisualRegion, RegionOrigin, ReviewStatus, SyncStatus
 from core.entities.bounding_box_parser import BoundingBoxParser
 from core.policies.job_state_policy import JobStateTransitionPolicy
-from core.exceptions.domain_exceptions import ArtifactNotFoundError, EntityNotFoundError, DomainError
+from core.exceptions.domain_exceptions import (
+    ArtifactNotFoundError,
+    CanonicalDocumentIntegrityError,
+    EntityNotFoundError,
+    DomainError,
+)
 from application.services.document_publication_service import DocumentPublicationService
 
 logger = logging.getLogger("polpot.execution")
+
+
+def _extract_canonical_filename(path_or_uri: Optional[str]) -> str:
+    if not path_or_uri:
+        return ""
+    from urllib.parse import urlparse, unquote
+    s = str(path_or_uri).strip()
+    if s.lower().startswith("file:"):
+        parsed = urlparse(s)
+        path_str = unquote(parsed.path)
+    else:
+        path_str = s
+    return Path(path_str).name
+
+
+def adopt_pipeline2_refinement_core(
+    uow_factory: IUnitOfWorkFactory,
+    storage: IArtifactStorage,
+    pub_service: DocumentPublicationService,
+    p2_job_id: int,
+) -> DocumentVersionRecord:
+    """
+    Adopts a completed Pipeline 2 refinement artifact into the canonical document version tree.
+    Enforces that:
+      1. Pipeline2Job exists and is in DONE status.
+      2. Trustworthy source_version lineage metadata is present (> 0).
+      3. Output artifact exists and is non-empty.
+      4. Stored lineage is consistent with canonical version history.
+      5. Authoritative publication occurs via DocumentPublicationService.publish_version(base_version=source_version).
+    """
+    with uow_factory.create() as uow:
+        p2_job = uow.pipeline2_jobs.get_by_id(p2_job_id)
+        if not p2_job:
+            raise EntityNotFoundError("Pipeline2Job", p2_job_id)
+
+        if p2_job.status != JobStatus.DONE:
+            raise DomainError(
+                f"Cannot adopt Pipeline 2 refinement for job {p2_job_id}: "
+                f"status is '{p2_job.status.value}', expected DONE."
+            )
+
+        if not p2_job.output_path or not p2_job.output_path.strip():
+            raise ArtifactNotFoundError(f"Pipeline 2 job {p2_job_id} has no output artifact path.")
+
+        if p2_job.source_version is None or p2_job.source_version <= 0:
+            raise DomainError(
+                f"Cannot adopt Pipeline 2 refinement for job {p2_job_id}: "
+                "missing trustworthy source-version lineage metadata."
+            )
+
+        # Validate lineage consistency against document_versions history if available
+        if hasattr(uow, "document_versions") and uow.document_versions:
+            ver_record = uow.document_versions.get_by_version(p2_job.source_job_id, p2_job.source_version)
+            if ver_record:
+                if p2_job.input_path:
+                    expected_name = _extract_canonical_filename(ver_record.output_path)
+                    actual_name = _extract_canonical_filename(p2_job.input_path)
+                    if expected_name and actual_name and expected_name != actual_name:
+                        raise CanonicalDocumentIntegrityError(
+                            f"Pipeline 2 lineage mismatch: source_version {p2_job.source_version} "
+                            f"expects file '{expected_name}', but job input_path was '{actual_name}'."
+                        )
+            else:
+                latest_doc = uow.document_versions.get_latest(p2_job.source_job_id)
+                if latest_doc is not None:
+                    raise CanonicalDocumentIntegrityError(
+                        f"Pipeline 2 source_version {p2_job.source_version} does not exist in canonical history."
+                    )
+
+        source_job_id = p2_job.source_job_id
+        source_version = p2_job.source_version
+        output_path = p2_job.output_path
+
+    filename = _extract_canonical_filename(output_path) or f"p2_output_{p2_job_id}.md"
+    handle = ArtifactHandle(
+        storage_backend=StorageBackendType.LOCAL_FS,
+        uri=output_path,
+        artifact_type=ArtifactType.PIPELINE2_MARKDOWN,
+        job_id=source_job_id,
+        filename=filename,
+    )
+    try:
+        raw_bytes = storage.retrieve(handle)
+        refined_text = raw_bytes.decode("utf-8")
+        if not refined_text.strip():
+            raise ValueError("Refinement artifact content is empty.")
+    except Exception as e:
+        if isinstance(e, CanonicalDocumentIntegrityError):
+            raise
+        raise ArtifactNotFoundError(f"Failed to retrieve Pipeline 2 refinement artifact: {e}")
+
+    new_record = pub_service.publish_version(
+        job_id=source_job_id,
+        base_version=source_version,
+        markdown_text=refined_text,
+        staged_crops=[],
+        published_by="PIPELINE_2_ADOPTION",
+    )
+    return new_record
 
 
 class JobExecutionService:
@@ -361,6 +471,7 @@ class JobExecutionService:
                         input_path=output_uri,
                         api_chain=job.api_chain,
                         current_api_index=0,
+                        source_version=pub_record.version,
                     )
                     uow.pipeline2_jobs.save(p2_job)
 
@@ -428,8 +539,8 @@ class JobExecutionService:
                 uow.commit()
             p2_job.status = JobStatus.FAILED
             p2_job.error_message = clean_err
-            self._publish_state_changed(p2_job.source_job_id, JobStatus.PROCESSING, JobStatus.FAILED)
-            self._publish_failed(p2_job.source_job_id, clean_err, is_retryable=False)
+            self._publish_pipeline2_state_changed(p2_job, JobStatus.PROCESSING, JobStatus.FAILED)
+            self._publish_pipeline2_failed(p2_job, clean_err, is_retryable=False)
             return p2_job
 
         # Checkpoint 2 (before AI execution)
@@ -450,8 +561,8 @@ class JobExecutionService:
                 uow.commit()
             p2_job.status = JobStatus.FAILED
             p2_job.error_message = clean_err
-            self._publish_state_changed(p2_job.source_job_id, JobStatus.PROCESSING, JobStatus.FAILED)
-            self._publish_failed(p2_job.source_job_id, clean_err, is_retryable=False)
+            self._publish_pipeline2_state_changed(p2_job, JobStatus.PROCESSING, JobStatus.FAILED)
+            self._publish_pipeline2_failed(p2_job, clean_err, is_retryable=False)
             return p2_job
 
         if result is None:
@@ -461,8 +572,8 @@ class JobExecutionService:
                 uow.commit()
             p2_job.status = JobStatus.PAUSED
             p2_job.error_message = clean_msg
-            self._publish_state_changed(p2_job.source_job_id, JobStatus.PROCESSING, JobStatus.PAUSED)
-            self._publish_failed(p2_job.source_job_id, clean_msg, is_retryable=True)
+            self._publish_pipeline2_state_changed(p2_job, JobStatus.PROCESSING, JobStatus.PAUSED)
+            self._publish_pipeline2_failed(p2_job, clean_msg, is_retryable=True)
             return p2_job
 
         # Checkpoint 3 (after AI execution, before storing artifact)
@@ -488,8 +599,8 @@ class JobExecutionService:
                     uow.commit()
                 p2_job.status = JobStatus.CANCELLED
                 if not already_cancelled:
-                    self._publish_state_changed(p2_job.source_job_id, JobStatus.PROCESSING, JobStatus.CANCELLED)
-                    self._publish_cancelled(p2_job.source_job_id)
+                    self._publish_pipeline2_state_changed(p2_job, JobStatus.PROCESSING, JobStatus.CANCELLED)
+                    self._publish_pipeline2_cancelled(p2_job)
                 return p2_job
 
             uow.pipeline2_jobs.update_output_path(p2_job.id, output_handle.uri)
@@ -498,8 +609,8 @@ class JobExecutionService:
 
         p2_job.status = JobStatus.DONE
         p2_job.output_path = output_handle.uri
-        self._publish_state_changed(p2_job.source_job_id, JobStatus.PROCESSING, JobStatus.DONE)
-        self._publish_completed(p2_job.source_job_id, output_handle.uri)
+        self._publish_pipeline2_state_changed(p2_job, JobStatus.PROCESSING, JobStatus.DONE)
+        self._publish_pipeline2_completed(p2_job, output_handle.uri)
         return p2_job
 
     def execute_next_pipeline2_job(self) -> Optional[Pipeline2Job]:
@@ -639,8 +750,8 @@ class JobExecutionService:
                 uow.pipeline2_jobs.update_status(p2_job_id, JobStatus.CANCELLED)
                 uow.commit()
                 p2_job.status = JobStatus.CANCELLED
-                self._publish_state_changed(p2_job.source_job_id, old_status, JobStatus.CANCELLED)
-                self._publish_cancelled(p2_job.source_job_id)
+                self._publish_pipeline2_state_changed(p2_job, old_status, JobStatus.CANCELLED)
+                self._publish_pipeline2_cancelled(p2_job)
                 return True
 
             elif p2_job.status == JobStatus.PROCESSING:
@@ -676,8 +787,8 @@ class JobExecutionService:
             p2_job.status = JobStatus.CANCELLED
 
         if not already_cancelled:
-            self._publish_state_changed(p2_job.source_job_id, JobStatus.PROCESSING, JobStatus.CANCELLED)
-            self._publish_cancelled(p2_job.source_job_id)
+            self._publish_pipeline2_state_changed(p2_job, JobStatus.PROCESSING, JobStatus.CANCELLED)
+            self._publish_pipeline2_cancelled(p2_job)
         return p2_job
 
     def _pause_job(self, job: Job, error_msg: str) -> Job:
@@ -752,3 +863,66 @@ class JobExecutionService:
         if not self.publisher:
             return
         self.publisher.publish(JobCancelledEvent(job_id=job_id))
+
+    def adopt_pipeline2_refinement(self, p2_job_id: int) -> DocumentVersionRecord:
+        """
+        Adopts a completed Pipeline 2 refinement artifact as a new canonical document version.
+        Delegates to adopt_pipeline2_refinement_core.
+        """
+        if not self.document_publication_service:
+            raise DomainError("DocumentPublicationService is not configured on JobExecutionService.")
+        return adopt_pipeline2_refinement_core(
+            uow_factory=self.uow_factory,
+            storage=self.storage,
+            pub_service=self.document_publication_service,
+            p2_job_id=p2_job_id,
+        )
+
+    def _publish_pipeline2_state_changed(
+        self, p2_job: Pipeline2Job, old_st: Optional[JobStatus], new_st: JobStatus
+    ) -> None:
+        if not self.publisher:
+            return
+        if old_st is not None:
+            self.publisher.publish(
+                Pipeline2StateChangedEvent(
+                    job_id=p2_job.id,
+                    old_status=old_st,
+                    new_status=new_st,
+                    source_job_id=p2_job.source_job_id,
+                )
+            )
+
+    def _publish_pipeline2_completed(self, p2_job: Pipeline2Job, uri: str) -> None:
+        if not self.publisher:
+            return
+        self.publisher.publish(
+            Pipeline2CompletedEvent(
+                job_id=p2_job.id,
+                source_job_id=p2_job.source_job_id,
+                output_artifact_uri=uri,
+                source_version=p2_job.source_version or 0,
+            )
+        )
+
+    def _publish_pipeline2_failed(self, p2_job: Pipeline2Job, error_msg: str, is_retryable: bool = False) -> None:
+        if not self.publisher:
+            return
+        self.publisher.publish(
+            Pipeline2FailedEvent(
+                job_id=p2_job.id,
+                error_message=error_msg,
+                is_retryable=is_retryable,
+                source_job_id=p2_job.source_job_id,
+            )
+        )
+
+    def _publish_pipeline2_cancelled(self, p2_job: Pipeline2Job) -> None:
+        if not self.publisher:
+            return
+        self.publisher.publish(
+            Pipeline2CancelledEvent(
+                job_id=p2_job.id,
+                source_job_id=p2_job.source_job_id,
+            )
+        )

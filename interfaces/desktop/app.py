@@ -313,6 +313,9 @@ def create_app(
         markdown_editor_controller.set_syntax_theme
     )
     markdown_editor_controller.set_syntax_theme(theme_controller.resolvedTheme)
+    bridge.pipeline2_completed_received.connect(
+        markdown_editor_controller.onPipeline2Completed
+    )
     pdf_setup_controller = PdfSetupController(
         runtime_discovery=container.pdf_runtime_discovery,
         package_recovery_service=container.package_recovery_service,

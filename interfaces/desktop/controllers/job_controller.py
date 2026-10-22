@@ -248,3 +248,16 @@ class JobController(QObject):
         except Exception as err:
             self.error_occurred.emit(sanitize_error_message(str(err)))
             return False
+
+    @Slot(int, result=bool)
+    def adopt_pipeline2_refinement(self, p2_job_id: int) -> bool:
+        """
+        Adopts a completed Pipeline 2 refinement as a new canonical document version.
+        Exposed to QML and desktop actions.
+        """
+        try:
+            self.execution_service.adopt_pipeline2_refinement(p2_job_id)
+            return True
+        except Exception as err:
+            self.error_occurred.emit(sanitize_error_message(str(err)))
+            return False

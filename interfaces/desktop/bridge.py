@@ -15,6 +15,10 @@ from application.events import (
     JobStateChangedEvent,
     MissedScheduleDetectedEvent,
     ScheduleUpdatedEvent,
+    Pipeline2CompletedEvent,
+    Pipeline2StateChangedEvent,
+    Pipeline2FailedEvent,
+    Pipeline2CancelledEvent,
 )
 
 
@@ -33,6 +37,7 @@ class QtSignalEventBridge(QObject):
     job_state_changed_received = Signal(int, str, str)         # job_id, old_status, new_status
     missed_schedule_received = Signal(int, str, str, str)      # job_id, filename, sched_iso, policy
     schedule_updated_received = Signal(int, str)               # job_id, sched_iso
+    pipeline2_completed_received = Signal(int, int, str, int)  # p2_job_id, source_job_id, output_uri, source_version
 
     def __init__(self, event_bus: Optional[IApplicationEventPublisher] = None, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -79,6 +84,17 @@ class QtSignalEventBridge(QObject):
             self.api_switch_received.emit(
                 event.job_id, event.old_label, event.new_label, event.reason, event.page
             )
+        elif isinstance(event, Pipeline2CompletedEvent):
+            self.pipeline2_completed_received.emit(
+                event.job_id,
+                event.source_job_id,
+                event.output_artifact_uri,
+                event.source_version or 0,
+            )
+        elif isinstance(event, (Pipeline2StateChangedEvent, Pipeline2FailedEvent, Pipeline2CancelledEvent)):
+            # Pipeline 2 lifecycle events are isolated to derivative refinements;
+            # they must not be routed to primary job signals (JobQueueModel / JobHistoryModel).
+            pass
         elif isinstance(event, JobCompletedEvent):
             self.job_completed_received.emit(event.job_id, event.output_artifact_uri)
         elif isinstance(event, JobFailedEvent):

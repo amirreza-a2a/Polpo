@@ -300,6 +300,76 @@ Item {
         }
 
         // =====================================================================
+        // Pipeline 2 Refinement Banner
+        // =====================================================================
+        Rectangle {
+            id: pipeline2Banner
+            objectName: "editorPipeline2Banner"
+            Layout.fillWidth: true
+            Layout.preferredHeight: 44
+            visible: controller ? controller.hasPipeline2Refinement : false
+            color: (typeof theme !== "undefined" && theme) ? theme.surfaceHover : "gray"
+            border.color: (typeof theme !== "undefined" && theme) ? theme.accent : "blue"
+            border.width: 1
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 16
+                anchors.rightMargin: 16
+                spacing: 12
+
+                Text {
+                    text: "✨"
+                    font.pixelSize: 14
+                }
+
+                Text {
+                    id: pipeline2BannerText
+                    objectName: "editorPipeline2BannerText"
+                    Layout.fillWidth: true
+                    text: {
+                        if (!controller) return ""
+                        var msg = controller.adoptionStatusMessage || "Pipeline 2 typography refinement is available."
+                        if (controller.isDirty) {
+                            return msg + " (Unsaved human edits must be saved or discarded before adopting)"
+                        }
+                        return msg
+                    }
+                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                    font.pixelSize: 12
+                    font.bold: true
+                    elide: Text.ElideRight
+                }
+
+                Button {
+                    id: inspectPipeline2Button
+                    objectName: "editorInspectPipeline2Button"
+                    text: "Inspect Refinement"
+                    implicitHeight: 28
+                    enabled: controller ? controller.hasPipeline2Refinement : false
+                    onClicked: {
+                        pipeline2InspectPopup.open()
+                    }
+                }
+
+                Button {
+                    id: adoptPipeline2Button
+                    objectName: "editorAdoptPipeline2Button"
+                    text: "Adopt refinement as a new document version"
+                    implicitHeight: 28
+                    highlighted: true
+                    enabled: controller ? controller.canAdoptPipeline2 : false
+                    onClicked: {
+                        if (controller) {
+                            controller.adoptPipeline2Refinement()
+                        }
+                    }
+                }
+            }
+        }
+
+
+        // =====================================================================
         // Error Banner
         // =====================================================================
         Rectangle {
@@ -453,6 +523,134 @@ Item {
             objectName: "markdownEditorStatusBar"
             Layout.fillWidth: true
             controller: editorPaneRoot.controller
+        }
+    }
+
+    // =====================================================================
+    // Pipeline 2 Refinement Inspection Dialog
+    // =====================================================================
+    Popup {
+        id: pipeline2InspectPopup
+        objectName: "editorPipeline2InspectDialog"
+        modal: true
+        focus: true
+        anchors.centerIn: parent
+        width: Math.min(parent.width - 40, 720)
+        height: Math.min(parent.height - 40, 560)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        background: Rectangle {
+            color: (typeof theme !== "undefined" && theme) ? theme.surfaceElevated : "black"
+            radius: 8
+            border.color: (typeof theme !== "undefined" && theme) ? theme.border : "gray"
+            border.width: 1
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 16
+            spacing: 12
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                Text {
+                    text: "✨ Pipeline 2 Typography Refinement"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                    font.pixelSize: 15
+                    font.bold: true
+                }
+
+                Item { Layout.fillWidth: true }
+
+                Button {
+                    text: "✕"
+                    implicitWidth: 24
+                    implicitHeight: 24
+                    flat: true
+                    onClicked: pipeline2InspectPopup.close()
+                }
+            }
+
+            Text {
+                text: {
+                    if (!controller) return ""
+                    return "Base Version: v" + controller.pipeline2SourceVersion + " | Current Document: v" + controller.activeVersion
+                }
+                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                font.pixelSize: 12
+            }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+
+                TextArea {
+                    id: inspectTextArea
+                    objectName: "editorPipeline2InspectTextArea"
+                    readOnly: true
+                    text: controller ? controller.pipeline2RefinementText : ""
+                    wrapMode: TextEdit.Wrap
+                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                    background: Rectangle {
+                        color: (typeof theme !== "undefined" && theme) ? theme.surface : "gray"
+                        border.color: (typeof theme !== "undefined" && theme) ? theme.border : "darkgray"
+                        border.width: 1
+                        radius: 4
+                    }
+                    font.family: "monospace"
+                    font.pixelSize: 12
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 12
+
+                Text {
+                    Layout.fillWidth: true
+                    text: {
+                        if (!controller) return ""
+                        if (controller.isDirty) {
+                            return "⚠️ Unsaved human edits must be saved or discarded before adopting."
+                        }
+                        if (controller.pipeline2SourceVersion <= 0) {
+                            return "⚠️ Lacks source-version lineage metadata; cannot be adopted."
+                        }
+                        if (controller.pipeline2SourceVersion !== controller.activeVersion) {
+                            return "⚠️ Base version mismatch (v" + controller.pipeline2SourceVersion + " vs v" + controller.activeVersion + "); adoption blocked by OCC."
+                        }
+                        return "Refinement ready for canonical adoption."
+                    }
+                    color: (typeof theme !== "undefined" && theme) ? (controller && controller.canAdoptPipeline2 ? theme.textSecondary : theme.warning) : "yellow"
+                    font.pixelSize: 11
+                    elide: Text.ElideRight
+                }
+
+                Button {
+                    text: "Close"
+                    implicitHeight: 28
+                    onClicked: pipeline2InspectPopup.close()
+                }
+
+                Button {
+                    id: inspectAdoptButton
+                    objectName: "editorInspectAdoptButton"
+                    text: "Adopt refinement as a new document version"
+                    implicitHeight: 28
+                    highlighted: true
+                    enabled: controller ? controller.canAdoptPipeline2 : false
+                    onClicked: {
+                        if (controller) {
+                            var ok = controller.adoptPipeline2Refinement()
+                            if (ok) {
+                                pipeline2InspectPopup.close()
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

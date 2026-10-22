@@ -70,3 +70,30 @@ class ScheduleUpdatedEvent:
     """Event emitted when a job's scheduled execution time is set, updated, or cleared."""
     job_id: int
     scheduled_at: Optional[datetime]
+
+
+@dataclass(frozen=True)
+class Pipeline2CompletedEvent:
+    """Event emitted when a Pipeline 2 refinement job completes and derivative artifact is stored."""
+    job_id: int
+    source_job_id: int
+    output_artifact_uri: str
+    source_version: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class Pipeline2StateChangedEvent(JobStateChangedEvent):
+    """Event emitted when a Pipeline 2 refinement job transitions between lifecycle states."""
+    source_job_id: int = 0
+
+
+@dataclass(frozen=True)
+class Pipeline2FailedEvent(JobFailedEvent):
+    """Event emitted when a Pipeline 2 refinement job encounters a failure."""
+    source_job_id: int = 0
+
+
+@dataclass(frozen=True)
+class Pipeline2CancelledEvent(JobCancelledEvent):
+    """Event emitted when a Pipeline 2 refinement job is cancelled."""
+    source_job_id: int = 0

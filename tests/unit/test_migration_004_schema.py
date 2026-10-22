@@ -47,15 +47,15 @@ def test_migration_004_upgrades_from_v3_database(tmp_path: Path):
         cur.execute("SELECT MAX(version) FROM schema_version")
         assert cur.fetchone()[0] == 3
 
-    # Now run migrations with the full migrations directory (includes 004)
+    # Now run migrations with the full migrations directory (includes 004 and subsequent)
     full_runner = SQLiteMigrationRunner(db_manager=mgr)
     applied_v4 = full_runner.run_migrations()
-    assert applied_v4 == [4]
+    assert 4 in applied_v4
 
     with mgr.create_connection() as conn:
         cur = conn.cursor()
         cur.execute("SELECT MAX(version) FROM schema_version")
-        assert cur.fetchone()[0] == 4
+        assert cur.fetchone()[0] >= 4
 
         # Verify tables created
         cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='publish_intents'")

@@ -18,6 +18,7 @@ from core.domain.visual_token import (
     serialize_canonical_token,
     validate_token_uuid,
 )
+from core.entities.job import JobStatus
 from core.entities.visual_region import ReviewStatus, SyncStatus
 from core.exceptions.domain_exceptions import StaleDocumentVersionError
 from core.markdown.visual_token_mutator import (
@@ -64,6 +65,7 @@ class MarkdownEditorController(QObject):
     documentMetricsChanged = Signal()
     mergeSessionStateChanged = Signal()
     autoMergeNotified = Signal(str)
+    pipeline2RefinementChanged = Signal()
 
     saved = Signal(int)             # (new_version)
     discarded = Signal()
@@ -101,6 +103,12 @@ class MarkdownEditorController(QObject):
         self._active_version: int = 0
         self._has_conflict: bool = False
         self._conflict_message: str = ""
+
+        self._has_pipeline2_refinement: bool = False
+        self._pipeline2_job_id: int = 0
+        self._pipeline2_source_version: int = 0
+        self._pipeline2_refinement_text: str = ""
+        self._adoption_status_message: str = ""
 
         self._merge_session_id: int = 0
         self._active_conflict_session: Optional[ConflictSession] = None
@@ -163,6 +171,7 @@ class MarkdownEditorController(QObject):
             if self._is_dirty != new_dirty:
                 self._is_dirty = new_dirty
                 self.dirtyChanged.emit()
+                self.pipeline2RefinementChanged.emit()
             if self._active_conflict_session is not None and not self._active_conflict_session.isInvalidated:
                 self._active_conflict_session.sync_from_buffer(text)
                 self.mergeSessionStateChanged.emit()
@@ -213,6 +222,42 @@ class MarkdownEditorController(QObject):
         return self._conflict_message
 
     conflictMessage = Property(str, conflict_message, notify=conflictChanged)
+
+    def has_pipeline2_refinement(self) -> bool:
+        return self._has_pipeline2_refinement
+
+    hasPipeline2Refinement = Property(bool, has_pipeline2_refinement, notify=pipeline2RefinementChanged)
+
+    def pipeline2_job_id(self) -> int:
+        return self._pipeline2_job_id
+
+    pipeline2JobId = Property(int, pipeline2_job_id, notify=pipeline2RefinementChanged)
+
+    def pipeline2_source_version(self) -> int:
+        return self._pipeline2_source_version
+
+    pipeline2SourceVersion = Property(int, pipeline2_source_version, notify=pipeline2RefinementChanged)
+
+    def pipeline2_refinement_text(self) -> str:
+        return self._pipeline2_refinement_text
+
+    pipeline2RefinementText = Property(str, pipeline2_refinement_text, notify=pipeline2RefinementChanged)
+
+    def adoption_status_message(self) -> str:
+        return self._adoption_status_message
+
+    adoptionStatusMessage = Property(str, adoption_status_message, notify=pipeline2RefinementChanged)
+
+    def can_adopt_pipeline2(self) -> bool:
+        if not self._has_pipeline2_refinement or not self._pipeline2_job_id:
+            return False
+        if self._is_dirty or self._is_saving or self._is_loading or self._has_conflict:
+            return False
+        if self._pipeline2_source_version <= 0 or self._pipeline2_source_version != self._active_version:
+            return False
+        return True
+
+    canAdoptPipeline2 = Property(bool, can_adopt_pipeline2, notify=pipeline2RefinementChanged)
 
     def search_query(self) -> str:
         return self._search_query
@@ -580,6 +625,7 @@ class MarkdownEditorController(QObject):
 
         self.sourceTextChanged.emit()
         self.dirtyChanged.emit()
+        self.pipeline2RefinementChanged.emit()
         self.cursorMetricsChanged.emit()
         self.documentMetricsChanged.emit()
         self.discarded.emit()
@@ -591,6 +637,165 @@ class MarkdownEditorController(QObject):
             self._search_total_matches = 0
             self._search_match_index = 0
             self.searchStateChanged.emit()
+
+    # -----------------------------------------------------------------------
+    # Pipeline 2 Refinement Slots
+    # -----------------------------------------------------------------------
+
+    @Slot()
+    def checkForPipeline2Refinement(self) -> None:
+        """
+        Inspects whether a completed Pipeline 2 refinement exists for the active document job.
+        Updates refinement properties and evaluates adoption readiness.
+        """
+        if not self._active_job_id or not hasattr(self.editor_service, "get_pipeline2_refinement"):
+            self._has_pipeline2_refinement = False
+            self._pipeline2_job_id = 0
+            self._pipeline2_source_version = 0
+            self._pipeline2_refinement_text = ""
+            self._adoption_status_message = ""
+            self.pipeline2RefinementChanged.emit()
+            return
+
+        try:
+            p2_job = self.editor_service.get_pipeline2_refinement(self._active_job_id)
+            if p2_job and p2_job.status == JobStatus.DONE and p2_job.output_path:
+                self._has_pipeline2_refinement = True
+                self._pipeline2_job_id = p2_job.id or 0
+                self._pipeline2_source_version = p2_job.source_version or 0
+                try:
+                    self._pipeline2_refinement_text = self.editor_service.get_pipeline2_text(p2_job.id)
+                except Exception:
+                    self._pipeline2_refinement_text = ""
+
+                if self._pipeline2_source_version <= 0:
+                    self._adoption_status_message = "Pipeline 2 refinement lacks source-version lineage (adoption unavailable)."
+                elif self._pipeline2_source_version != self._active_version:
+                    self._adoption_status_message = (
+                        f"Refinement was built from base v{self._pipeline2_source_version}, "
+                        f"but canonical document is now v{self._active_version} (adoption blocked)."
+                    )
+                else:
+                    self._adoption_status_message = f"Refinement ready from base version v{self._pipeline2_source_version}."
+            else:
+                self._has_pipeline2_refinement = False
+                self._pipeline2_job_id = 0
+                self._pipeline2_source_version = 0
+                self._pipeline2_refinement_text = ""
+                self._adoption_status_message = ""
+        except Exception as e:
+            self._has_pipeline2_refinement = False
+            self._pipeline2_job_id = 0
+            self._pipeline2_source_version = 0
+            self._pipeline2_refinement_text = ""
+            self._adoption_status_message = f"Error checking refinement: {e}"
+
+        self.pipeline2RefinementChanged.emit()
+
+    @Slot(int, int, str, int)
+    def onPipeline2Completed(self, p2_job_id: int, source_job_id: int, output_uri: str, source_version: int) -> None:
+        """
+        Receives notification from desktop event bridge when a Pipeline 2 refinement completes.
+        If the completed refinement is for our active document job, updates refinement state.
+        IMPORTANT: NEVER mutates the editor buffer or discards unsaved human work.
+        """
+        if source_job_id == self._active_job_id:
+            self._has_pipeline2_refinement = True
+            self._pipeline2_job_id = p2_job_id
+            self._pipeline2_source_version = source_version
+            try:
+                self._pipeline2_refinement_text = self.editor_service.get_pipeline2_text(p2_job_id)
+            except Exception:
+                self._pipeline2_refinement_text = ""
+
+            if self._pipeline2_source_version <= 0:
+                self._adoption_status_message = "Pipeline 2 refinement lacks source-version lineage (adoption unavailable)."
+            elif self._pipeline2_source_version != self._active_version:
+                self._adoption_status_message = (
+                    f"Refinement was built from base v{self._pipeline2_source_version}, "
+                    f"but canonical document is now v{self._active_version} (adoption blocked)."
+                )
+            else:
+                self._adoption_status_message = f"Refinement ready from base version v{source_version}."
+            self.pipeline2RefinementChanged.emit()
+
+    @Slot(result=bool)
+    def adoptPipeline2Refinement(self) -> bool:
+        """
+        Adopts the available Pipeline 2 refinement as the new canonical document version.
+        Guarantees:
+          - If the buffer is dirty, adoption is rejected immediately without losing human work.
+          - If an async operation (load/save) is in progress or conflict is active, adoption is rejected.
+          - If refinement source_version does not match active_version, adoption is rejected.
+          - On successful adoption, updates canonical activeVersion, clears dirty state, recalculates document metrics, and loads the adopted text.
+        """
+        if self._is_dirty:
+            self._error_message = "Cannot adopt Pipeline 2 refinement: unsaved human edits are present in editor."
+            self.errorChanged.emit()
+            return False
+
+        if not self._has_pipeline2_refinement or not self._pipeline2_job_id:
+            self._error_message = "No Pipeline 2 refinement available to adopt."
+            self.errorChanged.emit()
+            return False
+
+        if self._is_loading or self._is_saving:
+            self._error_message = "Editor operation in progress."
+            self.errorChanged.emit()
+            return False
+
+        if self._has_conflict:
+            self._error_message = "Resolve document version conflict before adopting refinement."
+            self.errorChanged.emit()
+            return False
+
+        if self._pipeline2_source_version <= 0 or self._pipeline2_source_version != self._active_version:
+            self._error_message = (
+                f"Lineage conflict: Refinement was built from v{self._pipeline2_source_version}, "
+                f"but current document is v{self._active_version}."
+            )
+            self.errorChanged.emit()
+            return False
+
+        try:
+            new_record = self.editor_service.adopt_pipeline2_refinement(self._pipeline2_job_id)
+            adopted_text = self._pipeline2_refinement_text
+            if not adopted_text:
+                adopted_text = self.editor_service.get_pipeline2_text(self._pipeline2_job_id)
+
+            self._source_text = adopted_text
+            self._saved_source_text = adopted_text
+            self._active_version = new_record.version
+            self._is_dirty = False
+            self._has_pipeline2_refinement = False
+            self._pipeline2_job_id = 0
+            self._pipeline2_source_version = 0
+            self._pipeline2_refinement_text = ""
+            self._adoption_status_message = f"Successfully adopted refinement as version v{new_record.version}."
+            self._error_message = ""
+
+            self._character_count = len(self._source_text)
+            self._word_count = len(re.findall(r"\S+", self._source_text))
+
+            if self._headless_doc is not None:
+                self._headless_doc.setPlainText(adopted_text)
+
+            self.sourceTextChanged.emit()
+            self.dirtyChanged.emit()
+            self.activeVersionChanged.emit()
+            self.documentMetricsChanged.emit()
+            self.errorChanged.emit()
+            self.pipeline2RefinementChanged.emit()
+            self.saved.emit(new_record.version)
+
+            if self._search_query:
+                self._recompute_matches()
+
+            return True
+        except Exception as e:
+            self._error_message = f"Failed to adopt refinement: {e}"
+            self.errorChanged.emit()
+            return False
 
     @Slot(int)
     def notifyCanonicalDocumentAdvance(self, new_doc_version: int) -> None:
@@ -1220,6 +1425,7 @@ class MarkdownEditorController(QObject):
         self.conflictChanged.emit()
         self.cursorMetricsChanged.emit()
         self.documentMetricsChanged.emit()
+        self.checkForPipeline2Refinement()
 
         if self._search_query:
             self._recompute_matches()
@@ -1258,6 +1464,7 @@ class MarkdownEditorController(QObject):
         self.conflictChanged.emit()
         self.mergeSessionStateChanged.emit()
         self.saved.emit(new_version)
+        self.checkForPipeline2Refinement()
 
     def _on_internal_save_error(self, req_id: int, error_msg: str, is_conflict: bool) -> None:
         if req_id != self._request_id or self._is_shutdown:

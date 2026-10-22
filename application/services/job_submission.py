@@ -9,7 +9,7 @@ from application.ports.unit_of_work import IUnitOfWorkFactory
 from application.ports.storage import IArtifactStorage
 from application.ports.document_processor import IDocumentProcessor
 from application.ports.notifier import IApplicationEventPublisher
-from application.events import JobStateChangedEvent
+from application.events import JobStateChangedEvent, Pipeline2StateChangedEvent
 from core.entities.job import Job, JobStatus, Pipeline2Job
 from core.entities.prompt import PromptType
 from core.entities.artifact import ArtifactType
@@ -173,6 +173,17 @@ class JobSubmissionService:
             if not chain:
                 raise AIChainExhaustedError("No API slots available for Pipeline 2.")
 
+            source_version = None
+            if hasattr(uow, "document_versions") and uow.document_versions:
+                latest_doc = uow.document_versions.get_latest(source_job_id)
+                if latest_doc:
+                    source_version = latest_doc.version
+            if source_version is None and source_job.output_path:
+                from core.markdown.version import parse_canonical_markdown_version
+                parsed_ver = parse_canonical_markdown_version(source_job.output_path)
+                if parsed_ver > 0:
+                    source_version = parsed_ver
+
             p2_job = Pipeline2Job(
                 id=None,
                 source_job_id=source_job_id,
@@ -181,16 +192,18 @@ class JobSubmissionService:
                 api_chain=chain,
                 status=JobStatus.PENDING,
                 input_path=source_job.output_path,
+                source_version=source_version,
             )
             saved_p2 = uow.pipeline2_jobs.save(p2_job)
             uow.commit()
 
         if self.event_publisher:
             self.event_publisher.publish(
-                JobStateChangedEvent(
+                Pipeline2StateChangedEvent(
                     job_id=saved_p2.id,
                     old_status=None,
                     new_status=JobStatus.PENDING,
+                    source_job_id=source_job_id,
                 )
             )
 

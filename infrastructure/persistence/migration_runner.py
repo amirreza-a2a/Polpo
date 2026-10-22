@@ -66,7 +66,7 @@ class MigrationRunner:
             "id", "source_job_id", "user_id", "prompt_id", "api_chain",
             "current_api_index", "api_switch_log", "model", "status", "input_path",
             "output_path", "backup_message_id", "retry_count", "error_message",
-            "created_at", "finished_at",
+            "created_at", "finished_at", "source_version",
         },
         "bot_settings": {
             "setting_key", "setting_value", "updated_at",

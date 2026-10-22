@@ -97,6 +97,7 @@ class Pipeline2Job:
     claimed_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    source_version: Optional[int] = None
 
     @property
     def is_terminal(self) -> bool:
