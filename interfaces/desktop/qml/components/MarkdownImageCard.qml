@@ -29,9 +29,9 @@ Rectangle {
     implicitWidth: Math.min(680, Math.max(300, 560 * scaleFactor))
     implicitHeight: cardLayout.implicitHeight + 20
     radius: 6
-    color: (typeof theme !== "undefined" && theme) ? theme.surfaceElevated : "black"
+    color: (typeof theme !== "undefined" && theme) ? theme.surfaceElevated : "transparent"
     border.width: isHighlighted ? 2 : 1
-    border.color: (typeof theme !== "undefined" && theme) ? (isHighlighted ? theme.accent : (cardMouseArea.containsMouse ? theme.borderStrong : theme.border)) : "gray"
+    border.color: (typeof theme !== "undefined" && theme) ? (isHighlighted ? theme.accent : (cardMouseArea.containsMouse ? theme.borderStrong : theme.border)) : "transparent"
 
     ColumnLayout {
         id: cardLayout
@@ -49,13 +49,13 @@ Rectangle {
                 height: 22
                 width: Math.max(28, orderText.implicitWidth + 12)
                 radius: 4
-                color: (typeof theme !== "undefined" && theme) ? (isHighlighted ? theme.accentActive : theme.accent) : "blue"
+                color: (typeof theme !== "undefined" && theme) ? (isHighlighted ? theme.accentActive : theme.accent) : "transparent"
 
                 Text {
                     id: orderText
                     anchors.centerIn: parent
                     text: "#" + imageCardRoot.displayOrder
-                    color: (typeof theme !== "undefined" && theme) ? theme.accentText : "white"
+                    color: (typeof theme !== "undefined" && theme) ? theme.accentText : "transparent"
                     font.pixelSize: 11
                     font.bold: true
                 }
@@ -63,7 +63,7 @@ Rectangle {
 
             Text {
                 text: imageCardRoot.altText || (imageCardRoot.isAssociated ? "Visual Region Crop" : "Image")
-                color: (typeof theme !== "undefined" && theme) ? (isHighlighted ? theme.accentHover : theme.textPrimary) : "white"
+                color: (typeof theme !== "undefined" && theme) ? (isHighlighted ? theme.accentHover : theme.textPrimary) : "transparent"
                 font.pixelSize: 12
                 font.bold: true
                 elide: Text.ElideRight
@@ -75,7 +75,7 @@ Rectangle {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: Math.min(420 * scaleFactor, 500)
-            color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "black"
+            color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "transparent"
             radius: 4
             clip: true
 
@@ -104,7 +104,7 @@ Rectangle {
 
                 Text {
                     text: "Image file could not be loaded"
-                    color: (typeof theme !== "undefined" && theme) ? theme.error : "red"
+                    color: (typeof theme !== "undefined" && theme) ? theme.error : "transparent"
                     font.pixelSize: 12
                     font.bold: true
                     Layout.alignment: Qt.AlignHCenter
@@ -112,7 +112,7 @@ Rectangle {
 
                 Text {
                     text: imageCardRoot.imageUri || imageCardRoot.altText
-                    color: (typeof theme !== "undefined" && theme) ? theme.textMuted : "gray"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textMuted : "transparent"
                     font.pixelSize: 10
                     elide: Text.ElideMiddle
                     Layout.maximumWidth: parent.width - 20

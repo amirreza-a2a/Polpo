@@ -30,7 +30,7 @@ Item {
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             width: 3
-            color: (typeof theme !== "undefined" && theme) ? theme.accent : "blue"
+            color: (typeof theme !== "undefined" && theme) ? theme.accent : "transparent"
             radius: 1
         }
     }
@@ -91,7 +91,7 @@ Item {
                 if (l === 3) return 17
                 return 15
             }
-            textColor: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+            textColor: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
             scaleFactor: delegateRoot.scaleFactor
             controller: delegateRoot.controller
         }
@@ -106,7 +106,7 @@ Item {
             width: parent.width
             segments: model.segments || []
             textFallback: model.content || ""
-            textColor: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+            textColor: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
             defaultPixelSize: 14
             scaleFactor: delegateRoot.scaleFactor
             controller: delegateRoot.controller
@@ -138,9 +138,9 @@ Item {
         Rectangle {
             width: parent.width
             implicitHeight: codeCol.implicitHeight + 16
-            color: (typeof theme !== "undefined" && theme) ? theme.codeBackground : "black"
+            color: (typeof theme !== "undefined" && theme) ? theme.codeBackground : "transparent"
             radius: 4
-            border.color: (typeof theme !== "undefined" && theme) ? theme.codeBorder : "gray"
+            border.color: (typeof theme !== "undefined" && theme) ? theme.codeBorder : "transparent"
             border.width: 1
 
             ColumnLayout {
@@ -152,7 +152,7 @@ Item {
                 Text {
                     visible: model.language !== ""
                     text: model.language
-                    color: (typeof theme !== "undefined" && theme) ? theme.textMuted : "gray"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textMuted : "transparent"
                     font.pixelSize: 10
                     font.bold: true
                     Layout.alignment: Qt.AlignRight
@@ -160,7 +160,7 @@ Item {
 
                 Text {
                     text: model.content
-                    color: (typeof theme !== "undefined" && theme) ? theme.codeText : "white"
+                    color: (typeof theme !== "undefined" && theme) ? theme.codeText : "transparent"
                     font.family: "Monospace"
                     font.pixelSize: Math.round(12 * scaleFactor)
                     wrapMode: Text.NoWrap
@@ -200,7 +200,7 @@ Item {
                     Text {
                         visible: !itemRow.isTaskItem
                         text: listCol.isOrderedList ? ((listCol.startIndexVal + index) + ". ") : "• "
-                        color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                        color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                         font.pixelSize: Math.round(14 * delegateRoot.scaleFactor)
                         font.bold: true
                     }
@@ -209,7 +209,7 @@ Item {
                         width: itemRow.isTaskItem ? parent.width : (parent.width - 24)
                         segments: (listCol.itemSegs && index < listCol.itemSegs.length) ? listCol.itemSegs[index] : []
                         textFallback: itemRow.currentRaw
-                        textColor: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                        textColor: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
                         defaultPixelSize: 14
                         scaleFactor: delegateRoot.scaleFactor
                         controller: delegateRoot.controller
@@ -228,7 +228,7 @@ Item {
             id: quoteBox
             width: parent.width
             implicitHeight: quoteCol.implicitHeight + 20
-            color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "black"
+            color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "transparent"
             radius: 4
 
             Rectangle {
@@ -236,7 +236,7 @@ Item {
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
                 width: 3
-                color: (typeof theme !== "undefined" && theme) ? theme.accent : "blue"
+                color: (typeof theme !== "undefined" && theme) ? theme.accent : "transparent"
                 radius: 1
             }
 
@@ -262,7 +262,7 @@ Item {
                         textFallback: modelData.content || ""
                         fontItalic: modelData.childType !== "heading"
                         fontBold: modelData.childType === "heading"
-                        textColor: (typeof theme !== "undefined" && theme) ? (modelData.childType === "heading" ? theme.textPrimary : theme.textSecondary) : "white"
+                        textColor: (typeof theme !== "undefined" && theme) ? (modelData.childType === "heading" ? theme.textPrimary : theme.textSecondary) : "transparent"
                         defaultPixelSize: {
                             if (modelData.childType === "heading") {
                                 var l = modelData.level || 1
@@ -289,7 +289,7 @@ Item {
         Rectangle {
             width: parent.width
             height: 1
-            color: (typeof theme !== "undefined" && theme) ? theme.border : "gray"
+            color: (typeof theme !== "undefined" && theme) ? theme.border : "transparent"
         }
     }
 
@@ -304,9 +304,9 @@ Item {
             readonly property var cellRows: model.tableCellSegments || []
             readonly property bool hasStructuredCells: cellRows.length > 0
             implicitHeight: hasStructuredCells ? tableLayout.implicitHeight + 16 : tableText.implicitHeight + 16
-            color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "black"
+            color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "transparent"
             radius: 4
-            border.color: (typeof theme !== "undefined" && theme) ? theme.border : "gray"
+            border.color: (typeof theme !== "undefined" && theme) ? theme.border : "transparent"
             border.width: 1
 
             Column {
@@ -331,9 +331,9 @@ Item {
                             Rectangle {
                                 width: Math.max(80, (rowLayout.width - (rowData.length - 1) * 8) / (rowData.length || 1))
                                 implicitHeight: cellFlow.implicitHeight + 8
-                                color: (typeof theme !== "undefined" && theme) ? theme.surfaceElevated : "black"
+                                color: (typeof theme !== "undefined" && theme) ? theme.surfaceElevated : "transparent"
                                 radius: 3
-                                border.color: (typeof theme !== "undefined" && theme) ? theme.borderSubtle : "gray"
+                                border.color: (typeof theme !== "undefined" && theme) ? theme.borderSubtle : "transparent"
                                 border.width: 1
 
                                 MarkdownInlineFlow {
@@ -341,7 +341,7 @@ Item {
                                     anchors.centerIn: parent
                                     width: parent.width - 8
                                     segments: modelData || []
-                                    textColor: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                                    textColor: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
                                     defaultPixelSize: 12
                                     scaleFactor: delegateRoot.scaleFactor
                                     controller: delegateRoot.controller
@@ -358,7 +358,7 @@ Item {
                 anchors.fill: parent
                 anchors.margins: 8
                 text: model.content || ""
-                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
                 font.family: "Monospace"
                 font.pixelSize: Math.round(12 * scaleFactor)
                 wrapMode: Text.NoWrap

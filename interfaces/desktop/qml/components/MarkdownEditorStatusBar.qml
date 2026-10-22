@@ -34,7 +34,7 @@ Rectangle {
                 var col = controller ? controller.cursorColumn : 1;
                 return "Ln " + line + ", Col " + col;
             }
-            color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+            color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
             font.pixelSize: 11
         }
 
@@ -47,7 +47,7 @@ Rectangle {
                 var chars = controller ? controller.characterCount : 0;
                 return words + " words • " + chars + " chars";
             }
-            color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+            color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
             font.pixelSize: 11
         }
 
@@ -58,7 +58,7 @@ Rectangle {
             id: encodingModeLabel
             objectName: "editorEncodingModeLabel"
             text: "UTF-8  •  Markdown"
-            color: (typeof theme !== "undefined" && theme) ? theme.textMuted : "gray"
+            color: (typeof theme !== "undefined" && theme) ? theme.textMuted : "transparent"
             font.pixelSize: 11
         }
     }

@@ -22,14 +22,14 @@ ModalDialog {
 
         Text {
             text: "Export Document"
-            color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+            color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
             font.pixelSize: 16
             font.bold: true
         }
 
         Text {
             text: "Select the desired export format:"
-            color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+            color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
             font.pixelSize: 13
         }
 

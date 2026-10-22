@@ -27,11 +27,14 @@ from interfaces.desktop.qt_compat import (
 
 logger = logging.getLogger(__name__)
 
+from interfaces.desktop.theme import DARK_PALETTE, LIGHT_PALETTE
+
 DEFAULT_MATH_THEME = "dark"
 MATH_THEME_COLORS = {
-    "dark": "#e6edf3",
-    "light": "#1f2328",
+    "dark": DARK_PALETTE.mathForeground,
+    "light": LIGHT_PALETTE.mathForeground,
 }
+
 
 
 def parse_math_image_url(url_id: str) -> tuple[str, str]:

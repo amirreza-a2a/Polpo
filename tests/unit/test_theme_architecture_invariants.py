@@ -46,6 +46,14 @@ MATH_ERROR_BADGE_WHITELIST = frozenset({
 
 PERMITTED_DIRECT_NAMED_COLORS = frozenset({"transparent"})
 
+CSS_NAMED_COLOR_LITERALS = frozenset({
+    "black", "white", "gray", "grey", "silver", "maroon", "red", "purple", "fuchsia",
+    "green", "lime", "olive", "yellow", "navy", "blue", "teal", "aqua", "orange",
+    "goldenrod", "darkgoldenrod", "darkred", "darkgreen", "darkblue", "lightblue",
+    "lightgreen", "darkgray", "lightgray", "brown",
+})
+NAMED_COLOR_LITERAL_PATTERN = re.compile(r"[\"']([a-zA-Z]+)[\"']")
+
 BBOX_OVERLAY_RELATIVE_PATH = "interfaces/desktop/qml/components/BoundingBoxOverlay.qml"
 MATH_ERROR_CARD_RELATIVE_PATH = "interfaces/desktop/qml/components/MathErrorCard.qml"
 
@@ -80,20 +88,39 @@ def scan_qml_file_for_rgba_colors(file_path: Path) -> List[Tuple[int, str, str]]
     return matches
 
 
-def scan_qml_file_for_direct_named_colors(file_path: Path) -> List[Tuple[int, str, str]]:
+def scan_qml_content_for_direct_named_colors(content: str) -> List[Tuple[int, str, str]]:
     """
-    Scans a QML file for direct named color assignments (e.g. color: "white")
-    that bypass semantic theme tokens.
+    Scans QML text content for direct and conditional named color assignments
+    (e.g. color: 'white' or ? theme.textPrimary : 'goldenrod') that bypass semantic tokens.
     """
     matches = []
-    content = file_path.read_text(encoding="utf-8")
     for line_idx, line in enumerate(content.splitlines(), start=1):
         clean_line = re.sub(r"//.*$", "", line).strip()
-        found = DIRECT_NAMED_COLOR_PATTERN.findall(clean_line)
-        for named in found:
+        # Direct assignments: color: "..." or border.color: "..."
+        for named in DIRECT_NAMED_COLOR_PATTERN.findall(clean_line):
             if named.lower() not in PERMITTED_DIRECT_NAMED_COLORS:
                 matches.append((line_idx, named, clean_line))
-    return matches
+        # Quoted CSS color names in conditional expressions or returns
+        for quoted in NAMED_COLOR_LITERAL_PATTERN.findall(clean_line):
+            if quoted.lower() in CSS_NAMED_COLOR_LITERALS and quoted.lower() not in PERMITTED_DIRECT_NAMED_COLORS:
+                matches.append((line_idx, quoted, clean_line))
+    # Deduplicate matches per line and token
+    seen = set()
+    deduped = []
+    for m in matches:
+        key = (m[0], m[1].lower())
+        if key not in seen:
+            seen.add(key)
+            deduped.append(m)
+    return deduped
+
+
+def scan_qml_file_for_direct_named_colors(file_path: Path) -> List[Tuple[int, str, str]]:
+    """
+    Scans a QML file for direct or conditional named color assignments
+    that bypass semantic theme tokens.
+    """
+    return scan_qml_content_for_direct_named_colors(file_path.read_text(encoding="utf-8"))
 
 
 class TestThemeArchitectureInvariants(unittest.TestCase):
@@ -281,10 +308,16 @@ class TestThemeArchitectureInvariants(unittest.TestCase):
         # 3. Direct named color detection
         test_named = 'Text { color: "white"; border.color: "red" }'
         named_matches = [
-            n for n in DIRECT_NAMED_COLOR_PATTERN.findall(test_named)
-            if n.lower() not in PERMITTED_DIRECT_NAMED_COLORS
+            n for _, n, _ in scan_qml_content_for_direct_named_colors(test_named)
         ]
         self.assertEqual(named_matches, ["white", "red"])
+
+        # 4. Conditional fallback named color detection
+        test_conditional = 'Text { color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "goldenrod" }'
+        cond_matches = [
+            n for _, n, _ in scan_qml_content_for_direct_named_colors(test_conditional)
+        ]
+        self.assertEqual(cond_matches, ["goldenrod"])
 
     def test_synthetic_unauthorized_color_in_whitelisted_component(self):
         """
@@ -351,6 +384,28 @@ class TestThemeArchitectureInvariants(unittest.TestCase):
                 sidebar_qml,
                 f"Sidebar.qml should not contain fallback literal {fallback}",
             )
+
+    def test_theme_fallbacks_eliminated_across_qml(self):
+        """
+        Verifies that all QML presentation components consume semantic theme tokens
+        without arbitrary hardcoded color fallbacks ('white', 'black', 'gray', 'blue', 'goldenrod', etc.).
+        """
+        violations = []
+        for qml_file in sorted(self.qml_root.rglob("*.qml")):
+            rel_path = qml_file.relative_to(self.qml_root.parent.parent.parent).as_posix()
+            if rel_path == BBOX_OVERLAY_RELATIVE_PATH:
+                continue
+            matches = scan_qml_file_for_direct_named_colors(qml_file)
+            for line_no, named_val, line_text in matches:
+                violations.append(
+                    f"{rel_path}:{line_no} unauthorized named color literal '{named_val}': {line_text}"
+                )
+        self.assertEqual(
+            violations,
+            [],
+            f"Detected {len(violations)} unauthorized named color literal(s) across QML files:\n"
+            + "\n".join(violations),
+        )
 
     def test_theme_palette_completeness(self):
         """Verifies that DARK_PALETTE and LIGHT_PALETTE have all 41 semantic tokens defined."""

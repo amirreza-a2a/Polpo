@@ -96,7 +96,7 @@ Item {
 
                 Text {
                     text: "Markdown Source Editor"
-                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
                     font.pixelSize: 13
                     font.bold: true
                 }
@@ -107,13 +107,13 @@ Item {
                     height: 20
                     width: versionText.implicitWidth + 10
                     radius: 3
-                    color: (typeof theme !== "undefined" && theme) ? theme.surfaceHover : "gray"
+                    color: (typeof theme !== "undefined" && theme) ? theme.surfaceHover : "transparent"
 
                     Text {
                         id: versionText
                         anchors.centerIn: parent
                         text: controller ? "v" + controller.activeVersion : "v0"
-                        color: (typeof theme !== "undefined" && theme) ? theme.accent : "blue"
+                        color: (typeof theme !== "undefined" && theme) ? theme.accent : "transparent"
                         font.pixelSize: 11
                         font.bold: true
                     }
@@ -129,13 +129,13 @@ Item {
                         width: 8
                         height: 8
                         radius: 4
-                        color: (typeof theme !== "undefined" && theme) ? theme.warning : "goldenrod"
+                        color: (typeof theme !== "undefined" && theme) ? theme.warning : "transparent"
                         anchors.verticalCenter: parent.verticalCenter
                     }
 
                     Text {
                         text: "Modified"
-                        color: (typeof theme !== "undefined" && theme) ? theme.warning : "goldenrod"
+                        color: (typeof theme !== "undefined" && theme) ? theme.warning : "transparent"
                         font.pixelSize: 11
                         font.bold: true
                         anchors.verticalCenter: parent.verticalCenter
@@ -198,8 +198,8 @@ Item {
             Layout.fillWidth: true
             Layout.preferredHeight: 44
             visible: controller ? (controller.hasConflict && !controller.mergeSessionActive) : false
-            color: (typeof theme !== "undefined" && theme) ? theme.warningBackground : "darkgoldenrod"
-            border.color: (typeof theme !== "undefined" && theme) ? theme.warningBorder : "goldenrod"
+            color: (typeof theme !== "undefined" && theme) ? theme.warningBackground : "transparent"
+            border.color: (typeof theme !== "undefined" && theme) ? theme.warningBorder : "transparent"
             border.width: 1
 
             RowLayout {
@@ -216,7 +216,7 @@ Item {
                 Text {
                     Layout.fillWidth: true
                     text: controller ? controller.conflictMessage : "Document modified externally."
-                    color: (typeof theme !== "undefined" && theme) ? theme.warningText : "white"
+                    color: (typeof theme !== "undefined" && theme) ? theme.warningText : "transparent"
                     font.pixelSize: 12
                     font.bold: true
                     elide: Text.ElideRight
@@ -254,8 +254,8 @@ Item {
             Layout.preferredHeight: 36
             property bool dismissed: false
             visible: (controller ? controller.autoMergeNotification !== "" : false) && !dismissed
-            color: (typeof theme !== "undefined" && theme) ? theme.successBackground : "darkgreen"
-            border.color: (typeof theme !== "undefined" && theme) ? theme.successBorder : "green"
+            color: (typeof theme !== "undefined" && theme) ? theme.successBackground : "transparent"
+            border.color: (typeof theme !== "undefined" && theme) ? theme.successBorder : "transparent"
             border.width: 1
 
             Connections {
@@ -273,7 +273,7 @@ Item {
 
                 Text {
                     text: "✓"
-                    color: (typeof theme !== "undefined" && theme) ? theme.success : "green"
+                    color: (typeof theme !== "undefined" && theme) ? theme.success : "transparent"
                     font.pixelSize: 13
                     font.bold: true
                 }
@@ -283,7 +283,7 @@ Item {
                     objectName: "editorAutoMergeText"
                     Layout.fillWidth: true
                     text: controller ? controller.autoMergeNotification : ""
-                    color: (typeof theme !== "undefined" && theme) ? theme.successText : "white"
+                    color: (typeof theme !== "undefined" && theme) ? theme.successText : "transparent"
                     font.pixelSize: 12
                     elide: Text.ElideRight
                 }
@@ -308,8 +308,8 @@ Item {
             Layout.fillWidth: true
             Layout.preferredHeight: 44
             visible: controller ? controller.hasPipeline2Refinement : false
-            color: (typeof theme !== "undefined" && theme) ? theme.surfaceHover : "gray"
-            border.color: (typeof theme !== "undefined" && theme) ? theme.accent : "blue"
+            color: (typeof theme !== "undefined" && theme) ? theme.surfaceHover : "transparent"
+            border.color: (typeof theme !== "undefined" && theme) ? theme.accent : "transparent"
             border.width: 1
 
             RowLayout {
@@ -335,7 +335,7 @@ Item {
                         }
                         return msg
                     }
-                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
                     font.pixelSize: 12
                     font.bold: true
                     elide: Text.ElideRight
@@ -377,8 +377,8 @@ Item {
             Layout.fillWidth: true
             Layout.preferredHeight: 40
             visible: controller && controller.errorMessage !== "" && !controller.hasConflict
-            color: (typeof theme !== "undefined" && theme) ? theme.errorBackground : "darkred"
-            border.color: (typeof theme !== "undefined" && theme) ? theme.errorBorder : "red"
+            color: (typeof theme !== "undefined" && theme) ? theme.errorBackground : "transparent"
+            border.color: (typeof theme !== "undefined" && theme) ? theme.errorBorder : "transparent"
             border.width: 1
 
             RowLayout {
@@ -390,7 +390,7 @@ Item {
                 Text {
                     Layout.fillWidth: true
                     text: controller ? controller.errorMessage : ""
-                    color: (typeof theme !== "undefined" && theme) ? theme.errorText : "white"
+                    color: (typeof theme !== "undefined" && theme) ? theme.errorText : "transparent"
                     font.pixelSize: 12
                     elide: Text.ElideRight
                 }
@@ -414,7 +414,7 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            color: (typeof theme !== "undefined" && theme) ? theme.background : "black"
+            color: (typeof theme !== "undefined" && theme) ? theme.background : "transparent"
 
             ScrollView {
                 id: editorScrollView
@@ -427,7 +427,7 @@ Item {
                     textFormat: TextEdit.PlainText
                     wrapMode: TextEdit.Wrap
                     selectByMouse: true
-                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
                     font.family: "Monospace"
                     font.pixelSize: 13
                     padding: 16
@@ -509,7 +509,7 @@ Item {
 
                 Text {
                     text: controller && controller.isSaving ? "Saving canonical Markdown..." : "Loading source..."
-                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                     font.pixelSize: 13
                 }
             }
@@ -540,9 +540,9 @@ Item {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
         background: Rectangle {
-            color: (typeof theme !== "undefined" && theme) ? theme.surfaceElevated : "black"
+            color: (typeof theme !== "undefined" && theme) ? theme.surfaceElevated : "transparent"
             radius: 8
-            border.color: (typeof theme !== "undefined" && theme) ? theme.border : "gray"
+            border.color: (typeof theme !== "undefined" && theme) ? theme.border : "transparent"
             border.width: 1
         }
 
@@ -556,7 +556,7 @@ Item {
 
                 Text {
                     text: "✨ Pipeline 2 Typography Refinement"
-                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
                     font.pixelSize: 15
                     font.bold: true
                 }
@@ -577,7 +577,7 @@ Item {
                     if (!controller) return ""
                     return "Base Version: v" + controller.pipeline2SourceVersion + " | Current Document: v" + controller.activeVersion
                 }
-                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                 font.pixelSize: 12
             }
 
@@ -592,10 +592,10 @@ Item {
                     readOnly: true
                     text: controller ? controller.pipeline2RefinementText : ""
                     wrapMode: TextEdit.Wrap
-                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
                     background: Rectangle {
-                        color: (typeof theme !== "undefined" && theme) ? theme.surface : "gray"
-                        border.color: (typeof theme !== "undefined" && theme) ? theme.border : "darkgray"
+                        color: (typeof theme !== "undefined" && theme) ? theme.surface : "transparent"
+                        border.color: (typeof theme !== "undefined" && theme) ? theme.border : "transparent"
                         border.width: 1
                         radius: 4
                     }
@@ -623,7 +623,7 @@ Item {
                         }
                         return "Refinement ready for canonical adoption."
                     }
-                    color: (typeof theme !== "undefined" && theme) ? (controller && controller.canAdoptPipeline2 ? theme.textSecondary : theme.warning) : "yellow"
+                    color: (typeof theme !== "undefined" && theme) ? (controller && controller.canAdoptPipeline2 ? theme.textSecondary : theme.warning) : "transparent"
                     font.pixelSize: 11
                     elide: Text.ElideRight
                 }

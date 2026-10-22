@@ -237,3 +237,38 @@ def create_qt_palette(palette: ThemePalette) -> QPalette:
     qt_palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, QColor(palette.textMuted))
 
     return qt_palette
+
+
+def relative_luminance(hex_str: str) -> float:
+    """
+    Computes the WCAG 2.2 relative luminance of an sRGB hex color string (#RRGGBB or #RGB).
+    Returns a float in [0.0, 1.0].
+    """
+    if not isinstance(hex_str, str):
+        raise TypeError(f"Expected str for hex_str, got {type(hex_str).__name__}")
+    cleaned = hex_str.strip().lstrip("#")
+    if len(cleaned) == 3:
+        cleaned = "".join(c * 2 for c in cleaned)
+    if len(cleaned) != 6:
+        raise ValueError(f"Invalid hex color string: {hex_str}")
+
+    r = int(cleaned[0:2], 16) / 255.0
+    g = int(cleaned[2:4], 16) / 255.0
+    b = int(cleaned[4:6], 16) / 255.0
+
+    def to_linear(c: float) -> float:
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    return 0.2126 * to_linear(r) + 0.7152 * to_linear(g) + 0.0722 * to_linear(b)
+
+
+def contrast_ratio(foreground_hex: str, background_hex: str) -> float:
+    """
+    Computes the WCAG 2.2 relative contrast ratio between two hex colors.
+    Returns (L1 + 0.05) / (L2 + 0.05) where L1 >= L2, resulting in a value in [1.0, 21.0].
+    """
+    l1 = relative_luminance(foreground_hex)
+    l2 = relative_luminance(background_hex)
+    lighter = max(l1, l2)
+    darker = min(l1, l2)
+    return (lighter + 0.05) / (darker + 0.05)
