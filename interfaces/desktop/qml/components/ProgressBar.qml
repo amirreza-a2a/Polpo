@@ -10,13 +10,13 @@ Item {
     Rectangle {
         anchors.fill: parent
         radius: height / 2
-        color: (typeof theme !== "undefined" && theme) ? theme.surfaceHover : "gray"
+        color: (typeof theme !== "undefined" && theme) ? theme.surfaceHover : "transparent"
     }
 
     Rectangle {
         width: Math.max(0, Math.min(parent.width, parent.width * (root.value / 100.0)))
         height: parent.height
         radius: height / 2
-        color: (typeof theme !== "undefined" && theme) ? theme.accent : "blue"
+        color: (typeof theme !== "undefined" && theme) ? theme.accent : "transparent"
     }
 }

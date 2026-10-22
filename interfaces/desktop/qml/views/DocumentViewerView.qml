@@ -57,8 +57,8 @@ Item {
             objectName: "toolbarContainer"
             Layout.fillWidth: true
             implicitHeight: toolbarContent.implicitHeight + 12
-            color: (typeof theme !== "undefined" && theme) ? theme.surface : "black"
-            border.color: (typeof theme !== "undefined" && theme) ? theme.border : "gray"
+            color: (typeof theme !== "undefined" && theme) ? theme.surface : "transparent"
+            border.color: (typeof theme !== "undefined" && theme) ? theme.border : "transparent"
             border.width: 1
 
             ColumnLayout {
@@ -86,7 +86,7 @@ Item {
 
                         Text {
                             text: controller ? "p. " + controller.currentPage + " / " + Math.max(1, controller.totalPages) : "p. 1 / 1"
-                            color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                            color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
                             font.pixelSize: 12
                             font.bold: true
                             verticalAlignment: Text.AlignVCenter
@@ -112,7 +112,7 @@ Item {
 
                         Text {
                             text: controller ? Math.round(controller.zoom * 100) + "%" : "100%"
-                            color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                            color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                             font.pixelSize: 11
                             Layout.preferredWidth: 36
                             horizontalAlignment: Text.AlignHCenter
@@ -146,15 +146,15 @@ Item {
                         height: 24
                         width: regionCountText.implicitWidth + 12
                         radius: 12
-                        color: (typeof theme !== "undefined" && theme) ? theme.infoBackground : "darkblue"
-                        border.color: (typeof theme !== "undefined" && theme) ? theme.infoBorder : "blue"
+                        color: (typeof theme !== "undefined" && theme) ? theme.infoBackground : "transparent"
+                        border.color: (typeof theme !== "undefined" && theme) ? theme.infoBorder : "transparent"
                         visible: controller !== null
 
                         Text {
                             id: regionCountText
                             anchors.centerIn: parent
                             text: controller ? controller.activeRegions.length + " Regions" : "0 Regions"
-                            color: (typeof theme !== "undefined" && theme) ? theme.infoText : "lightblue"
+                            color: (typeof theme !== "undefined" && theme) ? theme.infoText : "transparent"
                             font.pixelSize: 10
                             font.bold: true
                         }
@@ -263,7 +263,7 @@ Item {
             objectName: "viewportArea"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "black"
+            color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "transparent"
             clip: true
 
             function syncViewportAndScene() {
@@ -367,7 +367,7 @@ Item {
                 width: Math.min(parent.width - 40, 360)
                 height: 54
                 radius: 6
-                color: (typeof theme !== "undefined" && theme) ? theme.error : "red"
+                color: (typeof theme !== "undefined" && theme) ? theme.error : "transparent"
                 visible: pageImage.status === Image.Error && pageImage.source !== ""
 
                 RowLayout {
@@ -376,7 +376,7 @@ Item {
 
                     Text {
                         text: "Failed to load page image texture"
-                        color: (typeof theme !== "undefined" && theme) ? theme.accentText : "white"
+                        color: (typeof theme !== "undefined" && theme) ? theme.accentText : "transparent"
                         font.pixelSize: 12
                         font.bold: true
                     }
@@ -386,7 +386,7 @@ Item {
             // Loading Indicator
             Rectangle {
                 anchors.fill: parent
-                color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "black"
+                color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "transparent"
                 opacity: 0.75
                 visible: (controller ? controller.isLoading : false) || (pageImage.status === Image.Loading && pageImage.source !== "")
 
@@ -401,7 +401,7 @@ Item {
 
                     Text {
                         text: "Rendering PDF Page..."
-                        color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                        color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
                         font.pixelSize: 13
                         Layout.alignment: Qt.AlignHCenter
                     }
@@ -416,13 +416,13 @@ Item {
                 anchors.margins: 16
                 height: 48
                 radius: 6
-                color: (typeof theme !== "undefined" && theme) ? theme.error : "red"
+                color: (typeof theme !== "undefined" && theme) ? theme.error : "transparent"
                 visible: controller ? controller.errorMessage !== "" : false
 
                 Text {
                     anchors.centerIn: parent
                     text: controller ? controller.errorMessage : ""
-                    color: (typeof theme !== "undefined" && theme) ? theme.accentText : "white"
+                    color: (typeof theme !== "undefined" && theme) ? theme.accentText : "transparent"
                     font.pixelSize: 12
                     font.bold: true
                 }

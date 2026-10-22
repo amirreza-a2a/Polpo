@@ -30,7 +30,7 @@ Item {
 
             Text {
                 text: "Active Conversion Queue"
-                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
                 font.pixelSize: 20
                 font.bold: true
             }
@@ -72,7 +72,7 @@ Item {
                             spacing: 12
                             Text {
                                 text: model.fileName
-                                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
                                 font.pixelSize: 15
                                 font.bold: true
                                 elide: Text.ElideRight
@@ -83,7 +83,7 @@ Item {
                             }
                             Text {
                                 text: model.activeApiLabel ? ("API: " + model.activeApiLabel) : ""
-                                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                                 font.pixelSize: 12
                             }
                         }
@@ -97,18 +97,18 @@ Item {
                             spacing: 16
                             Text {
                                 text: "Page " + model.processedPages + " of " + model.totalPages + " (" + Math.round(model.progressPercent) + "%)"
-                                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                                 font.pixelSize: 12
                             }
                             Text {
                                 text: model.scheduledAt ? ("Scheduled: " + model.scheduledAt) : ""
-                                color: (typeof theme !== "undefined" && theme) ? theme.warning : "orange"
+                                color: (typeof theme !== "undefined" && theme) ? theme.warning : "transparent"
                                 font.pixelSize: 11
                                 visible: model.scheduledAt !== ""
                             }
                             Text {
                                 text: model.errorMessage ? ("Error: " + model.errorMessage) : ""
-                                color: (typeof theme !== "undefined" && theme) ? theme.error : "red"
+                                color: (typeof theme !== "undefined" && theme) ? theme.error : "transparent"
                                 font.pixelSize: 11
                                 elide: Text.ElideRight
                                 Layout.fillWidth: true
@@ -140,7 +140,7 @@ Item {
                                         default: return "Processing…";
                                     }
                                 }
-                                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                                 font.pixelSize: 12
                             }
                         }
@@ -236,7 +236,7 @@ Item {
             Text {
                 anchors.centerIn: parent
                 text: "No active jobs in queue. Click '+ Submit Document' to convert a PDF."
-                color: (typeof theme !== "undefined" && theme) ? theme.textMuted : "gray"
+                color: (typeof theme !== "undefined" && theme) ? theme.textMuted : "transparent"
                 font.pixelSize: 14
                 visible: queueList.count === 0
             }
@@ -257,14 +257,14 @@ Item {
 
             Text {
                 text: "Submit Document"
-                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
                 font.pixelSize: 18
                 font.bold: true
             }
 
             Text {
                 text: "Selected: " + root.selectedFilePath
-                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                 font.pixelSize: 12
                 elide: Text.ElideMiddle
                 Layout.fillWidth: true
@@ -275,7 +275,7 @@ Item {
                 spacing: 12
                 Text {
                     text: "Prompt Template:"
-                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                     font.pixelSize: 13
                     Layout.preferredWidth: 120
                 }
@@ -293,7 +293,7 @@ Item {
                 spacing: 12
                 Text {
                     text: "Scheduled Time:"
-                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                     font.pixelSize: 13
                     Layout.preferredWidth: 120
                 }
@@ -354,7 +354,7 @@ Item {
 
             Text {
                 text: "Reschedule Conversion Job #" + root.targetJobId
-                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
                 font.pixelSize: 16
                 font.bold: true
             }

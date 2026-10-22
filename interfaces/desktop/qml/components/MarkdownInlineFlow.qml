@@ -15,7 +15,7 @@ Item {
     property real scaleFactor: 1.0
     property var controller: null
 
-    property color textColor: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+    property color textColor: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
     property int defaultPixelSize: 14
     property bool fontBold: false
     property bool fontItalic: false
@@ -129,9 +129,9 @@ Item {
                     id: inlineMathErrorComp
                     Rectangle {
                         id: errorBadge
-                        color: (typeof theme !== "undefined" && theme) ? theme.errorBackground : "darkred"
+                        color: (typeof theme !== "undefined" && theme) ? theme.errorBackground : "transparent"
                         radius: 3
-                        border.color: (typeof theme !== "undefined" && theme) ? theme.errorBorder : "red"
+                        border.color: (typeof theme !== "undefined" && theme) ? theme.errorBorder : "transparent"
                         border.width: 1
                         implicitWidth: badgeRow.implicitWidth + 10
                         implicitHeight: Math.max(22, badgeRow.implicitHeight + 4)
@@ -143,7 +143,7 @@ Item {
 
                             Text {
                                 text: "⚠"
-                                color: (typeof theme !== "undefined" && theme) ? theme.error : "red"
+                                color: (typeof theme !== "undefined" && theme) ? theme.error : "transparent"
                                 font.pixelSize: Math.max(10, Math.round(11 * inlineFlowRoot.scaleFactor))
                                 anchors.verticalCenter: parent.verticalCenter
                             }
@@ -166,7 +166,7 @@ Item {
                             anchors.bottom: parent.bottom
                             anchors.bottomMargin: 1
                             height: 1
-                            color: (typeof theme !== "undefined" && theme) ? theme.error : "red"
+                            color: (typeof theme !== "undefined" && theme) ? theme.error : "transparent"
                             opacity: 0.8
                         }
 

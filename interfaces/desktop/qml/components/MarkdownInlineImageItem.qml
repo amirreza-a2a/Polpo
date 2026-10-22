@@ -30,9 +30,9 @@ Rectangle {
     width: Math.max(80, Math.min(240, 160 * scaleFactor))
     height: Math.max(60, Math.min(180, 110 * scaleFactor))
     radius: 4
-    color: (typeof theme !== "undefined" && theme) ? theme.surfaceElevated : "black"
+    color: (typeof theme !== "undefined" && theme) ? theme.surfaceElevated : "transparent"
     border.width: isHighlighted ? 2 : 1
-    border.color: (typeof theme !== "undefined" && theme) ? (isHighlighted ? theme.accent : (mouseArea.containsMouse ? theme.accentHover : theme.border)) : "gray"
+    border.color: (typeof theme !== "undefined" && theme) ? (isHighlighted ? theme.accent : (mouseArea.containsMouse ? theme.accentHover : theme.border)) : "transparent"
 
     clip: true
 
@@ -51,7 +51,7 @@ Rectangle {
     Rectangle {
         anchors.fill: parent
         anchors.margins: 4
-        color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "gray"
+        color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "transparent"
         visible: thumbnailImage.status === Image.Error || !inlineImageRoot.imageUri
 
         ColumnLayout {
@@ -66,7 +66,7 @@ Rectangle {
 
             Text {
                 text: inlineImageRoot.altText || "Missing Image"
-                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                 font.pixelSize: 10
                 elide: Text.ElideRight
                 Layout.maximumWidth: inlineImageRoot.width - 16
@@ -84,13 +84,13 @@ Rectangle {
         height: 18
         width: Math.max(22, badgeText.implicitWidth + 8)
         radius: 3
-        color: (typeof theme !== "undefined" && theme) ? (isHighlighted ? theme.accentActive : theme.accent) : "blue"
+        color: (typeof theme !== "undefined" && theme) ? (isHighlighted ? theme.accentActive : theme.accent) : "transparent"
 
         Text {
             id: badgeText
             anchors.centerIn: parent
             text: "#" + inlineImageRoot.displayOrder
-            color: (typeof theme !== "undefined" && theme) ? theme.accentText : "white"
+            color: (typeof theme !== "undefined" && theme) ? theme.accentText : "transparent"
             font.pixelSize: 10
             font.bold: true
         }

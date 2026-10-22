@@ -43,18 +43,33 @@ class ThemeController(QObject):
         self._theme_preference: str = pref
         self._resolved_theme: str = self._resolve_theme(self._theme_preference)
         self._current_palette: ThemePalette = THEME_PALETTES.get(self._resolved_theme, DARK_PALETTE)
+        self._hints = None
 
         self._connect_os_hints()
 
     def _connect_os_hints(self) -> None:
         app = QGuiApplication.instance()
         if app is not None:
-            hints = app.styleHints()
-            if hints is not None:
-                try:
+            try:
+                hints = app.styleHints()
+                if hints is not None:
                     hints.colorSchemeChanged.connect(self._on_color_scheme_changed)
-                except (AttributeError, RuntimeError):
-                    pass
+                    self._hints = hints
+            except (AttributeError, RuntimeError):
+                self._hints = None
+
+    def disconnect_os_hints(self) -> None:
+        """Safely disconnects from QStyleHints.colorSchemeChanged if connected."""
+        if self._hints is not None:
+            try:
+                self._hints.colorSchemeChanged.disconnect(self._on_color_scheme_changed)
+            except (AttributeError, RuntimeError):
+                pass
+            self._hints = None
+
+    def cleanup(self) -> None:
+        """Presentation controller teardown hook to prevent stale signals."""
+        self.disconnect_os_hints()
 
     def _resolve_theme(self, preference: str) -> str:
         if preference == "light":
@@ -65,16 +80,16 @@ class ThemeController(QObject):
         # System preference: query QStyleHints with deterministic Unknown -> dark fallback
         app = QGuiApplication.instance()
         if app is not None:
-            hints = app.styleHints()
-            if hints is not None:
-                try:
+            try:
+                hints = app.styleHints()
+                if hints is not None:
                     scheme = hints.colorScheme()
-                    if scheme == Qt.ColorScheme.Light:
+                    if scheme == Qt.ColorScheme.Light or getattr(scheme, "value", None) == 1:
                         return "light"
                     # Qt.ColorScheme.Dark or Qt.ColorScheme.Unknown
                     return "dark"
-                except (AttributeError, RuntimeError):
-                    return "dark"
+            except (AttributeError, RuntimeError):
+                return "dark"
         return "dark"
 
     def _on_color_scheme_changed(self, scheme=None) -> None:
@@ -82,7 +97,7 @@ class ThemeController(QObject):
             return
         if scheme is None:
             new_resolved = self._resolve_theme(self._theme_preference)
-        elif scheme == Qt.ColorScheme.Light:
+        elif scheme == Qt.ColorScheme.Light or getattr(scheme, "value", None) == 1:
             new_resolved = "light"
         else:
             new_resolved = "dark"

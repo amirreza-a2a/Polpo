@@ -27,7 +27,7 @@ Item {
 
             Text {
                 text: "BYOK API Key Management"
-                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
                 font.pixelSize: 20
                 font.bold: true
             }
@@ -36,7 +36,7 @@ Item {
 
             Text {
                 text: root.statusNotice
-                color: (typeof theme !== "undefined" && theme) ? theme.success : "green"
+                color: (typeof theme !== "undefined" && theme) ? theme.success : "transparent"
                 font.pixelSize: 12
                 visible: root.statusNotice !== ""
             }
@@ -76,12 +76,12 @@ Item {
                             spacing: 10
                             Text {
                                 text: model.label
-                                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
                                 font.pixelSize: 15
                                 font.bold: true
                             }
                             Rectangle {
-                                color: (typeof theme !== "undefined" && theme) ? theme.surfaceHover : "gray"
+                                color: (typeof theme !== "undefined" && theme) ? theme.surfaceHover : "transparent"
                                 radius: 4
                                 implicitWidth: provText.implicitWidth + 12
                                 implicitHeight: 20
@@ -89,7 +89,7 @@ Item {
                                     id: provText
                                     anchors.centerIn: parent
                                     text: model.provider.toUpperCase()
-                                    color: (typeof theme !== "undefined" && theme) ? theme.accent : "blue"
+                                    color: (typeof theme !== "undefined" && theme) ? theme.accent : "transparent"
                                     font.pixelSize: 11
                                     font.bold: true
                                 }
@@ -97,7 +97,7 @@ Item {
                         }
                         Text {
                             text: (model.selectedModel ? ("Model: " + model.selectedModel) : "Default Model") + (model.baseUrl ? (" • URL: " + model.baseUrl) : "")
-                            color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                            color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                             font.pixelSize: 11
                             elide: Text.ElideRight
                             Layout.fillWidth: true
@@ -142,7 +142,7 @@ Item {
             Text {
                 anchors.centerIn: parent
                 text: "No API keys configured. Click '+ Add API Key' to add an AI provider."
-                color: (typeof theme !== "undefined" && theme) ? theme.textMuted : "gray"
+                color: (typeof theme !== "undefined" && theme) ? theme.textMuted : "transparent"
                 font.pixelSize: 14
                 visible: slotList.count === 0
             }
@@ -163,7 +163,7 @@ Item {
 
             Text {
                 text: "Register Provider API Key"
-                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
                 font.pixelSize: 16
                 font.bold: true
             }
@@ -173,7 +173,7 @@ Item {
                 spacing: 12
                 Text {
                     text: "Provider:"
-                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                     Layout.preferredWidth: 100
                 }
                 ComboBox {
@@ -188,7 +188,7 @@ Item {
                 spacing: 12
                 Text {
                     text: "Slot Label:"
-                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                     Layout.preferredWidth: 100
                 }
                 TextField {
@@ -203,7 +203,7 @@ Item {
                 spacing: 12
                 Text {
                     text: "API Key:"
-                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                     Layout.preferredWidth: 100
                 }
                 TextField {
@@ -219,7 +219,7 @@ Item {
                 spacing: 12
                 Text {
                     text: "Model Name:"
-                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                     Layout.preferredWidth: 100
                 }
                 TextField {
@@ -234,7 +234,7 @@ Item {
                 spacing: 12
                 Text {
                     text: "Base URL:"
-                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                     Layout.preferredWidth: 100
                 }
                 TextField {
@@ -294,7 +294,7 @@ Item {
 
             Text {
                 text: "Edit API Key Slot #" + root.editingSlotId
-                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
                 font.pixelSize: 16
                 font.bold: true
             }
@@ -304,7 +304,7 @@ Item {
                 spacing: 12
                 Text {
                     text: "Slot Label:"
-                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                     Layout.preferredWidth: 100
                 }
                 TextField {
@@ -318,7 +318,7 @@ Item {
                 spacing: 12
                 Text {
                     text: "New Key:"
-                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                     Layout.preferredWidth: 100
                 }
                 TextField {
@@ -334,7 +334,7 @@ Item {
                 spacing: 12
                 Text {
                     text: "Model Name:"
-                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                     Layout.preferredWidth: 100
                 }
                 TextField {
@@ -348,7 +348,7 @@ Item {
                 spacing: 12
                 Text {
                     text: "Base URL:"
-                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                     Layout.preferredWidth: 100
                 }
                 TextField {

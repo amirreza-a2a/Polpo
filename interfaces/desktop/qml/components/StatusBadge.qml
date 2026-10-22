@@ -11,7 +11,7 @@ Rectangle {
 
     color: {
         var t = (typeof theme !== "undefined" && theme) ? theme : null;
-        if (!t) return "gray";
+        if (!t) return "transparent";
         switch (status.toLowerCase()) {
             case "processing":
             case "resuming":
@@ -73,7 +73,7 @@ Rectangle {
         }
         color: {
             var t = (typeof theme !== "undefined" && theme) ? theme : null;
-            if (!t) return "white";
+            if (!t) return "transparent";
             switch (root.status.toLowerCase()) {
                 case "processing":
                 case "resuming":

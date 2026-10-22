@@ -20,25 +20,25 @@ Rectangle {
     color: {
         var t = (typeof theme !== "undefined" && theme) ? theme : null;
         if (bannerType === "error") {
-            return t ? t.errorBackground : "darkred";
+            return t ? t.errorBackground : "transparent";
         } else if (bannerType === "warning") {
-            return t ? t.warningBackground : "darkgoldenrod";
+            return t ? t.warningBackground : "transparent";
         } else if (bannerType === "success") {
-            return t ? t.successBackground : "darkgreen";
+            return t ? t.successBackground : "transparent";
         } else {
-            return t ? t.infoBackground : "darkblue";
+            return t ? t.infoBackground : "transparent";
         }
     }
     border.color: {
         var t = (typeof theme !== "undefined" && theme) ? theme : null;
         if (bannerType === "error") {
-            return t ? t.errorBorder : "red";
+            return t ? t.errorBorder : "transparent";
         } else if (bannerType === "warning") {
-            return t ? t.warningBorder : "goldenrod";
+            return t ? t.warningBorder : "transparent";
         } else if (bannerType === "success") {
-            return t ? t.successBorder : "green";
+            return t ? t.successBorder : "transparent";
         } else {
-            return t ? t.infoBorder : "blue";
+            return t ? t.infoBorder : "transparent";
         }
     }
     border.width: 1
@@ -50,13 +50,13 @@ Rectangle {
         color: {
             var t = (typeof theme !== "undefined" && theme) ? theme : null;
             if (root.bannerType === "error") {
-                return t ? t.errorText : "white";
+                return t ? t.errorText : "transparent";
             } else if (root.bannerType === "warning") {
-                return t ? t.warningText : "white";
+                return t ? t.warningText : "transparent";
             } else if (root.bannerType === "success") {
-                return t ? t.successText : "white";
+                return t ? t.successText : "transparent";
             } else {
-                return t ? t.infoText : "white";
+                return t ? t.infoText : "transparent";
             }
         }
         font.pixelSize: 13

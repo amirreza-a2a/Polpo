@@ -58,12 +58,12 @@ Rectangle {
                 Layout.preferredWidth: 200
                 implicitHeight: 26
                 placeholderText: "Find in document..."
-                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
-                placeholderTextColor: (typeof theme !== "undefined" && theme) ? theme.textMuted : "gray"
+                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
+                placeholderTextColor: (typeof theme !== "undefined" && theme) ? theme.textMuted : "transparent"
                 font.pixelSize: 12
                 background: Rectangle {
-                    color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "black"
-                    border.color: searchField.activeFocus ? ((typeof theme !== "undefined" && theme) ? theme.focusRing : "blue") : ((typeof theme !== "undefined" && theme) ? theme.border : "gray")
+                    color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "transparent"
+                    border.color: searchField.activeFocus ? ((typeof theme !== "undefined" && theme) ? theme.focusRing : "transparent") : ((typeof theme !== "undefined" && theme) ? theme.border : "transparent")
                     border.width: 1
                     radius: 3
                 }
@@ -101,7 +101,7 @@ Rectangle {
                     if (controller.searchTotalMatches === 0) return "No matches";
                     return controller.searchMatchIndex + " of " + controller.searchTotalMatches;
                 }
-                color: controller && controller.searchTotalMatches === 0 && controller.searchQuery ? ((typeof theme !== "undefined" && theme) ? theme.error : "red") : ((typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray")
+                color: controller && controller.searchTotalMatches === 0 && controller.searchQuery ? ((typeof theme !== "undefined" && theme) ? theme.error : "transparent") : ((typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent")
                 font.pixelSize: 11
                 elide: Text.ElideRight
             }
@@ -227,12 +227,12 @@ Rectangle {
                 Layout.preferredWidth: 200
                 implicitHeight: 26
                 placeholderText: "Replace with..."
-                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
-                placeholderTextColor: (typeof theme !== "undefined" && theme) ? theme.textMuted : "gray"
+                color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
+                placeholderTextColor: (typeof theme !== "undefined" && theme) ? theme.textMuted : "transparent"
                 font.pixelSize: 12
                 background: Rectangle {
-                    color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "black"
-                    border.color: replaceField.activeFocus ? ((typeof theme !== "undefined" && theme) ? theme.focusRing : "blue") : ((typeof theme !== "undefined" && theme) ? theme.border : "gray")
+                    color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "transparent"
+                    border.color: replaceField.activeFocus ? ((typeof theme !== "undefined" && theme) ? theme.focusRing : "transparent") : ((typeof theme !== "undefined" && theme) ? theme.border : "transparent")
                     border.width: 1
                     radius: 3
                 }

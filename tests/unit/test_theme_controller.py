@@ -187,3 +187,92 @@ class TestThemeController:
         assert tc.themePreference == "light"
         assert tc.resolvedTheme == "light"
         assert tc.property("background") == LIGHT_PALETTE.background
+
+    def test_os_scheme_unknown_resolves_deterministically_to_dark(self, qapp):
+        tc = ThemeController("system")
+        tc._on_color_scheme_changed(Qt.ColorScheme.Unknown)
+        assert tc.resolvedTheme == "dark"
+        assert tc.current_palette is DARK_PALETTE
+
+    def test_missing_app_or_style_hints_resolves_to_dark(self, monkeypatch):
+        from unittest.mock import MagicMock
+        monkeypatch.setattr(QGuiApplication, "instance", staticmethod(lambda: None))
+        tc = ThemeController("system")
+        assert tc._resolve_theme("system") == "dark"
+
+        # Mock app present but styleHints returns None
+        mock_app = MagicMock()
+        mock_app.styleHints.return_value = None
+        monkeypatch.setattr(QGuiApplication, "instance", staticmethod(lambda: mock_app))
+        assert tc._resolve_theme("system") == "dark"
+
+    def test_style_hints_exception_resolves_to_dark(self, monkeypatch):
+        from unittest.mock import MagicMock
+        mock_app = MagicMock()
+        mock_hints = MagicMock()
+        mock_hints.colorScheme.side_effect = RuntimeError("X11 portal unavailable")
+        mock_app.styleHints.return_value = mock_hints
+        monkeypatch.setattr(QGuiApplication, "instance", staticmethod(lambda: mock_app))
+
+        tc = ThemeController("system")
+        assert tc._resolve_theme("system") == "dark"
+
+    def test_preference_switch_that_resolves_to_same_active_theme_emits_no_resolved_signal(self, qapp):
+        tc = ThemeController("dark")
+        # Ensure system resolves to dark in this test
+        tc._resolve_theme = lambda pref: "dark" if pref in ("dark", "system") else "light"
+
+        pref_signals = []
+        resolved_signals = []
+        theme_signals = []
+
+        tc.themePreferenceChanged.connect(pref_signals.append)
+        tc.resolvedThemeChanged.connect(resolved_signals.append)
+        tc.themeChanged.connect(lambda: theme_signals.append(True))
+
+        # Switch from dark to system (which resolves to dark)
+        tc.set_theme_preference("system")
+
+        assert tc.themePreference == "system"
+        assert tc.resolvedTheme == "dark"
+        assert pref_signals == ["system"]
+        # Spurious signal elimination: resolvedTheme didn't change!
+        assert len(resolved_signals) == 0
+        assert len(theme_signals) == 0
+
+    def test_os_scheme_no_op_when_already_same_resolved_theme(self, qapp):
+        tc = ThemeController("system")
+        tc._on_color_scheme_changed(Qt.ColorScheme.Dark)
+        assert tc.resolvedTheme == "dark"
+
+        resolved_signals = []
+        theme_signals = []
+        tc.resolvedThemeChanged.connect(resolved_signals.append)
+        tc.themeChanged.connect(lambda: theme_signals.append(True))
+
+        # Simulate subsequent Dark or Unknown scheme signals from OS
+        tc._on_color_scheme_changed(Qt.ColorScheme.Dark)
+        tc._on_color_scheme_changed(Qt.ColorScheme.Unknown)
+
+        assert len(resolved_signals) == 0
+        assert len(theme_signals) == 0
+
+    def test_disconnect_os_hints_and_cleanup_lifecycle(self, qapp):
+        tc = ThemeController("system")
+        assert tc._hints is not None
+        # Disconnecting should not raise
+        tc.disconnect_os_hints()
+        assert tc._hints is None
+        # Subsequent cleanup should be safe/idempotent
+        tc.cleanup()
+        assert tc._hints is None
+
+    def test_preference_normalization_and_whitespace(self, qapp):
+        tc1 = ThemeController("  DARK  ")
+        assert tc1.themePreference == "dark"
+
+        tc2 = ThemeController(" Light ")
+        assert tc2.themePreference == "light"
+
+        tc3 = ThemeController("")
+        assert tc3.themePreference == "system"

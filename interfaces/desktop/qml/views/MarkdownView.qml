@@ -37,7 +37,7 @@ Item {
 
                 Text {
                     text: "Markdown Document"
-                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
                     font.pixelSize: 13
                     font.bold: true
                 }
@@ -48,13 +48,13 @@ Item {
                     height: 20
                     width: versionText.implicitWidth + 10
                     radius: 3
-                    color: (typeof theme !== "undefined" && theme) ? theme.surfaceHover : "gray"
+                    color: (typeof theme !== "undefined" && theme) ? theme.surfaceHover : "transparent"
 
                     Text {
                         id: versionText
                         anchors.centerIn: parent
                         text: controller ? "v" + controller.activeVersion : "v1"
-                        color: (typeof theme !== "undefined" && theme) ? theme.accent : "blue"
+                        color: (typeof theme !== "undefined" && theme) ? theme.accent : "transparent"
                         font.pixelSize: 11
                         font.bold: true
                     }
@@ -73,7 +73,7 @@ Item {
 
                 Text {
                     text: controller ? Math.round(controller.scaleFactor * 100) + "%" : "100%"
-                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
                     font.pixelSize: 12
                     Layout.preferredWidth: 44
                     horizontalAlignment: Text.AlignHCenter
@@ -102,7 +102,7 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            color: (typeof theme !== "undefined" && theme) ? theme.background : "black"
+            color: (typeof theme !== "undefined" && theme) ? theme.background : "transparent"
 
             // 1. Loading State
             ColumnLayout {
@@ -117,7 +117,7 @@ Item {
 
                 Text {
                     text: "Rendering Markdown AST..."
-                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                     font.pixelSize: 13
                     Layout.alignment: Qt.AlignHCenter
                 }
@@ -137,7 +137,7 @@ Item {
 
                 Text {
                     text: "Failed to Load Markdown"
-                    color: (typeof theme !== "undefined" && theme) ? theme.error : "red"
+                    color: (typeof theme !== "undefined" && theme) ? theme.error : "transparent"
                     font.pixelSize: 15
                     font.bold: true
                     Layout.alignment: Qt.AlignHCenter
@@ -145,7 +145,7 @@ Item {
 
                 Text {
                     text: controller ? controller.errorMessage : ""
-                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                     font.pixelSize: 12
                     wrapMode: Text.WordWrap
                     Layout.maximumWidth: 480
@@ -168,7 +168,7 @@ Item {
 
                 Text {
                     text: "No Document Loaded"
-                    color: (typeof theme !== "undefined" && theme) ? theme.textMuted : "gray"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textMuted : "transparent"
                     font.pixelSize: 14
                     font.bold: true
                     Layout.alignment: Qt.AlignHCenter
@@ -176,7 +176,7 @@ Item {
 
                 Text {
                     text: "Select a job to view its rendered Markdown document."
-                    color: (typeof theme !== "undefined" && theme) ? theme.textSubtle : "gray"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSubtle : "transparent"
                     font.pixelSize: 12
                     Layout.alignment: Qt.AlignHCenter
                 }
@@ -254,7 +254,7 @@ Item {
                 objectName: "previewPausedOverlay"
                 anchors.fill: parent
                 visible: controller && controller.previewPaused
-                color: (typeof theme !== "undefined" && theme) ? theme.background : "black"
+                color: (typeof theme !== "undefined" && theme) ? theme.background : "transparent"
                 opacity: 0.85
                 z: 100
 
@@ -269,7 +269,7 @@ Item {
 
                     Text {
                         text: "⚠️ Preview Paused"
-                        color: (typeof theme !== "undefined" && theme) ? theme.warning : "goldenrod"
+                        color: (typeof theme !== "undefined" && theme) ? theme.warning : "transparent"
                         font.pixelSize: 18
                         font.bold: true
                         Layout.alignment: Qt.AlignHCenter
@@ -277,7 +277,7 @@ Item {
 
                     Text {
                         text: controller ? controller.previewPausedReason : ""
-                        color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray"
+                        color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                         font.pixelSize: 13
                         wrapMode: Text.WordWrap
                         Layout.maximumWidth: 440
