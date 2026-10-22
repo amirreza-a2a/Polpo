@@ -69,17 +69,34 @@ This research document validates and falsifies the architectural propositions fr
 - **Rasterization:** `MathImageProvider` intercepts `image://math/{theme}/{hash}`, retrieves raw SVG from `MathSvgCache`, injects `color="{themeColor}"` into `<svg ...>`, and rasterizes via `QSvgRenderer`.
 - **Cache Isolation:** `MathSvgCache` and `NegativeFailureMemo` remain strictly indexed by `formula_hash`, independent of UI theme. Only the presentation URL carries `{theme}` to prevent Qt Quick pixmap cache collisions.
 
-### 2.5 Semantic Token Consolidation
-- Redundant tokens eliminated: `surfaceCard` consolidated into `surface`; `mathCardBorder` consolidated into `errorBorder`.
-- Refined palette: 30 clean semantic tokens covering surfaces, typography, borders, interactive states, semantic feedback (error, warning, success), and code/math surfaces.
-- Domain graphics excluded: CV bounding box annotations (`#00f0ff`, `#2a9d8f`, `#f77f00`, `#9d4edd`, `#00b4d8`) remain local constants in `BoundingBoxOverlay.qml`.
+### 2.5 Semantic Token Inventory & Authoritative Contract (Reconciled under THEME-01)
+- **Authoritative Source of Truth:** `ThemePalette` in `interfaces/desktop/theme.py` is the single authoritative implementation contract.
+- **Historical Note (Superseded Draft):** The preliminary investigation draft listed 30 tokens. The production implementation completed under Phase 8 refined and expanded this contract to **exactly 41 semantic tokens** across 10 functional groups to avoid ambiguity in feedback states, selection, and code/math rendering.
+- **Token Inventory (41 tokens):**
+  1. **Surfaces (6):** `background`, `surface`, `surfaceSunken`, `surfaceElevated`, `surfaceHover`, `surfaceActive`
+  2. **Typography (5):** `textPrimary`, `textSecondary`, `textMuted`, `textSubtle`, `textInverse`
+  3. **Borders (3):** `border`, `borderSubtle`, `borderStrong`
+  4. **Interactive (5):** `accent`, `accentHover`, `accentActive`, `accentText`, `focusRing`
+  5. **Selection (2):** `selectionBackground`, `selectionText`
+  6. **Error (4):** `error`, `errorBackground`, `errorBorder`, `errorText`
+  7. **Warning (4):** `warning`, `warningBackground`, `warningBorder`, `warningText`
+  8. **Success (4):** `success`, `successBackground`, `successBorder`, `successText`
+  9. **Info (4):** `info`, `infoBackground`, `infoBorder`, `infoText`
+  10. **Code & Math (4):** `codeBackground`, `codeBorder`, `codeText`, `mathForeground`
+- **Both Palettes Fully Populated:** `DARK_PALETTE` and `LIGHT_PALETTE` define valid 6-character hex values for all 41 fields.
+
+### 2.6 Domain Graphic Exceptions & Color Invariant Enforcement
+- **Separation of Concerns:** Application UI chrome must strictly consume `theme.*` properties. In contrast, data-driven domain graphics represent document content or classification states and retain intentional fixed encodings:
+  1. `BoundingBoxOverlay.qml`: Computer-vision coordinate overlays on user documents and canvas handles (`#00f0ff`, `#2a9d8f`, `#f77f00`, `#9d4edd`, `#00b4d8`, `#0077b6`, `#ffffff`, `#000000`) plus bounded CV canvas alpha shading (`Qt.rgba`).
+  2. `MathErrorCard.qml`: Explicit failure category badge colors (`#9a3412`, `#92400e`, `#991b1b`, `#7f1d1d`).
+- **Invariant Scanner:** `tests/unit/test_theme_architecture_invariants.py` enforces AST/regex checks prohibiting unauthorized hex colors, raw `rgb`/`rgba` expressions, and direct named color assignments across all active QML files.
 
 ---
 
-## 3. Scope for Codebase Design (Next Step)
+## 3. Implementation Status & Follow-Up Scope (THEME-01 Closeout)
 
-The following components and interfaces are scoped for `/codebase-design`:
-1. `interfaces/desktop/theme.py`: Semantic token dictionary & color mappings.
-2. `interfaces/desktop/controllers/theme_controller.py`: QObject controller managing `resolvedTheme`, token properties, and `colorSchemeChanged` listener.
-3. `interfaces/desktop/providers/math_image_provider.py`: Updating `requestImage` to parse `{theme}/{hash}` and inject SVG color.
-4. `interfaces/desktop/qml/components/`: Migrating `Card.qml`, `MathErrorCard.qml`, `MarkdownNodeDelegate.qml`, and `MarkdownInlineFlow.qml` to `theme.*`.
+1. `interfaces/desktop/theme.py`: Authoritative 41-token contract and Qt palette adapter verified.
+2. `interfaces/desktop/controllers/theme_controller.py`: Exposes all 41 design tokens as Q_PROPERTY bindings on the GUI thread.
+3. `interfaces/desktop/qml/`: All 30 active QML files audited; unauthorized RGBA and direct color literals replaced with semantic theme tokens; fallback literals eliminated from `Main.qml` and `Sidebar.qml`.
+4. `Branding Reconciled`: Stale `PolpoT` references in `Main.qml`, `Sidebar.qml`, and `theme.py` updated to `Polpo`.
+5. **Deferred to THEME-02:** Full interactive component state matrix (hover, active, focus-ring contrast across both palettes), WCAG accessibility contrast ratio verification, and dynamic OS color-scheme switching across headless / XDG desktop portal configurations are explicitly deferred to roadmap item `THEME-02`.

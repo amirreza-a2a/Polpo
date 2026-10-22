@@ -1,6 +1,6 @@
 # ============================================================
 #  interfaces/desktop/theme.py
-#  Semantic Design Tokens and Qt Palette Adapter for PolpoT
+#  Semantic Design Tokens and Qt Palette Adapter for Polpo
 # ============================================================
 
 from dataclasses import dataclass
@@ -12,7 +12,7 @@ from interfaces.desktop.qt_compat import QPalette, QColor
 @dataclass(frozen=True)
 class ThemePalette:
     """
-    Immutable semantic palette contract for PolpoT desktop theming.
+    Immutable semantic palette contract for Polpo desktop theming.
     Contains exactly 41 design tokens across surfaces, typography,
     borders, interactive elements, feedback states, and code/math surfaces.
     """
@@ -194,7 +194,7 @@ THEME_PALETTES: Mapping[str, ThemePalette] = {
 
 def create_qt_palette(palette: ThemePalette) -> QPalette:
     """
-    Constructs an auxiliary standard QPalette mapped from PolpoT semantic tokens.
+    Constructs an auxiliary standard QPalette mapped from Polpo semantic tokens.
     Keeps standard Qt widgets, menus, and file dialogs visually aligned with the active theme.
     """
     qt_palette = QPalette()
