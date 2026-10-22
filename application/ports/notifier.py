@@ -86,6 +86,8 @@ class EventPublisherNotifierAdapter:
             ApiSwitchEvent,
             JobCompletedEvent,
             JobFailedEvent,
+            Pipeline2CompletedEvent,
+            Pipeline2FailedEvent,
         )
         if isinstance(event, JobProgressEvent):
             if hasattr(self.notifier, "notify_progress"):
@@ -93,6 +95,18 @@ class EventPublisherNotifierAdapter:
         elif isinstance(event, ApiSwitchEvent):
             if hasattr(self.notifier, "notify_api_switch"):
                 self.notifier.notify_api_switch(1, event.job_id, event.old_label, event.new_label, event.reason, event.page)
+        elif isinstance(event, Pipeline2CompletedEvent):
+            # Compatibility bridge for the frozen Telegram transport.
+            # Desktop code must not depend on this path.
+            # This bridge is retained until the legacy transport is formally removed (AGENTS.md Rule 21).
+            if hasattr(self.notifier, "notify_job_completed"):
+                self.notifier.notify_job_completed(1, event.source_job_id, event.output_artifact_uri)
+        elif isinstance(event, Pipeline2FailedEvent):
+            # Compatibility bridge for the frozen Telegram transport.
+            # Desktop code must not depend on this path.
+            # This bridge is retained until the legacy transport is formally removed (AGENTS.md Rule 21).
+            if hasattr(self.notifier, "notify_job_failed"):
+                self.notifier.notify_job_failed(1, event.source_job_id, event.error_message)
         elif isinstance(event, JobCompletedEvent):
             if hasattr(self.notifier, "notify_job_completed"):
                 self.notifier.notify_job_completed(1, event.job_id, event.output_artifact_uri)

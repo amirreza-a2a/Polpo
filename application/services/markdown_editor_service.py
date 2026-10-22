@@ -12,6 +12,8 @@ from application.ports.unit_of_work import IUnitOfWorkFactory
 from application.services.document_publication_service import DocumentPublicationService
 from application.dto.visual_region_dto import VisualRegionDTO
 from core.entities.artifact import ArtifactHandle, ArtifactType, StorageBackendType
+from core.entities.document_version import DocumentVersionRecord
+from core.entities.job import Pipeline2Job
 from core.exceptions.domain_exceptions import (
     ArtifactNotFoundError,
     DomainError,
@@ -176,3 +178,56 @@ class MarkdownEditorService:
                 created_at=region.created_at.isoformat() if region.created_at else None,
                 updated_at=region.updated_at.isoformat() if region.updated_at else None,
             )
+
+    def get_pipeline2_refinement(self, job_id: int) -> Optional[Pipeline2Job]:
+        """
+        Retrieves the latest Pipeline 2 job for the given source document job ID.
+        """
+        with self.uow_factory.create() as uow:
+            if hasattr(uow, "pipeline2_jobs") and uow.pipeline2_jobs:
+                if hasattr(uow.pipeline2_jobs, "get_latest_for_source_job"):
+                    return uow.pipeline2_jobs.get_latest_for_source_job(job_id)
+                elif hasattr(uow.pipeline2_jobs, "get_by_source_job_id"):
+                    return uow.pipeline2_jobs.get_by_source_job_id(job_id)
+            return None
+
+    def get_pipeline2_text(self, p2_job_id: int) -> str:
+        """
+        Retrieves the raw text of the Pipeline 2 refinement artifact.
+        """
+        with self.uow_factory.create() as uow:
+            if not hasattr(uow, "pipeline2_jobs") or not uow.pipeline2_jobs:
+                raise EntityNotFoundError("Pipeline2Job", p2_job_id)
+            p2_job = uow.pipeline2_jobs.get_by_id(p2_job_id)
+            if not p2_job:
+                raise EntityNotFoundError("Pipeline2Job", p2_job_id)
+            if not p2_job.output_path:
+                raise ArtifactNotFoundError(f"Pipeline 2 job {p2_job_id} has no output artifact.")
+            output_path = p2_job.output_path
+            source_job_id = p2_job.source_job_id
+
+        handle = ArtifactHandle(
+            storage_backend=StorageBackendType.LOCAL_FS,
+            uri=output_path,
+            artifact_type=ArtifactType.PIPELINE2_MARKDOWN,
+            job_id=source_job_id,
+            filename=os.path.basename(output_path),
+        )
+        data = self.storage.retrieve(handle)
+        return data.decode("utf-8")
+
+    def adopt_pipeline2_refinement(self, p2_job_id: int) -> DocumentVersionRecord:
+        """
+        Adopts a completed Pipeline 2 refinement artifact into canonical document version history.
+        Delegates to adopt_pipeline2_refinement_core under Optimistic Concurrency Control.
+        """
+        if self.document_publication_service is None:
+            raise RuntimeError("DocumentPublicationService is required for adopting Pipeline 2 refinement.")
+        from application.services.job_execution import adopt_pipeline2_refinement_core
+
+        return adopt_pipeline2_refinement_core(
+            uow_factory=self.uow_factory,
+            storage=self.storage,
+            pub_service=self.document_publication_service,
+            p2_job_id=p2_job_id,
+        )

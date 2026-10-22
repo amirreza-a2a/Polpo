@@ -120,6 +120,10 @@ class IPipeline2JobRepository(ABC):
         """Lists Pipeline 2 jobs optionally filtered by status."""
         raise NotImplementedError
 
+    def get_latest_for_source_job(self, source_job_id: int) -> Optional[Pipeline2Job]:
+        """Returns the latest Pipeline 2 job for the given source job ID, or None."""
+        raise NotImplementedError
+
 
 class IPromptRepository(ABC):
     """Repository port for default and custom system prompts."""

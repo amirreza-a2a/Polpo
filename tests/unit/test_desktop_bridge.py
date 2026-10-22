@@ -17,6 +17,10 @@ from application.events import (
     JobStateChangedEvent,
     MissedScheduleDetectedEvent,
     ScheduleUpdatedEvent,
+    Pipeline2CompletedEvent,
+    Pipeline2StateChangedEvent,
+    Pipeline2FailedEvent,
+    Pipeline2CancelledEvent,
 )
 from core.entities.job import JobStatus
 
@@ -131,6 +135,57 @@ class TestQtSignalEventBridge(unittest.TestCase):
         self.assertEqual(len(receiver_thread_id), 1)
         self.assertNotEqual(worker_thread_id[0], threading.get_ident())
         self.assertEqual(receiver_thread_id[0], threading.get_ident())
+
+    def test_pipeline2_event_translations_and_isolation(self):
+        p2_completed = []
+        state_changed = []
+        failed = []
+        cancelled = []
+
+        self.bridge.pipeline2_completed_received.connect(lambda pid, sid, uri, ver: p2_completed.append((pid, sid, uri, ver)))
+        self.bridge.job_state_changed_received.connect(lambda jid, o, n: state_changed.append((jid, o, n)))
+        self.bridge.job_failed_received.connect(lambda jid, msg, r: failed.append((jid, msg, r)))
+        self.bridge.job_cancelled_received.connect(lambda jid: cancelled.append(jid))
+
+        self.event_bus.publish(
+            Pipeline2CompletedEvent(
+                job_id=10,
+                source_job_id=5,
+                output_artifact_uri="file:///artifacts/p2_10.md",
+                source_version=2,
+            )
+        )
+        self.event_bus.publish(
+            Pipeline2StateChangedEvent(
+                job_id=10,
+                old_status=JobStatus.PENDING,
+                new_status=JobStatus.PROCESSING,
+                source_job_id=5,
+            )
+        )
+        self.event_bus.publish(
+            Pipeline2FailedEvent(
+                job_id=10,
+                error_message="Refinement error",
+                is_retryable=False,
+                source_job_id=5,
+            )
+        )
+        self.event_bus.publish(
+            Pipeline2CancelledEvent(
+                job_id=10,
+                source_job_id=5,
+            )
+        )
+        self.app.processEvents()
+
+        # Pipeline2CompletedEvent routes to pipeline2_completed_received
+        self.assertEqual(p2_completed, [(10, 5, "file:///artifacts/p2_10.md", 2)])
+
+        # Isolated: primary job signals must NOT be triggered
+        self.assertEqual(state_changed, [])
+        self.assertEqual(failed, [])
+        self.assertEqual(cancelled, [])
 
 
 if __name__ == "__main__":
