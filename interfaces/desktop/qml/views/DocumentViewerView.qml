@@ -367,7 +367,7 @@ Item {
                 width: Math.min(parent.width - 40, 360)
                 height: 54
                 radius: 6
-                color: Qt.rgba(0.85, 0.02, 0.16, 0.9)
+                color: (typeof theme !== "undefined" && theme) ? theme.error : "red"
                 visible: pageImage.status === Image.Error && pageImage.source !== ""
 
                 RowLayout {
@@ -386,7 +386,8 @@ Item {
             // Loading Indicator
             Rectangle {
                 anchors.fill: parent
-                color: Qt.rgba(0, 0, 0, 0.6)
+                color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "black"
+                opacity: 0.75
                 visible: (controller ? controller.isLoading : false) || (pageImage.status === Image.Loading && pageImage.source !== "")
 
                 ColumnLayout {
@@ -400,7 +401,7 @@ Item {
 
                     Text {
                         text: "Rendering PDF Page..."
-                        color: (typeof theme !== "undefined" && theme) ? theme.accentText : "white"
+                        color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
                         font.pixelSize: 13
                         Layout.alignment: Qt.AlignHCenter
                     }
@@ -421,7 +422,7 @@ Item {
                 Text {
                     anchors.centerIn: parent
                     text: controller ? controller.errorMessage : ""
-                    color: "white"
+                    color: (typeof theme !== "undefined" && theme) ? theme.accentText : "white"
                     font.pixelSize: 12
                     font.bold: true
                 }

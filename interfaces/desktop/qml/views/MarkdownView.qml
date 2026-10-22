@@ -254,7 +254,8 @@ Item {
                 objectName: "previewPausedOverlay"
                 anchors.fill: parent
                 visible: controller && controller.previewPaused
-                color: Qt.rgba(0.06, 0.06, 0.08, 0.85)
+                color: (typeof theme !== "undefined" && theme) ? theme.background : "black"
+                opacity: 0.85
                 z: 100
 
                 MouseArea {

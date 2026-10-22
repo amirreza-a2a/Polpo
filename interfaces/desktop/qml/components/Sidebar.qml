@@ -15,8 +15,8 @@ Rectangle {
         spacing: 8
 
         Text {
-            text: "PolpoT Desktop"
-            color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "white"
+            text: "Polpo Desktop"
+            color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
             font.pixelSize: 18
             font.bold: true
             bottomPadding: 16
@@ -37,14 +37,14 @@ Rectangle {
                 width: parent.width
                 height: 40
                 radius: 6
-                color: root.currentTab === index ? ((typeof theme !== "undefined" && theme) ? theme.surfaceHover : "gray") : "transparent"
+                color: root.currentTab === index ? ((typeof theme !== "undefined" && theme) ? theme.surfaceHover : "transparent") : "transparent"
 
                 Text {
                     anchors.left: parent.left
                     anchors.leftMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
                     text: modelData.name
-                    color: root.currentTab === index ? ((typeof theme !== "undefined" && theme) ? theme.accent : "blue") : ((typeof theme !== "undefined" && theme) ? theme.textSecondary : "gray")
+                    color: root.currentTab === index ? ((typeof theme !== "undefined" && theme) ? theme.accent : "transparent") : ((typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent")
                     font.pixelSize: 14
                     font.bold: root.currentTab === index
                 }

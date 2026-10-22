@@ -270,7 +270,7 @@ class TestDesktopPresentationInvariants(unittest.TestCase):
 
         root_objects = engine.rootObjects()
         self.assertEqual(len(root_objects), 1)
-        self.assertEqual(root_objects[0].property("title"), "PolpoT — Desktop Document Intelligence")
+        self.assertEqual(root_objects[0].property("title"), "Polpo — Desktop Document Intelligence")
 
         # 1. Exercise API key controller from container
         api_ctrl = container.api_key_controller
