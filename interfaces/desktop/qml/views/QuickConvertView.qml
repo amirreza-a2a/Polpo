@@ -160,7 +160,7 @@ Item {
                 font.family: "Monospace"
                 background: Rectangle {
                     color: (typeof theme !== "undefined" && theme) ? theme.codeBackground : "transparent"
-                    border.color: (typeof theme !== "undefined" && theme) ? theme.codeBorder : "transparent"
+                    border.color: (typeof theme !== "undefined" && theme) ? (resultArea.activeFocus ? theme.focusRing : theme.codeBorder) : "transparent"
                     radius: 6
                 }
             }

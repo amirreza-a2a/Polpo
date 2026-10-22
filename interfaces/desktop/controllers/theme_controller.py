@@ -45,7 +45,17 @@ class ThemeController(QObject):
         self._current_palette: ThemePalette = THEME_PALETTES.get(self._resolved_theme, DARK_PALETTE)
         self._hints = None
 
+        self._apply_qt_palette()
         self._connect_os_hints()
+
+    def _apply_qt_palette(self) -> None:
+        """Applies current ThemePalette to QGuiApplication to keep native Qt widgets in sync."""
+        app = QGuiApplication.instance()
+        if app is not None:
+            try:
+                app.setPalette(create_qt_palette(self._current_palette))
+            except (AttributeError, RuntimeError):
+                pass
 
     def _connect_os_hints(self) -> None:
         app = QGuiApplication.instance()
@@ -84,7 +94,7 @@ class ThemeController(QObject):
                 hints = app.styleHints()
                 if hints is not None:
                     scheme = hints.colorScheme()
-                    if scheme == Qt.ColorScheme.Light or getattr(scheme, "value", None) == 1:
+                    if scheme == Qt.ColorScheme.Light or getattr(scheme, "value", None) == 1 or scheme == 1:
                         return "light"
                     # Qt.ColorScheme.Dark or Qt.ColorScheme.Unknown
                     return "dark"
@@ -97,7 +107,7 @@ class ThemeController(QObject):
             return
         if scheme is None:
             new_resolved = self._resolve_theme(self._theme_preference)
-        elif scheme == Qt.ColorScheme.Light or getattr(scheme, "value", None) == 1:
+        elif scheme == Qt.ColorScheme.Light or getattr(scheme, "value", None) == 1 or scheme == 1:
             new_resolved = "light"
         else:
             new_resolved = "dark"
@@ -107,12 +117,7 @@ class ThemeController(QObject):
         if new_resolved != self._resolved_theme:
             self._resolved_theme = new_resolved
             self._current_palette = THEME_PALETTES.get(self._resolved_theme, DARK_PALETTE)
-            app = QGuiApplication.instance()
-            if app is not None:
-                try:
-                    app.setPalette(create_qt_palette(self._current_palette))
-                except (AttributeError, RuntimeError):
-                    pass
+            self._apply_qt_palette()
             self.resolvedThemeChanged.emit(self._resolved_theme)
             self.themeChanged.emit()
 
@@ -218,12 +223,7 @@ class ThemeController(QObject):
         if theme_changed:
             self._resolved_theme = new_resolved
             self._current_palette = THEME_PALETTES.get(self._resolved_theme, DARK_PALETTE)
-            app = QGuiApplication.instance()
-            if app is not None:
-                try:
-                    app.setPalette(create_qt_palette(self._current_palette))
-                except (AttributeError, RuntimeError):
-                    pass
+            self._apply_qt_palette()
 
         if pref_changed:
             self.themePreferenceChanged.emit(self._theme_preference)

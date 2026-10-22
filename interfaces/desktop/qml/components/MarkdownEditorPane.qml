@@ -595,7 +595,7 @@ Item {
                     color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
                     background: Rectangle {
                         color: (typeof theme !== "undefined" && theme) ? theme.surface : "transparent"
-                        border.color: (typeof theme !== "undefined" && theme) ? theme.border : "transparent"
+                        border.color: (typeof theme !== "undefined" && theme) ? (inspectTextArea.activeFocus ? theme.focusRing : theme.border) : "transparent"
                         border.width: 1
                         radius: 4
                     }

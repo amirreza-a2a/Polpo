@@ -146,6 +146,16 @@ class TestThemeController:
         assert tc.resolvedTheme == "dark"
         assert len(resolved_signals) == 0
 
+    def test_qguiapplication_palette_initialized_on_startup(self, qapp):
+        """Verifies that ThemeController immediately applies its palette to QGuiApplication on initialization."""
+        tc_light = ThemeController("light")
+        app_palette = qapp.palette()
+        assert app_palette.color(qapp.palette().ColorRole.Window).name().lower() == LIGHT_PALETTE.background.lower()
+
+        tc_dark = ThemeController("dark")
+        app_palette = qapp.palette()
+        assert app_palette.color(qapp.palette().ColorRole.Window).name().lower() == DARK_PALETTE.background.lower()
+
     def test_qguiapplication_palette_updated_on_change(self, qapp):
         tc = ThemeController("dark")
         tc.set_theme_preference("light")
@@ -156,6 +166,16 @@ class TestThemeController:
         tc.set_theme_preference("dark")
         app_palette = qapp.palette()
         assert app_palette.color(qapp.palette().ColorRole.Window).name().lower() == DARK_PALETTE.background.lower()
+
+    def test_os_scheme_raw_int_handled(self, qapp):
+        """Verifies that raw integer enum values (e.g. 1 for Light) from signals or mocks resolve correctly."""
+        tc = ThemeController("system")
+        tc._on_color_scheme_changed(1)
+        assert tc.resolvedTheme == "light"
+        tc._on_color_scheme_changed(2)
+        assert tc.resolvedTheme == "dark"
+        tc._on_color_scheme_changed(0)
+        assert tc.resolvedTheme == "dark"
 
     def test_settings_controller_triggers_theme_update(self, qapp):
         from unittest.mock import MagicMock

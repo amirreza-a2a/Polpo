@@ -53,6 +53,14 @@ CSS_NAMED_COLOR_LITERALS = frozenset({
     "lightgreen", "darkgray", "lightgray", "brown",
 })
 NAMED_COLOR_LITERAL_PATTERN = re.compile(r"[\"']([a-zA-Z]+)[\"']")
+COLOR_PROPERTY_LINE_PATTERN = re.compile(
+    r"(?:color|border\.color|textColor|backgroundColor|placeholderTextColor)\s*:",
+    re.IGNORECASE,
+)
+CONDITIONAL_FALLBACK_NAMED_PATTERN = re.compile(
+    r"(?:\?\s*[^:]+:\s*|return\s+)[\"']([a-zA-Z]+)[\"']",
+    re.IGNORECASE,
+)
 
 BBOX_OVERLAY_RELATIVE_PATH = "interfaces/desktop/qml/components/BoundingBoxOverlay.qml"
 MATH_ERROR_CARD_RELATIVE_PATH = "interfaces/desktop/qml/components/MathErrorCard.qml"
@@ -91,7 +99,8 @@ def scan_qml_file_for_rgba_colors(file_path: Path) -> List[Tuple[int, str, str]]
 def scan_qml_content_for_direct_named_colors(content: str) -> List[Tuple[int, str, str]]:
     """
     Scans QML text content for direct and conditional named color assignments
-    (e.g. color: 'white' or ? theme.textPrimary : 'goldenrod') that bypass semantic tokens.
+    (e.g. color: 'white' or ? theme.textPrimary : 'goldenrod' or return 'gray') that bypass semantic tokens.
+    Ignores non-color string properties (e.g. text: 'red').
     """
     matches = []
     for line_idx, line in enumerate(content.splitlines(), start=1):
@@ -100,8 +109,13 @@ def scan_qml_content_for_direct_named_colors(content: str) -> List[Tuple[int, st
         for named in DIRECT_NAMED_COLOR_PATTERN.findall(clean_line):
             if named.lower() not in PERMITTED_DIRECT_NAMED_COLORS:
                 matches.append((line_idx, named, clean_line))
-        # Quoted CSS color names in conditional expressions or returns
-        for quoted in NAMED_COLOR_LITERAL_PATTERN.findall(clean_line):
+        # Color property lines containing quoted color names (including ternaries)
+        if COLOR_PROPERTY_LINE_PATTERN.search(clean_line):
+            for quoted in NAMED_COLOR_LITERAL_PATTERN.findall(clean_line):
+                if quoted.lower() in CSS_NAMED_COLOR_LITERALS and quoted.lower() not in PERMITTED_DIRECT_NAMED_COLORS:
+                    matches.append((line_idx, quoted, clean_line))
+        # Return statements or conditional fallbacks returning quoted color names
+        for quoted in CONDITIONAL_FALLBACK_NAMED_PATTERN.findall(clean_line):
             if quoted.lower() in CSS_NAMED_COLOR_LITERALS and quoted.lower() not in PERMITTED_DIRECT_NAMED_COLORS:
                 matches.append((line_idx, quoted, clean_line))
     # Deduplicate matches per line and token
@@ -318,6 +332,23 @@ class TestThemeArchitectureInvariants(unittest.TestCase):
             n for _, n, _ in scan_qml_content_for_direct_named_colors(test_conditional)
         ]
         self.assertEqual(cond_matches, ["goldenrod"])
+
+        # 5. Return statement named color detection
+        test_return = 'function getBg() { if (!t) return "gray"; return theme.surface; }'
+        return_matches = [
+            n for _, n, _ in scan_qml_content_for_direct_named_colors(test_return)
+        ]
+        self.assertEqual(return_matches, ["gray"])
+
+        # 6. Non-color string properties must NOT trigger false positives
+        test_non_color_text = (
+            'Text { text: "red" }\n'
+            'Button { text: "blue" }\n'
+            'Window { title: "Black and White" }\n'
+            'Item { objectName: "grayBox" }\n'
+        )
+        non_color_matches = scan_qml_content_for_direct_named_colors(test_non_color_text)
+        self.assertEqual(non_color_matches, [])
 
     def test_synthetic_unauthorized_color_in_whitelisted_component(self):
         """

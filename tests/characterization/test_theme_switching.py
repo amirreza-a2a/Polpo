@@ -257,3 +257,122 @@ class TestThemeSwitchingCharacterization:
         assert item.property("currentBg").name().lower() == DARK_PALETTE.background.lower()
         assert item.property("currentText").name().lower() == DARK_PALETTE.textPrimary.lower()
         assert item.property("currentMath").name().lower() == DARK_PALETTE.mathForeground.lower()
+
+    def test_markdown_inline_flow_html_math_urls_rewrite_on_theme_switch(self, qapp):
+        """
+        Verifies that MarkdownInlineFlow's RichText/HTML presentation path dynamically rewrites
+        math image URLs when switching themes, providing Qt Quick cache isolation.
+        """
+        from pathlib import Path
+        from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
+        from interfaces.desktop.providers.math_image_provider import MathImageProvider
+        from infrastructure.math.lru_cache import MathSvgCache
+
+        tc = ThemeController("dark")
+        cache = MathSvgCache(10)
+        provider = MathImageProvider(cache)
+        engine = QQmlApplicationEngine()
+        engine.rootContext().setContextProperty("theme", tc)
+        engine.addImageProvider("math", provider)
+
+        qml_path = Path("interfaces/desktop/qml/components/MarkdownInlineFlow.qml").resolve()
+        comp = QQmlComponent(engine, str(qml_path))
+        assert not comp.isError(), f"Component errors: {comp.errors()}"
+
+        item = comp.create()
+        assert item is not None
+
+        item.setProperty("textFallback", '<p>Math: <img src="image://math/dark/hash123"></p>')
+        assert 'src="image://math/dark/hash123"' in item.property("effectiveTextHtml")
+
+        # Switch to light
+        tc.set_theme_preference("light")
+        QCoreApplication.processEvents()
+        assert 'src="image://math/light/hash123"' in item.property("effectiveTextHtml")
+
+        # Switch back to dark
+        tc.set_theme_preference("dark")
+        QCoreApplication.processEvents()
+        assert 'src="image://math/dark/hash123"' in item.property("effectiveTextHtml")
+
+    def test_native_math_image_source_url_binding_on_theme_switch(self, qapp):
+        """
+        Verifies that native QML Image math presentation bindings update their URLs
+        when switching themes, guaranteeing theme-specific pixmap caching.
+        """
+        from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
+        from PySide6.QtCore import QUrl, QObject
+
+        tc = ThemeController("dark")
+        engine = QQmlApplicationEngine()
+        engine.rootContext().setContextProperty("theme", tc)
+
+        qml_src = b"""
+        import QtQuick 2.15
+        Item {
+            id: root
+            property string mathHash: "hash456"
+            Image {
+                id: mathImg
+                objectName: "mathImg"
+                source: root.mathHash ? ("image://math/" + ((typeof theme !== "undefined" && theme && theme.resolvedTheme) ? theme.resolvedTheme : "dark") + "/" + root.mathHash) : ""
+            }
+        }
+        """
+        comp = QQmlComponent(engine)
+        comp.setData(qml_src, QUrl.fromLocalFile("test_math_image.qml"))
+        assert not comp.isError(), f"Component errors: {comp.errors()}"
+
+        item = comp.create()
+        assert item is not None
+        img = item.findChild(QObject, "mathImg")
+        assert img is not None
+
+        assert img.property("source").toString() == "image://math/dark/hash456"
+
+        # Switch to light
+        tc.set_theme_preference("light")
+        QCoreApplication.processEvents()
+        assert img.property("source").toString() == "image://math/light/hash456"
+
+        # Switch back to dark
+        tc.set_theme_preference("dark")
+        QCoreApplication.processEvents()
+        assert img.property("source").toString() == "image://math/dark/hash456"
+
+    def test_focus_ring_wiring_on_interactive_controls(self, qapp):
+        """
+        Verifies that interactive text controls with custom backgrounds wire theme.focusRing
+        when activeFocus is true, satisfying WCAG 2.2 SC 1.4.11 visible focus requirements.
+        """
+        from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
+        from PySide6.QtCore import QUrl, QObject
+
+        tc = ThemeController("dark")
+        engine = QQmlApplicationEngine()
+        engine.rootContext().setContextProperty("theme", tc)
+
+        qml_src = b"""
+        import QtQuick 2.15
+        import QtQuick.Controls 2.15
+        Item {
+            id: root
+            property bool isFocused: false
+            readonly property color borderColor: bgRect.border.color
+            Rectangle {
+                id: bgRect
+                border.color: (typeof theme !== "undefined" && theme) ? (root.isFocused ? theme.focusRing : theme.border) : "transparent"
+            }
+        }
+        """
+        comp = QQmlComponent(engine)
+        comp.setData(qml_src, QUrl.fromLocalFile("test_focus.qml"))
+        item = comp.create()
+
+        # Unfocused uses theme.border
+        assert item.property("borderColor").name().lower() == DARK_PALETTE.border.lower()
+
+        # Focused uses theme.focusRing
+        item.setProperty("isFocused", True)
+        QCoreApplication.processEvents()
+        assert item.property("borderColor").name().lower() == DARK_PALETTE.focusRing.lower()

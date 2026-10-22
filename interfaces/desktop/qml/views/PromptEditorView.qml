@@ -251,7 +251,7 @@ Item {
                     font.pixelSize: 13
                     background: Rectangle {
                         color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "transparent"
-                        border.color: (typeof theme !== "undefined" && theme) ? theme.border : "transparent"
+                        border.color: (typeof theme !== "undefined" && theme) ? (createTextInput.activeFocus ? theme.focusRing : theme.border) : "transparent"
                         radius: 6
                     }
                 }
@@ -350,7 +350,7 @@ Item {
                     font.pixelSize: 13
                     background: Rectangle {
                         color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "transparent"
-                        border.color: (typeof theme !== "undefined" && theme) ? theme.border : "transparent"
+                        border.color: (typeof theme !== "undefined" && theme) ? (editTextInput.activeFocus ? theme.focusRing : theme.border) : "transparent"
                         radius: 6
                     }
                 }

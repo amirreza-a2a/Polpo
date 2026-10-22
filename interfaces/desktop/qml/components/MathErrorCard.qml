@@ -91,7 +91,7 @@ Rectangle {
                 background: Rectangle {
                     color: copyBtn.down ? ((typeof theme !== "undefined" && theme) ? theme.surfaceActive : "transparent") : (copyBtn.hovered ? ((typeof theme !== "undefined" && theme) ? theme.surfaceHover : "transparent") : ((typeof theme !== "undefined" && theme) ? theme.surface : "transparent"))
                     radius: 3
-                    border.color: (typeof theme !== "undefined" && theme) ? theme.border : "transparent"
+                    border.color: (typeof theme !== "undefined" && theme) ? (copyBtn.visualFocus ? theme.focusRing : theme.border) : "transparent"
                     border.width: 1
                 }
 

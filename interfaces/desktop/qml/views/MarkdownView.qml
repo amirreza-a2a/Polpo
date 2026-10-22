@@ -176,7 +176,7 @@ Item {
 
                 Text {
                     text: "Select a job to view its rendered Markdown document."
-                    color: (typeof theme !== "undefined" && theme) ? theme.textSubtle : "transparent"
+                    color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
                     font.pixelSize: 12
                     Layout.alignment: Qt.AlignHCenter
                 }
