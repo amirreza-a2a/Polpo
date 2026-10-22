@@ -206,12 +206,15 @@ class MarkdownEditorService:
             output_path = p2_job.output_path
             source_job_id = p2_job.source_job_id
 
+        from application.services.job_execution import _extract_canonical_filename
+
+        filename = _extract_canonical_filename(output_path) or f"p2_output_{p2_job_id}.md"
         handle = ArtifactHandle(
             storage_backend=StorageBackendType.LOCAL_FS,
             uri=output_path,
             artifact_type=ArtifactType.PIPELINE2_MARKDOWN,
             job_id=source_job_id,
-            filename=os.path.basename(output_path),
+            filename=filename,
         )
         data = self.storage.retrieve(handle)
         return data.decode("utf-8")

@@ -222,6 +222,11 @@ def test_controller_clear(qapp, mock_editor_service):
         assert ctrl.activeVersion == 0
         assert ctrl.hasConflict is False
         assert ctrl.cursorPosition == 0
+        assert ctrl.hasPipeline2Refinement is False
+        assert ctrl.pipeline2JobId == 0
+        assert ctrl.pipeline2SourceVersion == 0
+        assert ctrl.pipeline2RefinementText == ""
+        assert ctrl.adoptionStatusMessage == ""
     finally:
         ctrl.shutdown()
 

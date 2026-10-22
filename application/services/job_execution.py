@@ -101,11 +101,9 @@ def adopt_pipeline2_refinement_core(
                             f"expects file '{expected_name}', but job input_path was '{actual_name}'."
                         )
             else:
-                latest_doc = uow.document_versions.get_latest(p2_job.source_job_id)
-                if latest_doc is not None:
-                    raise CanonicalDocumentIntegrityError(
-                        f"Pipeline 2 source_version {p2_job.source_version} does not exist in canonical history."
-                    )
+                raise CanonicalDocumentIntegrityError(
+                    f"Pipeline 2 source_version {p2_job.source_version} does not exist in canonical history."
+                )
 
         source_job_id = p2_job.source_job_id
         source_version = p2_job.source_version

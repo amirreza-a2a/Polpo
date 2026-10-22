@@ -621,6 +621,114 @@ class TestPipeline2PublicationAndLineage(unittest.TestCase):
 
         bridge.detach()
 
+    def test_adopt_refinement_synchronizes_controller_when_canonical_version_advanced_concurrently(self):
+        """
+        Criteria 9 & 14: When a user attempts to adopt a refinement while the canonical document
+        has advanced in the database (e.g. from v1 to v2) without the editor having refreshed yet,
+        OCC rejects publication, and the controller immediately synchronizes its active version
+        to v2, disallowing further adoption and updating the UI status message.
+        """
+        source_job_id = self._create_completed_p1_job(auto_pipeline2=True)
+
+        with self.uow_factory.create() as uow:
+            claimed_p2 = uow.pipeline2_jobs.claim_next_pending()
+            uow.commit()
+
+        p2_job = self.exec_service.execute_claimed_pipeline2_job(claimed_p2.id)
+        self.assertEqual(p2_job.source_version, 1)
+
+        controller = MarkdownEditorController(editor_service=self.editor_service)
+        controller.load_source_sync(source_job_id)
+        controller.checkForPipeline2Refinement()
+
+        self.assertEqual(controller.activeVersion, 1)
+        self.assertEqual(controller.pipeline2SourceVersion, 1)
+        self.assertTrue(controller.canAdoptPipeline2)
+
+        # External write advances document to v2 directly
+        self.pub_service.publish_version(
+            job_id=source_job_id,
+            base_version=1,
+            markdown_text="# Canonical v2 published concurrently",
+            published_by="CONCURRENT_AGENT",
+        )
+
+        # Controller still thinks it's v1. Clicking adopt triggers OCC rejection:
+        adopted = controller.adoptPipeline2Refinement()
+        self.assertFalse(adopted)
+        self.assertIn("lineage conflict", controller.errorMessage.lower())
+
+        # Wait briefly for notifyCanonicalDocumentAdvance async reload
+        import time
+        for _ in range(50):
+            QCoreApplication.processEvents()
+            if controller.activeVersion == 2:
+                break
+            time.sleep(0.01)
+
+        self.assertEqual(controller.activeVersion, 2)
+        self.assertFalse(controller.canAdoptPipeline2)
+        self.assertIn("blocked", controller.adoptionStatusMessage.lower())
+        self.assertIn("v1", controller.adoptionStatusMessage)
+        self.assertIn("v2", controller.adoptionStatusMessage)
+
+        controller.shutdown()
+
+    def test_controller_clear_and_switch_job_resets_pipeline2_state(self):
+        """
+        Verifies that clear() and loading a new job immediately reset Pipeline 2
+        refinement state, preventing state leakage across jobs.
+        """
+        source_job_id = self._create_completed_p1_job(auto_pipeline2=True)
+
+        with self.uow_factory.create() as uow:
+            claimed_p2 = uow.pipeline2_jobs.claim_next_pending()
+            uow.commit()
+
+        self.exec_service.execute_claimed_pipeline2_job(claimed_p2.id)
+
+        controller = MarkdownEditorController(editor_service=self.editor_service)
+        controller.load_source_sync(source_job_id)
+        controller.checkForPipeline2Refinement()
+
+        self.assertTrue(controller.hasPipeline2Refinement)
+        self.assertTrue(controller.pipeline2JobId > 0)
+        self.assertTrue(len(controller.pipeline2RefinementText) > 0)
+
+        # Calling clear() must reset pipeline 2 properties
+        controller.clear()
+        self.assertFalse(controller.hasPipeline2Refinement)
+        self.assertEqual(controller.pipeline2JobId, 0)
+        self.assertEqual(controller.pipeline2SourceVersion, 0)
+        self.assertEqual(controller.pipeline2RefinementText, "")
+        self.assertEqual(controller.adoptionStatusMessage, "")
+
+        # Reloading job restores state
+        controller.load_source_sync(source_job_id)
+        controller.checkForPipeline2Refinement()
+        self.assertTrue(controller.hasPipeline2Refinement)
+
+        # Calling loadSource for another job immediately clears refinement state
+        controller.loadSource(9999)
+        self.assertFalse(controller.hasPipeline2Refinement)
+        self.assertEqual(controller.pipeline2JobId, 0)
+
+        controller.shutdown()
+
+    def test_pipeline2_completed_event_ignored_when_active_job_is_zero(self):
+        """
+        Verifies that Pipeline2Completed events with source_job_id=0 do not attach
+        refinement state when no active job is loaded.
+        """
+        controller = MarkdownEditorController(editor_service=self.editor_service)
+        self.assertEqual(controller.activeJobId, 0)
+
+        controller.onPipeline2Completed(p2_job_id=1, source_job_id=0, output_uri="file:///dummy.md", source_version=1)
+        self.assertFalse(controller.hasPipeline2Refinement)
+        self.assertEqual(controller.pipeline2JobId, 0)
+
+        controller.shutdown()
+
 
 if __name__ == "__main__":
     unittest.main()
