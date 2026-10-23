@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Universal Linux Installer & Updater:** Single-command user-space installer and update manager (`install.sh`, `polpo-update`, `polpo-uninstall`) with zero root/sudo requirement, advisory concurrency locking, sidecar SHA-256 verification, path-traversal prevention, atomic staging and directory switching, bounded version retention, and automatic rollback on failure.
 - **Distro Dependency Helper:** Distro-aware system dependency diagnostic and resolution tool (`scripts/polpo_linux_deps.sh`, `polpo-deps`) supporting Debian/Ubuntu, Fedora, Arch Linux, openSUSE, and unknown glibc distros. Covers required Qt GUI libraries and optional PDF export toolchains (Quarto, XeLaTeX, poppler-utils, typst, weasyprint) with `--dry-run` and interactive consent prompts.
 - **Release Packaging Enhancements:** Stable unversioned release asset aliases (`polpo-linux-x86_64.tar.gz`, `polpo-windows-x64.zip`) and sidecars generated via `scripts/build_package.py --create-alias`. Updated Linux packaging runner baseline to `ubuntu-22.04` to ensure `glibc >= 2.35` compatibility across Debian 12+, Ubuntu 22.04+, and modern distributions.
+- **Pipeline 2 Desktop Integration & Unification (`P2-01`):** Integrated two-stage multi-page document unification into the desktop runtime.
+- **Pipeline 2 Persistence & Cooperative Cancellation (`P2-02`):** Implemented atomic SQLite job claiming (`claim_next_pending`), worker concurrency safety, cooperative cancellation points, and startup recovery for interrupted Pipeline 2 processing.
+- **Cross-Process Recovery Locking (`P2-02-R1`):** Hardened startup recovery with advisory cross-process database locking, preventing concurrent instances from racing during database recovery.
+- **Pipeline 2 Artifact Lineage & OCC Publication (`P2-03`):** Implemented SQLite migration `005` (`005_pipeline2_source_version.sql`) tracking `source_version` lineage on `pipeline2_jobs`; published `ADR-004`; added optimistic concurrency control (OCC) to canonical document adoption in `DocumentPublicationService` and editor panes to prevent overwriting concurrent user edits.
+- **Desktop Theme Tokens & Branding Reconciliation (`THEME-01`):** Reconciled application branding to `Polpo`, removed raw hex color hardcoding across QML, and enforced WCAG 2.1 AA contrast compliance across light and dark semantic themes.
+- **Theme Lifecycle & Startup Palette Hardening (`THEME-02`):** Verified theme initialization and palette application at application startup, eliminated fallback theme branches, wired accessible focus rings across all interactive controls, and ensured theme switches propagate cleanly to MathJax rendering.
+- **Stabilization Roadmap & Test Baseline (`STAB-00`):** Established comprehensive reproducible testing baseline and persistent stabilization roadmap (`docs/quality/stabilization-roadmap.md`).
+
+### Fixed
+- **Data Migration Artifact Remapping:** Isolated artifact path remapper from process working directory and remapped artifact references during legacy data migration.
 
 ## [0.1.0-rc.1] - 2026-10-16
 

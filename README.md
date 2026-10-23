@@ -123,7 +123,7 @@ Infrastructure adapters implement application ports. The core domain and applica
 Polpo provides an automated, secure user-space installer and update manager for Linux (`x86_64`, `glibc >= 2.35`). Root privileges (`sudo`) are **never required** to install, update, or run the application.
 
 > [!NOTE]
-> **Release Asset Availability:** Official stable releases are not yet published. Only pre-release candidates (such as `v0.1.0-rc.1`) are currently available on GitHub Releases. Because `install.sh` defaults to the stable channel, use `--channel preview` for testing pre-releases, or install from a downloaded archive via `--archive <path>`.
+> **Active Release Freeze & Candidate Availability:** Official stable releases are not yet published, and an active release freeze is enforced by the maintainers. Only pre-release candidates (such as `v0.1.0-rc.1`) are currently available on GitHub Releases. Because `install.sh` defaults to the stable channel, installing without flags queries GitHub for the latest stable release and reports that no published stable release was found (HTTP 404). To install and evaluate the pre-release candidate, pass `--channel preview` or install directly from a downloaded archive with `--archive <path>`.
 
 ### Pre-Release Candidate Install
 
@@ -131,11 +131,15 @@ Polpo provides an automated, secure user-space installer and update manager for 
 curl -fsSL https://raw.githubusercontent.com/amirreza-a2a/Polpo/main/install.sh | bash -s -- --channel preview
 ```
 
-### Stable Channel (Post-1.0 Release)
+### Stable Channel (Unavailable During Pre-Release Freeze)
+
+Once the first official stable release is published, the single-command install command will be:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/amirreza-a2a/Polpo/main/install.sh | bash
 ```
+
+*(Note: During the active release freeze, running this default command exits with an error reporting that no published stable release was found, directing users to the preview channel).*
 
 ### Inspect Before Executing
 
@@ -168,7 +172,7 @@ This section describes a **development checkout**, not a standalone end-user ins
 | Python | 3.10+; Python 3.12 is the primary CI version | Application runtime and PySide6 |
 | Pandoc | Project-pinned version; currently documented as 3.1.11 | Markdown parsing and source-position extraction |
 | Node.js | Project-pinned version; currently documented as 22.23.2 | Headless MathJax worker |
-| npm | Compatible with the selected Node.js distribution | Installing worker dependencies |
+| npm | Compatible with the selected Node.js distribution | Installing worker dependencies (mathjax-full 3.2.2) |
 | Quarto CLI | Optional; version 1.4.0 or later is the documented baseline | PDF export |
 | XeLaTeX distribution | TinyTeX, TeX Live, or MiKTeX as appropriate | PDF typesetting |
 
@@ -323,10 +327,10 @@ The following classifications describe the project's intended validation tiers. 
 
 | Tier | Classification | Target environments | Verification scope |
 |---|---|---|---|
-| Tier 1 | Continuously tested | Ubuntu 22.04 / 24.04 LTS x86_64, Python 3.12; Windows Server 2025 x64, Python 3.12 | Blocking CI checks for the configured quality gates, tests, packaging, and security checks |
+| Tier 1 | Continuously tested (CI) & Packaging baseline | Ubuntu 24.04 LTS x86_64 (Python 3.12, blocking PR/push CI) & Ubuntu 22.04 LTS (glibc >= 2.35 packaging baseline); Windows Server 2025 x64 (Python 3.12, blocking CI) | Blocking CI checks for configured quality gates, tests, packaging, and security checks |
 | Tier 2 | Periodically validated | macOS 15 Apple Silicon/ARM64, Python 3.12; Python 3.10 and 3.11 on the configured Ubuntu runner | Periodic, manual, and configured pre-release validation |
-| Tier 3 | Best effort | Other modern glibc-based Linux distributions (Debian 12+, Fedora 39+, Arch, openSUSE), WSL2, selected older macOS environments, and supported headless configurations | Compatibility depends on system libraries, display configuration, keyring availability, and runtime dependencies |
-| Tier 4 | Unsupported | Musl-based Linux distributions such as Alpine, 32-bit systems, Windows versions below 10, macOS versions below 12, and remote server deployments | Outside the intended support boundary |
+| Tier 3 | Best effort (community mappings) | Other modern glibc-based Linux distributions (Debian 12+, Fedora 39+, Arch, openSUSE with package mappings in `polpo-deps`), WSL2, selected older macOS environments, and supported headless configurations | Compatibility depends on system libraries, display configuration, keyring availability, and runtime dependencies (not continuously tested in CI) |
+| Tier 4 | Unsupported | Musl-based Linux distributions such as Alpine (rejected at installer preflight), non-x86_64 Linux architectures (rejected at preflight), 32-bit systems, Windows versions below 10, macOS versions below 12, and remote server deployments | Outside the intended support boundary |
 
 ### Important Limitations
 
@@ -418,6 +422,7 @@ The following documents describe important architectural and operational decisio
 - [ADR-001: Three-Way Merge and Conflict Resolution](docs/adr/2026-09-18-adr-001-phase10f5-three-way-merge-conflict-resolution.md)
 - [ADR-002: MathJax Supervisor Reliability](docs/adr/2026-09-30-adr-002-mathjax-supervisor-reliability-contract.md)
 - [ADR-003: Quarto PDF Export Integration](docs/adr/2026-10-12-adr-003-quarto-pdf-export-integration.md)
+- [ADR-004: Pipeline 2 Artifact Lineage and Canonical Publication Contract](docs/adr/2026-10-22-adr-004-pipeline2-artifact-lineage-and-canonical-publication-contract.md)
 - [Packaging Guide](docs/packaging.md) — Runtime bundling, binary discovery, and platform-specific signing and notarization considerations.
 - [CI Repository Rules](docs/ci-repository-rules.md) — Repository CI and merge-gating guidance.
 - [Prompt Inventory](prompts/README.md) — Reusable English and Persian STEM transcription and diagram-reconstruction prompt templates.
@@ -451,16 +456,19 @@ Never include API keys, access tokens, private documents, or other secrets in bu
 
 ## 11. Release Status and Packaging Architecture
 
-Polpo provides standalone, hermetic desktop distributions built with PyInstaller, containing all required runtime dependencies (statically linked Pandoc 3.1.11, headless Node.js 22.23.2 MathJax daemon, schema migrations, and prompt templates). End users do not need to install Python, Pandoc, or Node.js separately.
+Polpo provides standalone, hermetic desktop distributions built with PyInstaller, containing all required runtime dependencies (statically linked Pandoc 3.1.11, headless Node.js 22.23.2 MathJax daemon with `mathjax-full@3.2.2`, schema migrations `001` through `005`, and curated prompt templates). End users do not need to install Python, Pandoc, or Node.js separately.
+
+> [!NOTE]
+> **Active Release Freeze & Candidate Status:** The repository maintainer enforces an active release freeze. Pre-release candidate `v0.1.0-rc.1` is currently published on GitHub Releases for preview evaluation, but no official stable release has been published yet. Creating, moving, drafting, or publishing new tags or release assets is frozen pending explicit authorization.
 
 ### 11.1 Supported Platform Tiers
 
 * **Tier-1 Packaged Distributions (Automated CI & Releases):**
-  * **Linux (x86_64):** Standalone archive (`Polpo-v<version>-linux-x86_64.tar.gz` and stable alias `polpo-linux-x86_64.tar.gz`) targeting `glibc >= 2.35` (verified on Ubuntu 22.04+, Debian 12+, Fedora 39+, Arch, and openSUSE). Requires standard desktop GUI libraries (`libgl1`, `libegl1`, `libxkbcommon-x11-0`, `libdbus-1-3`).
-  * **Windows (x64):** Standalone archive (`Polpo-v<version>-windows-x64.zip` and stable alias `polpo-windows-x64.zip`) verified on Windows Server 2025 and Windows 10/11 x64.
+  * **Linux (x86_64):** Standalone archive (`Polpo-v<version>-linux-x86_64.tar.gz` and stable alias `polpo-linux-x86_64.tar.gz`) targeting `glibc >= 2.35`. Built and smoke-tested on Ubuntu 22.04 in `.github/workflows/release.yml`, and continuously verified on Ubuntu 24.04 in `.github/workflows/ci.yml`. Best-effort package mappings are provided for Debian 12+, Fedora 39+, Arch, and openSUSE via `polpo-deps`. Requires standard desktop GUI libraries (`libgl1`, `libegl1`, `libxkbcommon-x11-0`, `libdbus-1-3`). Musl-based distributions (e.g., Alpine Linux) and non-x86_64 architectures are unsupported and rejected at installer preflight.
+  * **Windows (x64):** Standalone archive (`Polpo-v<version>-windows-x64.zip` and stable alias `polpo-windows-x64.zip`) verified on Windows Server 2025 in continuous CI and Windows 10/11 x64.
 * **Tier-2 Source-Validated Platforms (Periodic CI & Manual Packaging):**
   * **macOS (Apple Silicon / ARM64 & Intel / x86_64):** Validated on native `macos-15` runners with Python 3.12. Standalone `.app` bundles require inside-out code signing and Apple notarization per [`docs/packaging.md`](docs/packaging.md).
-  * **Python Matrix:** Tested across Python 3.10, 3.11, and 3.12 on Linux.
+  * **Python Matrix:** Tested across Python 3.10, 3.11, and 3.12 on Linux in periodic validation.
 
 ### 11.2 Binary Verification and Frozen Self-Test
 
@@ -474,7 +482,7 @@ Every official release artifact can be verified before installation:
    ```bash
    gh attestation verify Polpo-v*-linux-x86_64.tar.gz --owner amirreza-a2a
    ```
-3. **Hermetic Self-Test:** Run the bundled binary in diagnostic mode to verify runtime integrity, SQLite migrations, QML engine, and MathJax vector rendering:
+3. **Hermetic Self-Test:** Run the bundled binary in diagnostic mode to verify runtime integrity, SQLite migrations (`001` through `005`), QML engine, and MathJax vector rendering:
    ```bash
    # Linux
    ./Polpo/Polpo --self-test

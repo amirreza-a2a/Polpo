@@ -9,7 +9,7 @@ This document defines the universal Linux installation, update, dependency resol
 Polpo provides a single-command user-space installer that runs entirely without root permissions (`sudo` is never required for application installation).
 
 > [!NOTE]
-> **Release Asset Status:** Official stable releases are not yet published. Only pre-release candidates (such as `v0.1.0-rc.1`) are currently available on GitHub Releases. Because the installer defaults to `--channel stable`, installing without flags will report no stable releases until the first formal release is cut. For testing pre-release candidates, use `--channel preview` or install directly from a downloaded archive with `--archive <path>`.
+> **Active Release Freeze & Candidate Availability:** Official stable releases are not yet published, and an active release freeze is enforced by the maintainers. Only pre-release candidates (such as `v0.1.0-rc.1`) are currently available on GitHub Releases. Because the installer defaults to `--channel stable`, installing without flags queries GitHub for the latest stable release and reports that no published stable release was found. To install and evaluate the pre-release candidate, pass `--channel preview` or install directly from a downloaded archive with `--archive <path>`.
 
 ### Preview Channel (Pre-Release Candidates)
 
@@ -19,13 +19,15 @@ To install the latest pre-release candidate build (such as `v0.1.0-rc.1`):
 curl -fsSL https://raw.githubusercontent.com/amirreza-a2a/Polpo/main/install.sh | bash -s -- --channel preview
 ```
 
-### Stable Channel (Post-Release)
+### Stable Channel (Unavailable During Pre-Release Freeze)
 
-Once the first official stable release is published, the single-command install is:
+Once the first official stable release is published, the single-command install command will be:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/amirreza-a2a/Polpo/main/install.sh | bash
 ```
+
+*(Note: During the active release freeze, running this default command exits with an error reporting that no published stable release was found, directing users to the preview channel).*
 
 ### Offline / Local Archive Install
 
@@ -69,8 +71,8 @@ bash install.sh --channel preview
 Polpo distinguishes between distributions verified in automated CI and distributions mapped for system dependencies:
 
 * **Automatically Tested (CI Baseline):**
-  * **Ubuntu 22.04 LTS (`glibc 2.35`):** Build runner baseline and automated frozen binary smoke-test environment in GitHub Actions (`.github/workflows/release.yml`).
-  * **Ubuntu 24.04 LTS (`glibc 2.39`):** Continuous integration matrix runner for test suites and quality gates.
+  * **Ubuntu 24.04 LTS (`glibc 2.39`):** Continuous integration matrix runner for blocking pull request quality gates, unit and integration test suites, and secret scanning (`.github/workflows/ci.yml`).
+  * **Ubuntu 22.04 LTS (`glibc 2.35`):** Release packaging build runner and automated frozen binary smoke-test environment in GitHub Actions (`.github/workflows/release.yml`), establishing the `glibc >= 2.35` runtime baseline for distributed archives.
 * **Mapped Distributions (Tier 3 Best-Effort):**
   * **Debian 12 Bookworm+**, **Fedora 39+**, **Arch Linux**, and **openSUSE Leap/Tumbleweed** have system package manager mappings defined in `polpo-deps` (`scripts/polpo_linux_deps.sh`). However, compatibility is not proven by continuous CI on those distributions; execution depends on local display drivers, Wayland/X11 configuration, and shared library availability.
 * **Unsupported Systems (Tier 4):**
@@ -81,7 +83,7 @@ Polpo distinguishes between distributions verified in automated CI and distribut
 
 ## 4. Distro GUI Dependencies
 
-Polpo is a native PySide6 / QtQuick application. While the application bundle bundles Python, Qt libraries, Pandoc, and Node.js, your Linux display server requires underlying system graphic and bus libraries.
+Polpo is a native PySide6 / QtQuick application. While the standalone application bundle packages Python, Qt/PySide6 runtime components, Pandoc 3.1.11, and Node.js 22.23.2 with MathJax 3.2.2, your Linux desktop display environment requires underlying system graphics and D-Bus libraries.
 
 Polpo bundles a dependency helper: `polpo-deps` (also available via `scripts/polpo_linux_deps.sh`).
 
@@ -205,16 +207,18 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ### Updating Polpo
 
-Run `polpo-update` at any time to upgrade to the latest stable release:
+During the active release freeze, official stable releases have not yet been published. Running `polpo-update` without arguments queries the stable channel, reports that no published stable release was found, and guides you to the preview channel.
 
-```bash
-polpo-update
-```
-
-To check for preview/pre-release builds:
+To check for and upgrade to pre-release candidate builds (such as `v0.1.0-rc.1`):
 
 ```bash
 polpo-update --channel preview
+```
+
+Once the first official stable release is published, running `polpo-update` without flags will automatically check and upgrade on the stable channel:
+
+```bash
+polpo-update
 ```
 
 ### Atomic Updates & Safe Rollback
