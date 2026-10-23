@@ -39,19 +39,20 @@ This document serves as the **single source of truth** for stabilization. Future
 *Initial Roadmap Baseline Snapshot: 2026-10-21 14:22 UTC+03:30 (Commit `9b8c54e`, PR #122)*<br/>
 *STAB-00 Verified Execution Baseline Snapshot: 2026-10-22 00:15 UTC+03:30 (Commit `b9b7141`, PR #133)*<br/>
 *P2-03 Verified Execution Snapshot: 2026-10-22 12:25 UTC+03:30 (Commit `ec5854f`, PR #137)*<br/>
-*THEME-02 Verified Execution Snapshot: 2026-10-23 01:10 UTC+03:30 (Commit `3d71f98`, PR #143)*
+*THEME-02 Verified Execution Snapshot: 2026-10-23 01:10 UTC+03:30 (Commit `3d71f98`, PR #143)*<br/>
+*DOC-01 Verified Execution Snapshot: 2026-10-23 14:35 UTC+03:30 (Commit `c7181a5`, PR #145)*
 
 ### 2.1 Git and Working Tree State
 
 | Property | Verified Value | Evidence Source |
 | :--- | :--- | :--- |
 | **Active Baseline Branch** | `main` | `git status` |
-| **HEAD Commit SHA (main)** | `3d71f989938b8c2fc9c3a3cb853039d93c10a12e` | `git rev-parse HEAD` |
-| **Commit Message** | `fix(desktop): harden theme lifecycle startup palette, wire focus rings, and eliminate scanner false positives (#143)` | `git log -1` |
+| **HEAD Commit SHA (main)** | `c7181a57d6fbe2c59fc9d1b648110295f377a1f0` | `git rev-parse HEAD` |
+| **Commit Message** | `docs: reconcile public-facing documentation with desktop reality (DOC-01) (#145)` | `git log -1` |
 | **Remote Synchronization** | Up to date with `origin/main` | `git status -sb` |
 | **Working Tree Status** | Clean (no modified, untracked, or staged files) | `git status --porcelain` |
 | **Latest Git Tag** | `v0.1.0-rc.1` | `git tag -l` |
-| **Git Describe** | `v0.1.0-rc.1-25-g3d71f98` | `git describe --tags --always` |
+| **Git Describe** | `v0.1.0-rc.1-27-gc7181a5` | `git describe --tags --always` |
 | **GitHub Releases** | Exactly 1 Pre-release: `v0.1.0-rc.1` (Zero stable releases published) | `gh release list` |
 | **Application Version** | `APP_NAME = "Polpo"`, `__version__ = "0.1.0"`, `VERSION_INFO = (0, 1, 0)` | `core/version.py:9-11`, `pyproject.toml:7` |
 
@@ -430,12 +431,12 @@ flowchart TD
 
 ---
 
-### [ ] DOC-01 — Reconcile Public-Facing Documentation
+### [x] DOC-01 — Reconcile Public-Facing Documentation
 
 - **ID:** `DOC-01`
 - **Title:** Reconcile Public-Facing Documentation with Current Application Reality
 - **Priority:** P2 (Medium)
-- **Status:** `NOT_STARTED`
+- **Status:** `COMPLETED`
 - **Dependencies:** `STAB-00`
 - **Scope:**
   - Audit `README.md`, `CHANGELOG.md`, `docs/linux-installation.md`, and `docs/packaging.md`.
@@ -445,25 +446,26 @@ flowchart TD
   - Check all links and command examples for accuracy.
 - **Non-Goals:** Rewriting historical documentation or claiming that unreleased features are published.
 - **Evidence & File Paths:**
-  - `README.md:121-150`
-  - `docs/linux-installation.md:1-80`
-  - `docs/packaging.md:1-60`
-  - `CHANGELOG.md:8-32`
+  - `README.md`
+  - `docs/linux-installation.md`
+  - `docs/packaging.md`
+  - `CHANGELOG.md`
+  - `tests/unit/test_public_documentation_contract.py`
 - **Recommended Skill Sequence:**
   `code-review → research → domain-modeling → grill-with-docs → implement`
 - **Acceptance Criteria:**
-  1. All public documents consistently state the current pre-release candidate status (`v0.1.0-rc.1`) and active release freeze.
-  2. Automated CI test evidence is explicitly distinguished from best-effort package mappings.
-  3. Bundled vs optional external dependencies are accurately listed.
-  4. Dead links or non-existent file references are removed.
+  1. All public documents consistently state the current pre-release candidate status (`v0.1.0-rc.1`) and active release freeze. [Verified — `README.md`, `docs/linux-installation.md`, and `docs/packaging.md` explicitly state active release freeze and pre-release candidate status; verified by unit test `test_release_availability_and_freeze_status`]
+  2. Automated CI test evidence is explicitly distinguished from best-effort package mappings. [Verified — `docs/linux-installation.md` and `docs/packaging.md` clearly differentiate Ubuntu 24.04 CI runner and Ubuntu 22.04 packaging runner (glibc >= 2.35) from community-maintained package manager mappings; verified by `test_linux_support_tiers_distinguish_ci_from_mappings`]
+  3. Bundled vs optional external dependencies are accurately listed. [Verified — Node.js v22.23.2, MathJax 3.2.2, and Pandoc 3.1.11 documented as bundled runtimes; Quarto and XeLaTeX documented as optional; verified by `test_bundled_runtime_versions_match_manifests`]
+  4. Dead links or non-existent file references are removed. [Verified — ADR-004 link added, packaged self-test migration range updated to 001 through 005 matching persistence/SQLite schema, all internal relative markdown links verified resolvable by `test_internal_relative_links_resolve`]
 - **Verification Commands:**
   ```bash
+  QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/pytest tests/unit/test_public_documentation_contract.py -v
   ./.venv/bin/python scripts/run_quality_gates.py --mode=working-tree
-  # Verify Markdown formatting and link integrity
   ```
 - **Branch Suggestion:** `docs/reconcile-public-documentation`
-- **PR / CI / Merge Record:** Unstarted
-- **Notes & Risks:** `AGENTS.md` Rule 1 (Verify Before Judging) must guide all claims about external versions and distribution support.
+- **PR / CI / Merge Record:** [PR #145](https://github.com/amirreza-a2a/Polpo/pull/145) merged into `main` at `c7181a57d6fbe2c59fc9d1b648110295f377a1f0`. All 4 required CI status checks passed: `quality-gates` (1m5s), `secret-scan` (10s), `test-linux` (2m7s), `test-windows` (2m58s). Full test suite: 2,181 passed, 6 skipped on Linux (2,187 collected). 8 documentation contract unit tests passed (12 subtests).
+- **Notes & Risks:** `AGENTS.md` Rule 1 (Verify Before Judging) must guide all claims about external versions and distribution support. Maintainer release freeze actively enforced.
 
 ---
 
@@ -937,6 +939,7 @@ The following standing constraints apply to all stabilization operations:
 | **2026-10-22** | `P2-03` | Clarified Pipeline 2 refinement output as auxiliary derivative artifact; added ADR-004; implemented SQLite Migration 005 for source_version lineage; implemented adopt_pipeline2_refinement under OCC in DocumentPublicationService; protected dirty human edits in MarkdownEditorController and QML. Hardened editor OCC rejection synchronization, job-switch refinement isolation, and zero-job event guards. Added 23 tests (16 integration, 6 migration, 1 controller). | [#135](https://github.com/amirreza-a2a/Polpo/pull/135) / `a2e2cfc`<br/>[#137](https://github.com/amirreza-a2a/Polpo/pull/137) / `ec5854f` | Merged cleanly into `main` after all 4 required status checks passed on both PRs (`quality-gates` [36s], `secret-scan` [6s], `test-linux` [1m56s], `test-windows` [3m54s]). Full test suite: 2131 passed, 6 skipped on Linux. |
 | **2026-10-22** | `THEME-01` | Audited and verified authoritative 41-token contract in ThemePalette; audited all 30 active QML files; replaced unauthorized RGBA and direct color literals in DocumentViewerView.qml and MarkdownView.qml; eliminated theme-bearing fallback literals in Main.qml and Sidebar.qml while guarding teardown; preserved CV coordinate overlay and math error badge constants; reconciled Polpo product branding in scoped presentation files; strengthened AST architecture invariant tests. | [#139](https://github.com/amirreza-a2a/Polpo/pull/139) / `d5716b2` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [48s], `secret-scan` [8s], `test-linux` [1m37s], `test-windows` [3m57s]). Full test suite: 2137 passed, 6 skipped on Linux. |
 | **2026-10-23** | `THEME-02` | Verified theme switching lifecycle across system/dark/light preferences; hardened ThemeController against missing style hints and portal errors; ensured Qt.ColorScheme.Unknown deterministically defaults to dark; eliminated spurious signal emissions; replaced all 231 unauthorized hardcoded fallback color literals across 24 QML files with transparent; coupled MathJax foreground colors to theme palette while preserving cache neutrality and URL pixmap isolation; verified WCAG 2.2 contrast compliance (14.64:1 to 17.39:1 text contrast, SC 1.4.11 focus ring contrast >= 3:1, and documented SC 1.4.3 inactive button exemptions); synchronized QGuiApplication palette on startup; handled raw integer OS scheme signals; wired focus rings across representative interactive controls; eliminated scanner false positives on regular text strings; added 35 unit and characterization tests. | [#141](https://github.com/amirreza-a2a/Polpo/pull/141) / `f11c95c`<br/>[#143](https://github.com/amirreza-a2a/Polpo/pull/143) / `3d71f98` | Merged cleanly into `main` after all 4 required status checks passed on both PRs (`quality-gates` [43s], `secret-scan` [10s], `test-linux` [2m7s], `test-windows` [5m44s]). Full test suite: 2173 passed, 6 skipped on Linux. 71 focused theme/math/accessibility tests passed. |
+| **2026-10-23** | `DOC-01` | Reconciled public-facing documentation (`README.md`, `CHANGELOG.md`, `docs/linux-installation.md`, `docs/packaging.md`) with desktop reality; documented active release freeze and pre-release candidate status (`v0.1.0-rc.1`); clarified stable channel 404 behavior; differentiated Ubuntu 24.04 CI runner from Ubuntu 22.04 packaging baseline (glibc >= 2.35) and separated automated CI evidence from community package manager mappings; added `mathjax-full 3.2.2` and `ADR-004`; updated packaged self-test migration range to `001` through `005` across 9 tables; clarified Pandoc musl static linkage vs application glibc requirement; added macOS notarization guidance disclaimer; updated `[Unreleased]` changelog section while preserving historical entries; added deterministic documentation contract test suite. | [#145](https://github.com/amirreza-a2a/Polpo/pull/145) / `c7181a5` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [1m5s], `secret-scan` [10s], `test-linux` [2m7s], `test-windows` [2m58s]). Full test suite: 2,181 passed, 6 skipped on Linux (2,187 collected). 8 documentation contract tests (12 subtests) passed. |
 
 ---
 
