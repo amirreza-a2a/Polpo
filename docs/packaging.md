@@ -1,17 +1,17 @@
-# PolpoT Packaging and Cross-Platform Distribution Guide
+# Polpo Packaging and Cross-Platform Distribution Guide
 
-This document defines the packaging, runtime bundling, and code-signing architecture for PolpoT Desktop across Linux, Windows, and macOS target environments (per AGENTS.md Rule 28 and Phase 12 Architecture Wayfinder).
+This document defines the packaging, runtime bundling, and code-signing architecture for Polpo Desktop across Linux, Windows, and macOS target environments (per AGENTS.md Rule 28 and Phase 12 Architecture Wayfinder).
 
 ---
 
 ## 1. Runtime Bundling Architecture
 
-PolpoT is a desktop-first, local-first, serverless application. All parsing (Pandoc) and math vector rendering (MathJax via headless Node.js daemon) execute entirely locally on the user's workstation without remote backend servers or cloud APIs.
+Polpo is a desktop-first, local-first, serverless application. All parsing (Pandoc) and math vector rendering (MathJax via headless Node.js daemon) execute entirely locally on the user's workstation without remote backend servers or cloud APIs.
 
-To ensure hermetic offline execution without requiring end-users to manually install Pandoc or Node.js, PolpoT packages standalone binaries within the application bundle:
+To ensure hermetic offline execution without requiring end-users to manually install Pandoc or Node.js, Polpo packages standalone binaries within the application bundle:
 
 ```text
-polpot/
+Polpo/
 ├── resources/
 │   ├── runtimes.json                # Upstream acquisition manifest with SHA-256 hashes
 │   ├── bin/
@@ -47,8 +47,8 @@ All runtime components resolve binaries using a strict 3-tier precedence hierarc
 ### 3.1 Linux (POSIX)
 
 * **Permission Hardening:** AppImage extraction or tarball unpacking may drop the POSIX executable bit (`+x`). `PandocBinaryResolver` automatically checks `os.access(path, os.X_OK)` and invokes `os.chmod(path, current_mode | 0o111)` if execution permissions are missing.
-* **Static Linkage:** The bundled Linux Pandoc binary is statically linked against musl libc, eliminating runtime dependencies on glibc versions across distributions (Ubuntu, Fedora, Arch, Alpine).
-* **System GUI Dependencies:** PySide6 requires standard desktop graphic libraries: `libgl1`, `libegl1`, `libxkbcommon-x11-0`, and `libdbus-1-3`.
+* **Static Linkage vs. Application Libc Baseline:** While the bundled Linux Pandoc binary is statically linked against musl libc (eliminating external dependencies for that individual executable), the **complete Polpo desktop application** bundle is built against glibc and strictly requires `glibc >= 2.35` on `x86_64` CPU architecture. Musl-based distributions (e.g., Alpine Linux) and non-x86_64 architectures are unsupported and are rejected at installer preflight.
+* **System GUI Dependencies:** PySide6 requires standard desktop graphic libraries on the host system: `libgl1`, `libegl1`, `libxkbcommon-x11-0`, and `libdbus-1-3`.
 
 ### 3.2 Windows (Win32 / NTFS)
 
@@ -59,6 +59,9 @@ All runtime components resolve binaries using a strict 3-tier precedence hierarc
 ---
 
 ## 4. macOS Developer ID Code Signing & Notarization
+
+> [!NOTE]
+> **Build Guidance Only:** The following code signing and notarization procedure is documented as packaging guidance for future macOS distributions. No signed or notarized macOS release package is currently distributed; macOS is validated via source test suites in periodic CI.
 
 On macOS 10.15+ (Catalina through macOS 15+ Sequoia), Apple Gatekeeper requires all distributed binaries, dynamic libraries, and helper tools to be signed with an Apple Developer ID Application certificate and notarized by Apple.
 
@@ -141,11 +144,13 @@ xcrun stapler staple "dist/Polpo.app"
 
 ---
 
-## 5. Continuous Integration Validation Matrix
+## 5. Continuous Integration & Packaging Validation Matrix
 
-The repository CI workflow (`.github/workflows/ci.yml`) validates runtime contracts on every pull request and commit:
-* **Linux (`ubuntu-24.04`):** Validates Pandoc execution, Node 22.23.2 MathJax daemon startup, rendering, and clean shutdown under POSIX process semantics.
-* **Windows (`windows-2025`):** Validates Pandoc execution, Win32 process creation flags (`CREATE_NO_WINDOW`), line endings (`\r\n`), and clean daemon termination on native Windows runners.
+Polpo exercises distinct automated workflows for continuous integration, release packaging, and periodic validation:
+* **Linux PR/Push CI Runner (`ubuntu-24.04`):** Executes blocking quality gates (`scripts/run_quality_gates.py`), the primary test suite (`test-linux`), and Gitleaks secret scanning (`.github/workflows/ci.yml`).
+* **Windows PR/Push CI Runner (`windows-2025`):** Executes the cross-platform test suite (`test-windows`), validating Win32 process creation flags (`CREATE_NO_WINDOW`), line endings (`\r\n`), and clean daemon termination on native Windows runners.
+* **Linux Release Packaging Runner (`ubuntu-22.04`):** Packages standalone desktop bundles and executes the headless `--self-test` smoke test in `.github/workflows/release.yml`, ensuring that distributed binaries target the minimum `glibc >= 2.35` runtime baseline.
+* **Periodic & Pre-Release Validation (`.github/workflows/periodic-validation.yml`):** Periodically runs test suites on macOS 15 ARM64 (Python 3.12) and across Python 3.10 and 3.11 on Linux.
 * **Verification Script:** `scripts/verify_mathjax_worker.py` asserts protocol compliance, bounded memory buffers, and error isolation without test runner hangs.
 
 ---
@@ -171,7 +176,7 @@ The resulting directory bundle (`dist/Polpo/`) contains:
 - The compiled `Polpo` executable (`Polpo.exe` on Windows).
 - Hermetic runtime binaries: Pandoc 3.1.11 (`resources/bin/<platform>/`) and Node.js 22.23.2 (`resources/mathjax/node`).
 - Bundled `mathjax_worker.js` with production `node_modules` (`mathjax-full@3.2.2`).
-- Embedded SQLite schema migrations (`infrastructure/persistence/sqlite/migrations/`).
+- Embedded SQLite schema migrations (`infrastructure/persistence/sqlite/migrations/`, migrations `001` through `005`).
 - Curated prompt templates (`prompts/templates/`).
 - Bundled LaTeX preamble template (`resources/templates/polpo_preamble.tex`).
 - QML source components (`interfaces/desktop/qml/`).
@@ -198,7 +203,7 @@ PATH="/usr/bin:/bin" QT_QPA_PLATFORM=offscreen /tmp/polpo_smoke/Polpo/Polpo --se
 
 The `--self-test` flag exercises:
 1. Frozen runtime path resolution (`sys._MEIPASS` / bundle root).
-2. SQLite database migration application (`001` through `004`).
+2. SQLite database migration application (exercises migrations `001` through `005` via container initialization, verifying all 9 schema tables).
 3. Idempotent default prompt seeding into the clean SQLite database.
 4. QML application engine initialization (`Main.qml`).
 5. Bundled Pandoc 3.1.11 binary invocation (AST parsing with source positions).
@@ -208,6 +213,9 @@ The `--self-test` flag exercises:
 ---
 
 ## 7. Release Pipeline and Provenance (`.github/workflows/release.yml`)
+
+> [!NOTE]
+> **Active Release Freeze & Candidate Status:** The project maintainer strictly enforces an active release freeze. Pre-release candidate `v0.1.0-rc.1` is currently published on GitHub Releases for preview testing, but no official stable release has been published yet. Creating, moving, drafting, or publishing new tags or release assets is frozen pending authorization.
 
 Official releases and pre-release validation runs are orchestrated through a 4-job GitHub Actions workflow:
 
