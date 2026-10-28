@@ -40,19 +40,21 @@ This document serves as the **single source of truth** for stabilization. Future
 *STAB-00 Verified Execution Baseline Snapshot: 2026-10-22 00:15 UTC+03:30 (Commit `b9b7141`, PR #133)*<br/>
 *P2-03 Verified Execution Snapshot: 2026-10-22 12:25 UTC+03:30 (Commit `ec5854f`, PR #137)*<br/>
 *THEME-02 Verified Execution Snapshot: 2026-10-23 01:10 UTC+03:30 (Commit `3d71f98`, PR #143)*<br/>
-*DOC-01 Verified Execution Snapshot: 2026-10-23 14:35 UTC+03:30 (Commit `c7181a5`, PR #145)*
+*DOC-01 Historical Implementation Snapshot: 2026-10-23 14:35 UTC+03:30 (Commit `c7181a5`, PR #145)*<br/>
+*DOC-01 Verified Closeout Snapshot: 2026-10-23 15:06 UTC+03:30 (Commit `5a9d8b6`, PR #146)*<br/>
+*DOC-02 Verified Execution Snapshot: 2026-10-28 14:18 UTC+03:30 (Commit `515fd05`, PR #147)*
 
 ### 2.1 Git and Working Tree State
 
 | Property | Verified Value | Evidence Source |
 | :--- | :--- | :--- |
 | **Active Baseline Branch** | `main` | `git status` |
-| **HEAD Commit SHA (main)** | `c7181a57d6fbe2c59fc9d1b648110295f377a1f0` | `git rev-parse HEAD` |
-| **Commit Message** | `docs: reconcile public-facing documentation with desktop reality (DOC-01) (#145)` | `git log -1` |
+| **HEAD Commit SHA (main)** | `515fd05317b661f42e32041d315aaaf72dc22f72` | `git rev-parse HEAD` |
+| **Commit Message** | `docs: reconcile developer documentation, glossary, and skill routing (DOC-02) (#147)` | `git log -1` |
 | **Remote Synchronization** | Up to date with `origin/main` | `git status -sb` |
 | **Working Tree Status** | Clean (no modified, untracked, or staged files) | `git status --porcelain` |
 | **Latest Git Tag** | `v0.1.0-rc.1` | `git tag -l` |
-| **Git Describe** | `v0.1.0-rc.1-27-gc7181a5` | `git describe --tags --always` |
+| **Git Describe** | `v0.1.0-rc.1-29-g515fd05` | `git describe --tags --always` |
 | **GitHub Releases** | Exactly 1 Pre-release: `v0.1.0-rc.1` (Zero stable releases published) | `gh release list` |
 | **Application Version** | `APP_NAME = "Polpo"`, `__version__ = "0.1.0"`, `VERSION_INFO = (0, 1, 0)` | `core/version.py:9-11`, `pyproject.toml:7` |
 
@@ -101,17 +103,17 @@ Verified on local workstation host environment under `./.venv`:
   - Headless MathJax Worker: 8/8 contract checks verified passing via `python scripts/verify_mathjax_worker.py` (MathJax 3.2.2).
 - **Quality Gates Execution:**
   - Command: `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python scripts/run_quality_gates.py --mode=working-tree`
-  - Outcome: **PASSED (exit code 0)** in 3.44s.
-  - Scope: Whitespace check clean, Python bytecode compilation across `core`, `application`, `infrastructure`, `interfaces`, `tests` clean, 48 AST architecture invariant tests passed.
+  - Outcome: **PASSED (exit code 0)** in 3.63s.
+  - Scope: Whitespace check clean, Python bytecode compilation across `core`, `application`, `infrastructure`, `interfaces`, `tests` clean, 55 AST architecture invariant tests passed.
 - **Independent Test Suite Executions:**
   - **Unit Tests:** `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/unit/ -q -rs`
-    - Outcome: **1980 passed, 0 skipped, 2 warnings in 72.42s** (exit code 0).
+    - Outcome: **2081 passed, 0 skipped, 2 warnings, 37 subtests passed in 82.23s** (exit code 0).
   - **Characterization Tests:** `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/characterization/ -q -rs`
     - Outcome: **32 passed, 0 skipped in 0.44s** (exit code 0).
   - **Integration Tests:** `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/integration/ -q -rs`
-    - Outcome: **45 passed, 6 skipped in 29.98s** (exit code 0, 51 collected items).
+    - Outcome: **77 passed, 6 skipped in 29.98s** (exit code 0, 83 collected items).
   - **Complete Test Suite:** `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/ -q -rs`
-    - Outcome: **2057 passed, 6 skipped, 2 warnings in 120.01s** (exit code 0, 2063 total collected items).
+    - Outcome: **2190 passed, 6 skipped, 2 warnings, 37 subtests passed in 107.19s** (exit code 0, 2196 total collected items).
 - **Observed Warnings (2 ResourceWarnings):**
   - `tests/unit/test_ai_adapters.py:46`: `ResourceWarning: unclosed file <.../core/ai/types.py>`
   - `tests/unit/test_ai_adapters.py:46`: `ResourceWarning: unclosed file <.../core/ai/exceptions.py>`
@@ -464,22 +466,22 @@ flowchart TD
   ./.venv/bin/python scripts/run_quality_gates.py --mode=working-tree
   ```
 - **Branch Suggestion:** `docs/reconcile-public-documentation`
-- **PR / CI / Merge Record:** [PR #145](https://github.com/amirreza-a2a/Polpo/pull/145) merged into `main` at `c7181a57d6fbe2c59fc9d1b648110295f377a1f0`. All 4 required CI status checks passed: `quality-gates` (1m5s), `secret-scan` (10s), `test-linux` (2m7s), `test-windows` (2m58s). Full test suite: 2,181 passed, 6 skipped on Linux (2,187 collected). 8 documentation contract unit tests passed (12 subtests).
+- **PR / CI / Merge Record:** [PR #145](https://github.com/amirreza-a2a/Polpo/pull/145) merged into `main` at `c7181a57d6fbe2c59fc9d1b648110295f377a1f0` (Implementation); [PR #146](https://github.com/amirreza-a2a/Polpo/pull/146) merged at `5a9d8b602396a0d0c964437ab977c91fd7ef3210` (Roadmap Closeout). All 4 required CI status checks passed on both PRs: `quality-gates`, `secret-scan`, `test-linux`, `test-windows`. Full test suite at implementation: 2,181 passed, 6 skipped on Linux (2,187 collected). 8 documentation contract unit tests passed (12 subtests).
 - **Notes & Risks:** `AGENTS.md` Rule 1 (Verify Before Judging) must guide all claims about external versions and distribution support. Maintainer release freeze actively enforced.
 
 ---
 
-### [ ] DOC-02 — Reconcile Developer Documentation and Operational Instructions
+### [x] DOC-02 — Reconcile Developer Documentation and Operational Instructions
 
 - **ID:** `DOC-02`
 - **Title:** Reconcile Developer Instructions, ADRs, and Architecture References
 - **Priority:** P3 (Normal)
-- **Status:** `NOT_STARTED`
+- **Status:** `COMPLETED`
 - **Dependencies:** `STAB-00`
 - **Scope:**
   - Audit `AGENTS.md`, `docs/agents/skills.md`, `CONTEXT.md`, and `docs/ci-repository-rules.md`.
   - Update `docs/agents/skills.md` to ensure all 16 skills are properly cross-referenced and examples reflect current Clean Architecture.
-  - Ensure legacy Telegram modules (`handlers/`, `interfaces/telegram/`, `main.py`) are consistently documented as frozen legacy surfaces per `AGENTS.md` Rule 4.
+  - Ensure legacy Telegram modules (`handlers/`, `interfaces/telegram/`, `main.py`, `services/worker.py`) are consistently documented as frozen legacy surfaces per `AGENTS.md` Rule 4.
   - Verify that branch protection documentation matches live GitHub settings (`quality-gates`, `test-linux`, `test-windows`, `secret-scan`).
   - Ensure no installed Agent Skills are copied or vendored into the repository.
 - **Non-Goals:** Changing architecture rules or modifying legacy code without justification.
@@ -488,20 +490,22 @@ flowchart TD
   - `docs/agents/skills.md`
   - `CONTEXT.md`
   - `docs/ci-repository-rules.md`
+  - `tests/unit/test_developer_documentation_contract.py`
 - **Recommended Skill Sequence:**
   `improve-codebase-architecture → domain-modeling → grill-with-docs → code-review`
 - **Acceptance Criteria:**
-  1. Active developer instructions accurately describe current desktop Clean Architecture.
-  2. Legacy compatibility surfaces are clearly labeled and isolated.
-  3. Branch protection rules agree with current GitHub API configuration.
-  4. Zero skill implementations are vendored into the repository.
+  1. Active developer instructions accurately describe current desktop Clean Architecture. [Verified — `AGENTS.md` and `CONTEXT.md` updated to current Polpo desktop architecture; Rule 33 added for Canonical Document Publication & OCC; Rule 34 for CI branch protection & release freeze; Rule 35 for skills routing; `Pipeline2Job` defined as secondary typography refinement with derivative artifact and OCC adoption per ADR-004; verified by `test_agents_standing_rules_core_invariants` and `test_context_md_pipeline2_semantics_agree_with_adr004`]
+  2. Legacy compatibility surfaces are clearly labeled and isolated. [Verified — `handlers/`, `interfaces/telegram/`, `main.py`, `services/worker.py`, and legacy database modules clearly documented as frozen compatibility surfaces in `AGENTS.md` Rule 4 and `CONTEXT.md` Section 4; verified by `test_context_md_legacy_surfaces_isolated`]
+  3. Branch protection rules agree with current GitHub API configuration. [Verified — live GitHub REST API inspected via `gh api`; `quality-gates`, `test-linux`, `test-windows`, `secret-scan`, `strict: true`, linear history, and zero admin bypass documented in `docs/ci-repository-rules.md`, `AGENTS.md`, and `CONTEXT.md`; verified by `test_branch_protection_documented_checks_match_ci_workflow`]
+  4. Zero skill implementations are vendored into the repository. [Verified — `docs/agents/skills.md` audited to catalog 16 verified environment skills and strictly prohibit vendoring; verified by `test_skills_routing_guide_covers_16_skills_and_prohibits_vendoring` and `test_no_skills_vendored_in_repository`]
 - **Verification Commands:**
   ```bash
+  QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/pytest tests/unit/test_developer_documentation_contract.py -v
   ./.venv/bin/python scripts/run_quality_gates.py --mode=working-tree
   ```
-- **Branch Suggestion:** `docs/developer-instructions-reconciliation`
-- **PR / CI / Merge Record:** Unstarted
-- **Notes & Risks:** Must maintain documentation integrity and preserve historical ADRs as immutable history.
+- **Branch Suggestion:** `docs/reconcile-developer-documentation`
+- **PR / CI / Merge Record:** [PR #147](https://github.com/amirreza-a2a/Polpo/pull/147) merged into `main` at `515fd05317b661f42e32041d315aaaf72dc22f72` (Implementation). All 4 required CI status checks passed: `quality-gates` (56s), `secret-scan` (11s), `test-linux` (1m36s), `test-windows` (6m13s). Full test suite: 2,190 passed, 6 skipped, 2 warnings, 37 subtests passed in 107.19s on Linux (2,196 total collected items). 9 developer documentation contract unit tests (25 subtests) and 8 public documentation tests (12 subtests) passed.
+- **Notes & Risks:** `AGENTS.md` Rule 1 (Verify Before Judging) must guide all claims about external versions and distribution support. Maintainer release freeze actively enforced.
 
 ---
 
@@ -939,7 +943,8 @@ The following standing constraints apply to all stabilization operations:
 | **2026-10-22** | `P2-03` | Clarified Pipeline 2 refinement output as auxiliary derivative artifact; added ADR-004; implemented SQLite Migration 005 for source_version lineage; implemented adopt_pipeline2_refinement under OCC in DocumentPublicationService; protected dirty human edits in MarkdownEditorController and QML. Hardened editor OCC rejection synchronization, job-switch refinement isolation, and zero-job event guards. Added 23 tests (16 integration, 6 migration, 1 controller). | [#135](https://github.com/amirreza-a2a/Polpo/pull/135) / `a2e2cfc`<br/>[#137](https://github.com/amirreza-a2a/Polpo/pull/137) / `ec5854f` | Merged cleanly into `main` after all 4 required status checks passed on both PRs (`quality-gates` [36s], `secret-scan` [6s], `test-linux` [1m56s], `test-windows` [3m54s]). Full test suite: 2131 passed, 6 skipped on Linux. |
 | **2026-10-22** | `THEME-01` | Audited and verified authoritative 41-token contract in ThemePalette; audited all 30 active QML files; replaced unauthorized RGBA and direct color literals in DocumentViewerView.qml and MarkdownView.qml; eliminated theme-bearing fallback literals in Main.qml and Sidebar.qml while guarding teardown; preserved CV coordinate overlay and math error badge constants; reconciled Polpo product branding in scoped presentation files; strengthened AST architecture invariant tests. | [#139](https://github.com/amirreza-a2a/Polpo/pull/139) / `d5716b2` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [48s], `secret-scan` [8s], `test-linux` [1m37s], `test-windows` [3m57s]). Full test suite: 2137 passed, 6 skipped on Linux. |
 | **2026-10-23** | `THEME-02` | Verified theme switching lifecycle across system/dark/light preferences; hardened ThemeController against missing style hints and portal errors; ensured Qt.ColorScheme.Unknown deterministically defaults to dark; eliminated spurious signal emissions; replaced all 231 unauthorized hardcoded fallback color literals across 24 QML files with transparent; coupled MathJax foreground colors to theme palette while preserving cache neutrality and URL pixmap isolation; verified WCAG 2.2 contrast compliance (14.64:1 to 17.39:1 text contrast, SC 1.4.11 focus ring contrast >= 3:1, and documented SC 1.4.3 inactive button exemptions); synchronized QGuiApplication palette on startup; handled raw integer OS scheme signals; wired focus rings across representative interactive controls; eliminated scanner false positives on regular text strings; added 35 unit and characterization tests. | [#141](https://github.com/amirreza-a2a/Polpo/pull/141) / `f11c95c`<br/>[#143](https://github.com/amirreza-a2a/Polpo/pull/143) / `3d71f98` | Merged cleanly into `main` after all 4 required status checks passed on both PRs (`quality-gates` [43s], `secret-scan` [10s], `test-linux` [2m7s], `test-windows` [5m44s]). Full test suite: 2173 passed, 6 skipped on Linux. 71 focused theme/math/accessibility tests passed. |
-| **2026-10-23** | `DOC-01` | Reconciled public-facing documentation (`README.md`, `CHANGELOG.md`, `docs/linux-installation.md`, `docs/packaging.md`) with desktop reality; documented active release freeze and pre-release candidate status (`v0.1.0-rc.1`); clarified stable channel 404 behavior; differentiated Ubuntu 24.04 CI runner from Ubuntu 22.04 packaging baseline (glibc >= 2.35) and separated automated CI evidence from community package manager mappings; added `mathjax-full 3.2.2` and `ADR-004`; updated packaged self-test migration range to `001` through `005` across 9 tables; clarified Pandoc musl static linkage vs application glibc requirement; added macOS notarization guidance disclaimer; updated `[Unreleased]` changelog section while preserving historical entries; added deterministic documentation contract test suite. | [#145](https://github.com/amirreza-a2a/Polpo/pull/145) / `c7181a5` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [1m5s], `secret-scan` [10s], `test-linux` [2m7s], `test-windows` [2m58s]). Full test suite: 2,181 passed, 6 skipped on Linux (2,187 collected). 8 documentation contract tests (12 subtests) passed. |
+| **2026-10-23** | `DOC-01` | Reconciled public-facing documentation (`README.md`, `CHANGELOG.md`, `docs/linux-installation.md`, `docs/packaging.md`) with desktop reality; documented active release freeze and pre-release candidate status (`v0.1.0-rc.1`); clarified stable channel 404 behavior; differentiated Ubuntu 24.04 CI runner from Ubuntu 22.04 packaging baseline (glibc >= 2.35) and separated automated CI evidence from community package manager mappings; added `mathjax-full 3.2.2` and `ADR-004`; updated packaged self-test migration range to `001` through `005` across 9 tables; clarified Pandoc musl static linkage vs application glibc requirement; added macOS notarization guidance disclaimer; updated `[Unreleased]` changelog section while preserving historical entries; added deterministic documentation contract test suite. | [#145](https://github.com/amirreza-a2a/Polpo/pull/145) / `c7181a5`<br/>[#146](https://github.com/amirreza-a2a/Polpo/pull/146) / `5a9d8b6` | Merged cleanly into `main` after all 4 required status checks passed on both PRs (implementation PR #145: `quality-gates` [1m5s], `secret-scan` [10s], `test-linux` [2m7s], `test-windows` [2m58s]; closeout PR #146: `quality-gates` [37s], `secret-scan` [11s], `test-linux` [1m43s], `test-windows` [5m14s]). Full test suite at implementation: 2,181 passed, 6 skipped on Linux (2,187 collected). 8 documentation contract tests (12 subtests) passed. |
+| **2026-10-28** | `DOC-02` | Reconciled developer documentation (`AGENTS.md`, `CONTEXT.md`, `docs/agents/skills.md`, `docs/ci-repository-rules.md`) with desktop architecture reality; eliminated `PolpoT` branding discrepancies across core developer documentation; aligned Pipeline 2 semantics with ADR-004 (secondary typography refinement producing `PIPELINE2_MARKDOWN` adopted under OCC via human action); defined `Pipeline2Job` entity and isolated frozen legacy surfaces (`handlers/`, `interfaces/telegram/`, `main.py`, `services/worker.py`, legacy database modules); cataloged all 16 environment skills and strictly prohibited skill vendoring; verified branch protection contract against live GitHub settings (`quality-gates`, `test-linux`, `test-windows`, `secret-scan`, `strict: true`, linear history, zero admin bypass); added automated developer documentation contract test suite. | [#147](https://github.com/amirreza-a2a/Polpo/pull/147) / `515fd05` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [56s], `secret-scan` [11s], `test-linux` [1m36s], `test-windows` [6m13s]). Full test suite: 2,190 passed, 6 skipped, 2 warnings, 37 subtests passed in 107.19s on Linux (2,196 total collected items). 9 developer documentation contract unit tests (25 subtests) and 8 public documentation tests (12 subtests) passed. |
 
 ---
 
@@ -949,7 +954,7 @@ When starting or continuing work on this stabilization roadmap:
 
 1. **Do not create an ad-hoc plan.** Read this roadmap (`docs/quality/stabilization-roadmap.md`).
 2. **Check Git state:** Confirm branch is `main`, `git status` is clean, and local is synced with `origin/main`.
-3. **Select one target task:** Choose the next uncompleted task in dependency order (e.g. `STAB-00`, then `P2-01`).
+3. **Select one target task:** Choose the next uncompleted task in dependency order (`FA-01: Audit & Correct Persian Comments & Annotations` is the next sequential task).
 4. **Follow Section 6 (`/boost` Automation Contract):**
    - Create a dedicated branch.
    - Execute the recommended skill sequence.
