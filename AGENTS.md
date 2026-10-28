@@ -1,4 +1,4 @@
-# AGENTS.md — Standing Rules for PolpoT
+# AGENTS.md — Standing Rules for Polpo
 
 These rules apply to every mission in this project — architecture, planning, coding,
 refactoring, debugging, auditing, testing, and documentation — regardless of what any
@@ -42,7 +42,7 @@ This applies equally to implementation plans, audits, tests, and documentation.
 
 ## 2. Desktop-First, Local-First, Serverless Architecture
 
-PolpoT is a **desktop-first, local-first, embedded application**.
+Polpo is a **desktop-first, local-first, embedded application**.
 
 The Qt desktop client is the primary product and the primary architectural consumer.
 
@@ -106,7 +106,7 @@ A successful desktop installation MUST be capable of:
 * managing locally stored API configuration;
 * performing all non-AI local operations;
 
-without requiring any remote PolpoT service.
+without requiring any remote Polpo service.
 
 AI operations naturally require outbound connectivity to the configured AI provider.
 
@@ -550,6 +550,11 @@ Startup logic must reconcile:
 * stale processing jobs;
 * interrupted work.
 
+Concurrency control during startup recovery (`JobRecoveryService`) MUST enforce
+cross-process file locking (`fcntl` advisory locks on POSIX, `msvcrt.locking` on
+Windows) and SQLite `BEGIN IMMEDIATE` transactions to prevent duplicate recovery
+runs or race conditions across multiple instances.
+
 Never assume the application was continuously running.
 
 ---
@@ -985,12 +990,103 @@ covering:
 7. no plaintext secrets are persisted or logged;
 8. architecture boundaries remain intact;
 9. no desktop code depends on Telegram;
-10. no desktop code depends on a PolpoT server;
+10. no desktop code depends on a Polpo server;
 11. concurrency behavior is explicitly tested where applicable;
 12. persistence changes are versioned and testable;
 13. compatibility code is clearly marked;
 14. obsolete implementations are removed or explicitly frozen;
-15. the implementation still matches the approved desktop-first architecture.
+15. the implementation still matches the approved desktop-first architecture;
+16. canonical document publication and OCC invariants are preserved;
+17. zero agent skills are vendored into the repository;
+18. release freeze and branch protection merge-gating rules are strictly followed.
 
 The implementation is not considered complete until this cleanup pass has been
 performed.
+
+---
+
+## 33. Canonical Document Publication and Optimistic Concurrency Control (OCC)
+
+Canonical Markdown documents (`output_{job_id}_v{version}.md`) represent the
+authoritative, immutable documents of record in Polpo.
+
+The following publication and concurrency invariants MUST be maintained:
+
+1. **Monotonic Watermarks and Immutability:** Existing canonical Markdown version
+   files on disk MUST NOT be overwritten in place. Version advancement MUST use
+   monotonically incrementing integer watermarks allocated within atomic SQLite
+   transactions (`BEGIN IMMEDIATE`).
+2. **Exclusive Authority of `DocumentPublicationService`:** All canonical document
+   modifications (initial publication, human editor saves, region recrops, and
+   Pipeline 2 refinement adoptions) MUST pass exclusively through
+   `DocumentPublicationService`. No presentation controller, worker thread, or
+   auxiliary service may write directly to canonical document paths or alter
+   `jobs.output_path`.
+3. **Optimistic Concurrency Control (OCC):** Canonical document publication MUST
+   enforce OCC verification (`base_version == active_version`). If a concurrent save
+   or external modification advances the canonical document version while an editor
+   session or background refinement is in flight, the publication attempt MUST be
+   rejected with `StaleDocumentVersionError`.
+4. **Derivative Artifacts Are Not Canonical:** Derivative processing outputs (such as
+   `ArtifactType.PIPELINE2_MARKDOWN` produced by Pipeline 2 typography refinement)
+   are auxiliary artifacts and MUST NEVER automatically overwrite the canonical
+   document or advance version watermarks upon job completion.
+5. **Explicit Human Adoption:** Adopting a derivative refinement artifact into the
+   canonical document history is an explicit, user-initiated action. Adoption MUST
+   verify source-version lineage (`source_version`), enforce OCC, and MUST be
+   strictly blocked if the user editor buffer has unsaved modifications
+   (`isDirty == True`), an editor save is in progress (`isSaving == True`), or an
+   unresolved three-way merge conflict session is active.
+
+---
+
+## 34. Strict Branch Protection Merge Gates and Release Freeze
+
+Polpo enforces strict automated merge gating on its canonical `main` branch to
+guarantee system reliability and architectural invariants
+([`docs/ci-repository-rules.md`](docs/ci-repository-rules.md)).
+
+1. **No Direct Pushes to `main`:** All code and documentation changes MUST be
+   proposed via dedicated topic branches and pull requests. Direct commits and pushes
+   to `main` are strictly blocked by branch protection.
+2. **Required Status Checks:** Every pull request MUST pass the four exact
+   server-enforced status checks before merge eligibility:
+   * `quality-gates` (diff hygiene, bytecode compilation, 48+ AST architectural
+     invariant tests);
+   * `test-linux` (full test suite execution in Tier-1 POSIX reference environment);
+   * `test-windows` (full test suite execution on native Windows Server);
+   * `secret-scan` (Gitleaks scan verifying zero plaintext secrets or live API keys).
+3. **Strict Linear History and Admin Enforcement:** Merges MUST preserve linear Git
+   history (`required_linear_history: true`) via squash-and-merge or rebase-and-merge.
+   Administrators cannot bypass these checks (`enforce_admins: true`). Branches must
+   be strictly up to date with `main` before merging (`strict: true`).
+4. **Active Release Freeze:** The repository is under an active maintainer release
+   freeze. Agents and contributors MUST NOT:
+   * create, move, or push release tags (e.g. `v0.1.0`);
+   * publish or draft GitHub Releases;
+   * upload release assets;
+   * alter default release channels in application code;
+   * bump authoritative version numbers in `core/version.py` or `pyproject.toml`
+     solely to stage or simulate release publication;
+   unless explicit, written maintainer authorization is provided.
+
+---
+
+## 35. Agent Skills Routing and Prohibition of Vendoring
+
+Polpo maintains an operational routing guide
+([`docs/agents/skills.md`](docs/agents/skills.md)) defining how installed agent skills
+are selected and sequenced across development workflows.
+
+1. **Zero Skill Vendoring:** Installed agent skills reside in the external agent
+   runtime environment (`~/.agents/skills/` or `~/.gemini/skills/`). Agent skills
+   MUST NEVER be copied, vendored, or committed into the Polpo repository. No
+   `.agents/skills/` or `.gemini/skills/` implementation tree may be created or
+   committed.
+2. **Independent Two-Axis Code Review:** Significant architectural, concurrency,
+   persistence, security, or documentation changes MUST undergo independent two-axis
+   review (`code-review` verifying both coding Standards and task Specification)
+   prior to pull request merge.
+3. **Preserve Domain Models and ADRs:** Settled architectural decisions MUST be
+   recorded in Architecture Decision Records under `docs/adr/`, and domain
+   ubiquitous language MUST be maintained in [`CONTEXT.md`](CONTEXT.md).

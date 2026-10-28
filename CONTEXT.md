@@ -1,12 +1,12 @@
-# CONTEXT.md — PolpoT Canonical Domain Glossary & Architectural Seams
+# CONTEXT.md — Polpo Canonical Domain Glossary & Architectural Seams
 
-This document is the authoritative architectural and domain reference for PolpoT. It defines the system overview, canonical domain vocabulary, layer boundaries, and architectural seams governing all development, refactoring, and AI agent missions.
+This document is the authoritative architectural and domain reference for Polpo. It defines the system overview, canonical domain vocabulary, layer boundaries, and architectural seams governing all development, refactoring, and AI agent missions.
 
 ---
 
 ## 1. System Overview
 
-**PolpoT** is a desktop-first, local-first, serverless Document Intelligence & Review Workspace. It automates complex PDF transcription, visual layout analysis, and optical character recognition (OCR) while empowering users with a dual-pane desktop environment for interactive verification, geometry correction, and source editing.
+**Polpo** is a desktop-first, local-first, serverless Document Intelligence & Review Workspace. It automates complex PDF transcription, visual layout analysis, and optical character recognition (OCR) while empowering users with a dual-pane desktop environment for interactive verification, geometry correction, and source editing.
 
 ### Key Architectural Pillars
 
@@ -20,32 +20,43 @@ This document is the authoritative architectural and domain reference for PolpoT
 
 ## 2. Canonical Domain Vocabulary
 
-The following terms define the ubiquitous domain language of PolpoT. These definitions are strictly implemented across `core/`, `application/`, and `interfaces/`.
+The following terms define the ubiquitous domain language of Polpo. These definitions are strictly implemented across `core/`, `application/`, and `interfaces/`.
 
 ### 2.1 `Job`
 The atomic domain execution unit representing a PDF document processing workflow (`core/entities/job.py`).
 * **Lifecycle (`JobStatus`):** Governed by `JobStatePolicy` (`core/policies/job_state_policy.py`). Transitions progress through `PENDING` $\to$ `PROCESSING` $\to$ `DONE` (terminal success). Intermediate or terminal non-success states include `PAUSED` (cooperative pause), `FAILED`, and `CANCELLED`.
 * **Pipeline Modes (`JobType`):**
-  * *Pipeline 1 (`pipeline1` / standard OCR):* Two-pass execution separating text transcription from visual region detection.
-  * *Pipeline 2 (`pipeline2` / unified multimodal layout):* Single-pass layout decomposition combining visual entity localization and semantic text generation.
+  * *Pipeline 1 (`pipeline1` / standard OCR):* Two-pass execution separating text transcription from visual region detection. Upon completion, Pipeline 1 invokes `DocumentPublicationService.publish_initial()`, creating version 1 of the canonical Markdown document (`output_{job_id}_v1.md`), inserting a `DocumentVersionRecord` into `document_versions`, and pointing `jobs.output_path` to the canonical URI.
+  * *Pipeline 2 (`pipeline2` / typography refinement):* Secondary AI text refinement stage operating on canonical Markdown (`core/entities/job.py`). Refined text is stored as a derivative auxiliary artifact (`ArtifactType.PIPELINE2_MARKDOWN`, `p2_output_{p2_job_id}.md`) and does NOT automatically overwrite the canonical document. Canonical adoption is an explicit, deliberate user action that passes through `DocumentPublicationService` under Optimistic Concurrency Control (OCC), preserving source-version lineage (`source_version`).
+  * *Quick Convert (`quick_convert`):* Single-pass document conversion mode.
 * **Watermark Tracking (`output_artifact_version_watermark`):** An integer monotonically incremented under atomic SQLite transactions (`BEGIN IMMEDIATE`) to allocate collision-free artifact versions across application restarts and background worker runs.
 * **Output Path (`output_path`):** The absolute or managed URI to the currently active canonical Markdown artifact on disk.
 
-### 2.2 `VisualRegion`
+### 2.2 `Pipeline2Job`
+The subordinate domain execution unit representing a Pipeline 2 typography refinement workflow (`core/entities/job.py`), governed by ADR-004.
+* **Lineage & Source Version (`source_version`):** Explicitly persists the canonical version (`DocumentVersionRecord.version`) from which the refinement was generated (set to `1` for auto-triggered runs following Pipeline 1, or resolved from the active canonical document for manual submissions). Legacy jobs without recorded lineage have `source_version = NULL` and cannot be adopted automatically.
+* **Derivative Artifact Output:** Refined Markdown is persisted strictly as an auxiliary artifact (`ArtifactType.PIPELINE2_MARKDOWN`) at `p2_output_{p2_job_id}.md`. Execution completion transitions the entity to `JobStatus.DONE` without mutating `jobs.output_path` or incrementing version watermarks.
+* **Distinct Application Event Contract:** Upon completion, `JobExecutionService` emits `Pipeline2CompletedEvent(job_id, source_job_id, output_artifact_uri, source_version)`, a typed event distinct from `JobCompletedEvent`. It is adapted into Qt signal `pipeline2_completed_received` to notify the UI of refinement availability without corrupting parent job canonical paths.
+* **Canonical Adoption Protocol:** Adopting a refinement into the canonical document history is an explicit human action. Adoption invokes `DocumentPublicationService.publish_version(job_id, base_version, markdown_text, published_by="PIPELINE_2_ADOPTION")` enforcing OCC:
+  * Verifies `base_version == active_canonical_version`. If human edits or external changes have advanced the canonical version, raises `StaleDocumentVersionError`.
+  * Human Edit Protection: Adoption is strictly gated in `MarkdownEditorController` and QML. If the editor has unsaved changes (`isDirty == True`), a save is in progress (`isSaving == True`), or an active three-way conflict session is open, adoption is blocked to prevent data loss.
+  * Successful adoption increments the monotonic version watermark, atomically stages the new file (`output_{job_id}_v{version}.md`), updates `jobs.output_path`, and inserts an immutable `DocumentVersionRecord` in SQLite while preserving the derivative artifact for auditability.
+
+### 2.3 `VisualRegion`
 A core domain entity representing an extracted visual document element, such as a figure, chart, diagram, table, or schematic (`core/entities/visual_region.py`).
 * **Geometry:** Defined by a canonical normalized `BoundingBox` (`core/entities/bounding_box.py`) on an integer grid of `[0, 1000]`, projected to 72 DPI PDF point space `(x, y, width, height)` for rendering and raster cropping.
 * **Provenance & Review Status (`ReviewStatus`):** Preserves immutable AI detection provenance (`detected_bbox`) alongside human corrections (`reviewed_bbox`). Statuses include `UNREVIEWED`, `MODIFIED`, `MANUAL`, `REJECTED`, and `ACCEPTED`.
 * **Sync Status (`SyncStatus`):** Tracks disk synchronization (`PENDING_INITIAL_CROP`, `SYNCED`, `DIRTY_RECROP_REQUIRED`, `SYNC_FAILED`).
 * **Token Identifier:** Unique 32-character UUID4 string (`region_id`) referenced inside the Markdown source via canonical image tokens: `![crop_{region_id}](crop_{region_id}.png)`.
 
-### 2.3 `ReviewWorkspace`
+### 2.4 `ReviewWorkspace`
 The primary desktop presentation interface (`interfaces/desktop/qml/views/ReviewWorkspaceView.qml`) uniting document inspection and text editing into a synchronized dual-pane workspace:
 * **Left Pane (`DocumentViewerView`):** High-performance PDF raster canvas powered by PyMuPDF (`fitz`), hosting interactive bounding box overlays (`BoundingBoxOverlay.qml`) for manual region selection, drag-resizing, and creation.
 * **Right Pane (`MarkdownEditorPane` & `MarkdownView`):** Dual-mode workspace providing:
   * `MarkdownEditorPane` (`interfaces/desktop/qml/components/MarkdownEditorPane.qml`): Native CommonMark plain-text source editor with syntax highlighting, search/replace, line navigation, OCC persistence, and an interactive three-way merge conflict resolution toolbar.
   * `MarkdownView` (`interfaces/desktop/qml/views/MarkdownView.qml`): Virtualized, rendered CommonMark AST preview presenting rich typographic styling and embedded image crop previews.
 
-### 2.4 `Canonical Markdown`
+### 2.5 `Canonical Markdown`
 The single authoritative, immutable on-disk document artifact (`output_{job_id}_v{version}.md`).
 * **Immutability:** Existing versioned markdown files are never overwritten in-place.
 * **Monotonic Advancement:** Advanced strictly through `DocumentPublicationService` (via `MarkdownEditorService` or `VisualRegionPublicationService`) using an atomic two-phase commit protocol:
@@ -53,23 +64,23 @@ The single authoritative, immutable on-disk document artifact (`output_{job_id}_
   2. Staged atomic file write to disk.
   3. Pointer update of `jobs.output_path` in SQLite.
 
-### 2.5 `Draft Markdown`
+### 2.6 `Draft Markdown`
 The transient, uncommitted in-memory plain text buffer residing in `MarkdownEditorController`.
 * **Dirty Tracking (`isDirty`):** Computed by comparing the active buffer text against the last-loaded or last-saved canonical snapshot.
 * **Decoupled Previewing:** Powers live rendered preview generation without mutating disk files or incrementing canonical version numbers.
 
-### 2.6 `OCC (Optimistic Concurrency Control)`
+### 2.7 `OCC (Optimistic Concurrency Control)`
 The concurrency control protocol protecting document integrity against race conditions between human interactive edits and asynchronous background pipeline runs.
 * **Watermark Verification:** Commits enforce `base_version == active_version`, where `base_version` is the version loaded when editing began, and `active_version` is the current SQLite canonical version.
 * **Stale Document Handling:** If `active_version > base_version` during a save attempt, `MarkdownEditorService` raises `StaleDocumentVersionError`, intercepting the save and initiating the three-way merge resolution workflow.
 
-### 2.7 `ConflictSession`
+### 2.8 `ConflictSession`
 A transient `QObject` presentation model (`interfaces/desktop/models/conflict_session.py`) instantiated when concurrent modifications collide.
 * **In-Buffer Conflict Representation:** Embeds Git-style conflict markers (`<<<<<<< LOCAL (Your Edits)`, `=======`, `>>>>>>> REMOTE (Background Update)`) directly into the native editor buffer.
 * **Interactive Resolution:** Coordinates the conflict resolution toolbar (`ConflictResolutionBar.qml`), permitting one-click hunk resolution (`Accept Local`, `Accept Remote`, `Accept Both`) or manual text resolution.
 * **Save Gating (`canSave`):** Strictly prohibits document saving while unresolved conflicts or malformed markers persist in the editor buffer.
 
-### 2.8 `ConflictHunk`
+### 2.9 `ConflictHunk`
 A discrete difference segment computed during three-way merge analysis (`difflib.SequenceMatcher` diff3 engine in `core/markdown/merge.py` and `application/dto/merge_dto.py`).
 * **Hunk Classifications:**
   * `CLEAN_UNCHANGED`: Unmodified across base, local, and remote versions.
@@ -79,24 +90,24 @@ A discrete difference segment computed during three-way merge analysis (`difflib
   * `CONFLICT`: True overlapping edits requiring human review.
 * **AST Context Enrichment:** Hunks are annotated with CommonMark AST metadata (`ast_label`, `ast_node_type`) to indicate the semantic block (e.g. `Header`, `Paragraph`, `List Item`, `Visual Region Token`) affected.
 
-### 2.9 `Preview Synchronization`
+### 2.10 `Preview Synchronization`
 The bidirectional navigation and viewport synchronization engine (`ReviewWorkspaceSyncCoordinator` in `interfaces/desktop/coordinators/review_workspace_sync_coordinator.py`).
 * **Normalized Proportional Progress:** Tracks scroll offsets as normalized floating-point values (`0.0` to `1.0`), decoupling differences in font size, line wrapping, and image scale.
 * **60 FPS Responsiveness:** Synchronizes viewport positions with 16ms throttling and debounced caret updates.
 * **Directional Origin Locks:** Employs explicit synchronization origins (`SyncOrigin.SOURCE_USER`, `SyncOrigin.PREVIEW_USER`, `SyncOrigin.IDLE`) to prevent ping-pong recursive feedback loops between editor and preview.
 * **Conflict Pausing:** Automatically pauses live preview rendering during active conflict sessions (`previewPaused = true`) to prevent syntax marker disruption.
 
-### 2.10 `MathJaxProcessSupervisor`
+### 2.11 `MathJaxProcessSupervisor`
 The persistent local process supervisor managing the headless Node.js MathJax worker daemon (`resources/mathjax/mathjax_worker.js`) over line-delimited JSON-RPC 2.0 (`infrastructure/math/mathjax_supervisor.py`).
 * **Process Lifetime:** Manages worker daemon spawning, health handshakes, pipe communication, two-phase process termination (`SIGTERM` $\to$ `SIGKILL`), and non-blocking application shutdown.
 * **Bounded Execution:** Enforces separate timeouts for cold process startup and in-flight formula RPC requests across POSIX and Windows.
 
-### 2.11 `MathSvgCache` & `Poison-Pill Memo`
+### 2.12 `MathSvgCache` & `Poison-Pill Memo`
 Thread-safe, in-memory LRU caches governing math rendering artifacts and failure isolation (`infrastructure/math/lru_cache.py`).
 * **Positive Cache (`MathSvgCache`):** Stores pre-rendered SVG XML markup and layout metrics indexed by deterministic TeX formula hash, allowing zero-latency lookups for QML image providers without blocking the UI thread.
 * **Negative Memo (Poison-Pill Protection):** Caches formula hashes that caused unrecoverable timeouts or worker crashes, fast-failing subsequent renders in $O(1)$ to prevent restart budget exhaustion during live typing.
 
-### 2.12 `MathCircuitBreaker`
+### 2.13 `MathCircuitBreaker`
 The pure, standalone, thread-safe three-state process reliability governor (`CLOSED`, `OPEN`, `HALF_OPEN`) safeguarding application stability against crash-looping worker processes (`infrastructure/math/circuit_breaker.py`).
 * **Encapsulation & Concurrency:** Encapsulates the failure history previously managed directly in supervisor `self._restart_timestamps`, protected by its own dedicated internal `threading.Lock()` decoupled from supervisor RPC locks.
 * **Accounting Invariant:** Initial worker startup is not a restart; only process kills caused by request timeouts, unexpected crashes, or failed startup handshakes consume restart budget (`MAX_RESTARTS_PER_MINUTE = 3` in `RESTART_WINDOW_SECONDS = 60.0`).
@@ -105,7 +116,7 @@ The pure, standalone, thread-safe three-state process reliability governor (`CLO
   * `OPEN`: Fast-fails all requests in $O(1)$ with `MathCircuitBreakerOpenError`. Lasts for a mandatory cooldown (`INITIAL_COOLDOWN_SECONDS = 30.0`). Transitions lazily to `HALF_OPEN` upon cooldown expiration.
   * `HALF_OPEN`: Allows exactly one atomic probe request via `with breaker.probe_permit():` while rejecting concurrent requests with `MathCircuitBreakerOpenError`. A successful probe closes the breaker, resets cooldown to 30.0s, and clears failure history; a failed probe re-opens it with doubled cooldown up to `MAX_COOLDOWN_SECONDS = 240.0`. Exiting the permit without recording an outcome safely releases the probe slot and preserves `HALF_OPEN` status.
 
-### 2.13 `Document PDF Export`
+### 2.14 `Document PDF Export`
 The publication-grade document generation pipeline compiling canonical Markdown into vector PDF files via external Quarto CLI and XeLaTeX (ADR-003).
 * **Canonical Source Authority:** PDF compilation operates strictly on immutable on-disk canonical Markdown artifacts (`output_{job_id}_v{version}.md`). The transient QML preview scene graph is never scraped or rasterized.
 * **Save-Before-Export Gate:** If the active editor holds unsaved changes or unresolved merge conflicts, the export workflow prompts the user to save, committing a monotonic canonical version (`v{N+1}`) under OCC before compilation begins.
@@ -113,7 +124,7 @@ The publication-grade document generation pipeline compiling canonical Markdown 
 * **Export-Only TikZ Compilation:** Technical TikZ/PGF diagrams are authored using standard Pandoc/Quarto raw LaTeX fenced blocks (` ```{=latex} `). TikZ compilation is strictly scoped to explicit PDF export operations. The live editor preview does not launch TeX compilers and presents the block as a styled LaTeX code container.
 * **Strict Non-Networked Ordinary Export:** Ordinary document compilation strictly enforces `latex-auto-install: false`, preventing silent package downloads or external network activity during export.
 
-### 2.14 `SetupAssistant & Runtime Readiness` (Proposed Implementation Concept)
+### 2.15 `SetupAssistant & Runtime Readiness` (Proposed Implementation Concept)
 The conceptual in-app discovery and diagnostics model governing external CLI tool prerequisites (Quarto CLI, TeX Live, TinyTeX) for PDF generation (ADR-003).
 * **External Prerequisite Policy:** Quarto is an external prerequisite in the initial implementation. It is discovered dynamically through system `PATH` or a user-configured path in `AppSettings`, without relying on machine-specific hardcoded paths.
 * **Graceful Degradation:** The absence of Quarto or TeX disables only PDF export capabilities and never blocks application launch or document review workflows.
@@ -124,7 +135,7 @@ The conceptual in-app discovery and diagnostics model governing external CLI too
 
 ## 3. Architectural Seams Map
 
-PolpoT enforces Clean Architecture and the Dependency Inversion Principle. Dependencies point strictly inward:
+Polpo enforces Clean Architecture and the Dependency Inversion Principle. Dependencies point strictly inward:
 
 ```text
 Presentation Layer (interfaces/desktop)
@@ -219,6 +230,7 @@ The Telegram bot implementation is a **frozen legacy transport** maintained stri
   * `interfaces/telegram/`
   * `handlers/`
   * `main.py`
+  * `services/worker.py` (legacy worker execution loop)
   * `infrastructure/composition.py` (legacy composition root)
   * Legacy MySQL database adapters and migrations.
 * **Architectural Boundary:**
@@ -229,14 +241,21 @@ The Telegram bot implementation is a **frozen legacy transport** maintained stri
 
 ## 5. Platform Support & CI Verification Matrix
 
-PolpoT enforces a strict multi-tier platform architecture ([`AGENTS.md`](AGENTS.md) Rule 28) with differentiated continuous integration and periodic validation gates:
+Polpo enforces a strict multi-tier platform architecture ([`AGENTS.md`](AGENTS.md) Rule 28) with differentiated continuous integration and periodic validation gates:
 
 ### 5.1 Continuous Integration Matrix (Blocking PR Gates)
-* **Tier-1 Linux Reference:** Ubuntu 24.04 LTS x86_64 / Python 3.12 (`test-linux`).
-  * *Architecture Boundary:* Ubuntu 24.04 serves as the POSIX reference environment for headless CI, not proof of continuous automated testing across all Linux distributions. Subprocess adapters and CLI resolvers are verified using mock executable doubles on standard CI, with live CLI tests conditionally enabled when host runtimes are present.
-* **Tier-1 Windows Reference:** Windows Server 2025 x64 / Python 3.12 (`windows-2025` runner, `test-windows`).
-  * *Architecture Boundary:* Windows CI verifies Win32 OS semantics, file URI pathing (`file:///C:/...`), non-POSIX file locking, and NTFS concurrency. Windows Server CI validates runtime and service correctness, but is not equivalent to consumer Windows 10/11 interactive desktop-shell or display verification. Windows Server 2022 is a non-continuously-tested compatibility target. Subprocess execution specifically validates `CREATE_NO_WINDOW` console window suppression and process tree termination (`taskkill`).
-* **Security & Quality Gates:** Static whitespace/bytecode/AST quality gates (`quality-gates`) and Gitleaks secret scanning (`secret-scan`) run on every push and pull request.
+All pull requests targeting `main` must strictly satisfy GitHub Classic Branch Protection rules ([`docs/ci-repository-rules.md`](docs/ci-repository-rules.md)):
+* **Server-Enforced Status Checks (Exact 4 Contexts):**
+  1. `quality-gates` (`ubuntu-24.04`, Python 3.12): Whitespace hygiene (`git diff --check`), Python bytecode compilation across `core`, `application`, `infrastructure`, `interfaces`, and `tests`, plus 48+ AST-based architectural dependency invariant tests.
+  2. `test-linux` (`ubuntu-24.04`, Python 3.12, offscreen Qt): Full unit and integration test suite execution in the project's Tier-1 POSIX reference environment. Subprocess adapters and CLI resolvers are verified using mock doubles on standard CI, with live CLI tests conditionally enabled when host runtimes are present.
+  3. `test-windows` (`windows-2025` runner, Windows Server 2025 Datacenter x64, Python 3.12, offscreen Qt): Full unit and integration test suite execution verifying Win32 semantics, file URI pathing (`file:///C:/...`), non-POSIX file locking, NTFS concurrency, console window suppression (`CREATE_NO_WINDOW`), and process tree termination (`taskkill`). Windows Server CI validates runtime and service correctness, but is not equivalent to consumer Windows 10/11 interactive desktop-shell or display verification. Windows Server 2022 is a non-continuously-tested compatibility target.
+  4. `secret-scan` (`ubuntu-24.04`, Gitleaks Action pinned to immutable SHA): Git history scan against `.gitleaks.toml` verifying zero plaintext credentials, live API keys, or tokens.
+* **Branch Protection Invariants:**
+  * `strict: true`: Pull request branches must be strictly up to date with the latest commit on `main` before merging.
+  * `enforce_admins: true`: Administrators cannot bypass required status checks or linear history.
+  * `required_linear_history: true`: Merge commits (`--no-ff`) are rejected; only squash-and-merge or rebase-and-merge are allowed.
+  * `allow_force_pushes: false` & `allow_deletions: false`: Force pushes and deletion of `main` are strictly blocked.
+  * `required_pull_request_reviews: null`: Merges are gated on deterministic automated CI checks without requiring manual human review counts.
 
 ### 5.2 Periodic & Pre-Release Validation Matrix (Tier-2 Decoupled)
 * **macOS Apple Silicon:** macOS 15 ARM64 / Python 3.12 (`macos-15` runner, `test-macos`).
