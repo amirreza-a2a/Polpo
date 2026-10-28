@@ -1,12 +1,12 @@
 # ============================================================
-#  config.py  –  تنظیمات اصلی ربات
+#  config.py  –  Main bot configuration (legacy)
 # ============================================================
 
 import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# ─── ریشه پروژه و بارگذاری .env ─────────────────────────────
+# ─── Project root and .env loading ─────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent
 load_dotenv(PROJECT_ROOT / ".env")
 
@@ -51,29 +51,29 @@ def _resolve_path(key: str, default_relative: str) -> str:
     return str(PROJECT_ROOT / path_obj)
 
 
-# ─── تلگرام ───────────────────────────────────────────────
+# ─── Telegram ───────────────────────────────────────────────
 BOT_TOKEN                  = _get_env_str("BOT_TOKEN", "")
 ADMIN_IDS                  = _get_env_int_list("ADMIN_IDS", [])
 BACKUP_CHANNEL_ID          = _get_env_int("BACKUP_CHANNEL_ID", 0)
 SOURCE_ARCHIVE_CHANNEL_ID  = _get_env_int("SOURCE_ARCHIVE_CHANNEL_ID", 0)
 
-# ─── دیتابیس MySQL ────────────────────────────────────────
+# ─── MySQL Database ────────────────────────────────────────
 DB_HOST = _get_env_str("DB_HOST", "localhost")
 DB_PORT = _get_env_int("DB_PORT", 3306)
 DB_NAME = _get_env_str("DB_NAME", "")
 DB_USER = _get_env_str("DB_USER", "")
 DB_PASS = _get_env_str("DB_PASS", "")
 
-# ─── محدودیت‌ها ────────────────────────────────────────────
-MAX_PDF_SIZE_MB     = _get_env_int("MAX_PDF_SIZE_MB", 100)          # حداکثر حجم PDF ورودی
-DAILY_PAGE_LIMIT    = _get_env_int("DAILY_PAGE_LIMIT", 100)         # محدودیت صفحه روزانه هر کاربر
-MAX_QUEUE_PER_USER  = _get_env_int("MAX_QUEUE_PER_USER", 3)          # حداکثر جاب همزمان در صف برای یک کاربر
+# ─── Limits ────────────────────────────────────────────────
+MAX_PDF_SIZE_MB     = _get_env_int("MAX_PDF_SIZE_MB", 100)          # Maximum input PDF size (MB)
+DAILY_PAGE_LIMIT    = _get_env_int("DAILY_PAGE_LIMIT", 100)         # Daily page limit per user
+MAX_QUEUE_PER_USER  = _get_env_int("MAX_QUEUE_PER_USER", 3)          # Maximum concurrent jobs in queue per user
 
-# ─── مسیرها (متصل به ریشه پروژه) ──────────────────────────
-TEMP_DIR          = _resolve_path("TEMP_DIR", "temp_files")         # پوشه فایل‌های موقت
-OUTPUT_DIR        = _resolve_path("OUTPUT_DIR", "output_files")     # پوشه فایل‌های خروجی
-WORKER_LOCK_FILE  = _resolve_path("WORKER_LOCK_FILE", "worker.lock") # فایل قفل Worker
-RATE_FILE         = _resolve_path("RATE_FILE", "rate_limits.json")  # فایل ریت لیمیتر
+# ─── Paths (relative to project root) ──────────────────────
+TEMP_DIR          = _resolve_path("TEMP_DIR", "temp_files")         # Temporary files directory
+OUTPUT_DIR        = _resolve_path("OUTPUT_DIR", "output_files")     # Output files directory
+WORKER_LOCK_FILE  = _resolve_path("WORKER_LOCK_FILE", "worker.lock") # Worker lock file
+RATE_FILE         = _resolve_path("RATE_FILE", "rate_limits.json")  # Rate limiter tracking file
 
-# ─── پردازش ───────────────────────────────────────────────
-DPI = _get_env_int("DPI", 200)                                      # کیفیت رندر صفحات PDF
+# ─── Processing ────────────────────────────────────────────
+DPI = _get_env_int("DPI", 200)                                      # PDF page rendering DPI

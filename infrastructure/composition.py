@@ -29,8 +29,8 @@ from application.services.artifact_service import ArtifactService
 
 class AppContainer:
     """
-    ریشه ترکیب (Composition Root) سیستم.
-    تمام آداپتورهای زیرساختی و سرویس‌های کاربرد را با رعایت وارونگی وابستگی پیکربندی و متصل می‌کند.
+    Composition Root for the system.
+    Configures and wires all infrastructure adapters and application services adhering to dependency inversion.
     """
 
     def __init__(
@@ -39,12 +39,12 @@ class AppContainer:
         storage_adapter: Optional[LocalStorageAdapter] = None,
         notifier: Optional[InMemoryEventNotifier] = None,
     ):
-        # 1. زیرساخت پایگاه‌داده و امنیت
+        # 1. Database and security infrastructure
         self.db_manager = db_manager or DatabaseManager()
         self.uow_factory = MySQLUnitOfWorkFactory(self.db_manager)
         self.credential_resolver = MySQLCredentialResolver(self.db_manager)
 
-        # 2. زیرساخت فایل، پردازش سند و شبکه
+        # 2. File, document processing, and network infrastructure
         self.storage = storage_adapter or LocalStorageAdapter()
         self.doc_processor = PyMuPDFDocumentProcessor()
         self.rate_limiter = RateLimiterAdapter()
@@ -52,7 +52,7 @@ class AppContainer:
         from infrastructure.ai.provider_detector import AIProviderDetector
         self.provider_detector = AIProviderDetector()
 
-        # 3. Factory ایجاد آداپتور هوش مصنوعی برای هر اسلات
+        # 3. Factory to create an AI adapter for each slot
         def resolve_ai_adapter(slot: ApiSlot) -> AIProviderPort:
             raw_key = self.credential_resolver.resolve_api_key(slot.credential_ref)
             return create_ai_adapter(
@@ -63,13 +63,13 @@ class AppContainer:
             )
         self.ai_adapter_factory = resolve_ai_adapter
 
-        # 4. مجری هوش مصنوعی و Fallback متمرکز
+        # 4. Centralized rate-limited AI executor and fallback
         self.ai_executor = RateLimitedAIExecutor(
             adapter_factory=self.ai_adapter_factory,
             rate_limiter=self.rate_limiter,
         )
 
-        # 5. سرویس‌های لایه کاربرد
+        # 5. Application layer services
         self.user_service = UserManagementService(self.uow_factory)
         self.prompt_service = PromptService(self.uow_factory)
         self.api_service = ApiManagementService(self.uow_factory, self.provider_detector)

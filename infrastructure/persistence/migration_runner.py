@@ -18,20 +18,20 @@ MIGRATIONS_DIR_DEFAULT = PROJECT_ROOT / "database" / "migrations"
 
 
 class MigrationError(Exception):
-    """خطای اجرای مایگریشن دیتابیس."""
+    """Database migration execution error."""
     pass
 
 
 class MigrationRunner:
     """
-    مجری مایگریشن‌های نسخه‌بندی‌شده SQL با قابلیت تشخیص ایمن پایگاه‌داده از پیش ساخته‌شده (Baseline Detection)
-    بر اساس جداول و ستون‌های دقیق، و محافظت غیرقابل نفوذ در برابر اجرای همزمان با MySQL GET_LOCK.
+    Executes versioned SQL migrations with safe baseline detection for pre-existing databases
+    based on exact tables and columns, protected against concurrent execution via MySQL GET_LOCK.
     """
 
     SCHEMA_MIGRATIONS_TABLE = "schema_migrations"
     BASELINE_VERSION = "000"
 
-    # تعریف صریح ساختار کامل ۸ جدول اصلی پروداکشن به همراه ستون‌های ضروری
+    # Explicit baseline schema definition for 8 core production tables and required columns
     EXPECTED_BASELINE_SCHEMA: Dict[str, Set[str]] = {
         "users": {
             "id", "telegram_id", "username", "daily_pages_used", "daily_reset_date",
@@ -78,7 +78,7 @@ class MigrationRunner:
         self.migrations_dir = Path(migrations_dir or MIGRATIONS_DIR_DEFAULT)
 
     def ensure_migrations_table(self):
-        """ایجاد جدول ردیابی مایگریشن‌ها در صورت عدم وجود."""
+        """Create schema migrations tracking table if not exists."""
         with self.db.cursor() as cur:
             cur.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.SCHEMA_MIGRATIONS_TABLE} (
@@ -89,7 +89,7 @@ class MigrationRunner:
             """)
 
     def get_applied_migrations(self) -> Set[str]:
-        """دریافت لیست نسخه‌های اعمال‌شده مایگریشن."""
+        """Get the set of applied migration versions."""
         self.ensure_migrations_table()
         with self.db.cursor() as cur:
             cur.execute(f"SELECT version FROM {self.SCHEMA_MIGRATIONS_TABLE}")
@@ -97,7 +97,7 @@ class MigrationRunner:
             return {r["version"] for r in rows}
 
     def get_existing_schema(self) -> Dict[str, Set[str]]:
-        """دریافت ساختار فعلی دیتابیس (جداول و ستون‌ها) از information_schema."""
+        """Fetch current database schema (tables and columns) from information_schema."""
         with self.db.cursor() as cur:
             cur.execute("""
             SELECT LOWER(table_name) AS table_name, LOWER(column_name) AS column_name
@@ -125,13 +125,13 @@ class MigrationRunner:
 
     def evaluate_baseline_state(self) -> str:
         """
-        ارزیابی دقیق وضعیت پایگاه داده با تطبیق جداول و ستون‌های موجود:
-        - 'empty': هیچ جدولی در دیتابیس وجود ندارد (نیاز به اجرای 000_baseline_production.sql).
-        - 'full_baseline': تمام ۸ جدول اصلی پروداکشن به همراه تمام ستون‌های مورد انتظار وجود دارند.
-        - در صورت عدم تطابق جداول یا ستون‌ها: MigrationError صادر می‌شود.
+        Evaluate database state against expected baseline schema:
+        - 'empty': no tables present in database (requires running 000_baseline_production.sql).
+        - 'full_baseline': all 8 core production tables and expected columns are present.
+        - Inconsistent/partial: raises MigrationError.
         """
         existing_schema = self.get_existing_schema()
-        # حذف جدول ردیابی مایگریشن از ارزیابی ساختار
+        # Exclude schema migrations tracking table from schema evaluation
         existing_schema.pop(self.SCHEMA_MIGRATIONS_TABLE.lower(), None)
 
         if not existing_schema:
@@ -150,11 +150,11 @@ class MigrationRunner:
                 if diff:
                     missing_columns[table] = diff
 
-        # اگر هیچ جدول یا ستونی کم نباشد، دیتابیس معتبر است
+        # If no tables or columns are missing, database is at full baseline
         if not missing_tables and not missing_columns:
             return "full_baseline"
 
-        # ساخت پیام خطای تفصیلی در صورت وجود ساختار ناقص
+        # Build detailed error message for partial or mismatched schema
         error_parts = []
         if missing_tables:
             error_parts.append(f"Missing tables: {sorted(missing_tables)}")
@@ -168,7 +168,7 @@ class MigrationRunner:
         )
 
     def record_migration(self, version: str, name: str):
-        """ثبت نسخه مایگریشن در جدول schema_migrations."""
+        """Record migration version in schema_migrations table."""
         with self.db.cursor() as cur:
             cur.execute(
                 f"INSERT INTO {self.SCHEMA_MIGRATIONS_TABLE} (version, name) VALUES (%s, %s)",
@@ -176,7 +176,7 @@ class MigrationRunner:
             )
 
     def discover_migrations(self) -> List[Path]:
-        """یافتن تمام فایل‌های مایگریشن به ترتیب نسخه."""
+        """Discover all migration SQL files ordered by version."""
         if not self.migrations_dir.exists():
             return []
 
@@ -190,7 +190,7 @@ class MigrationRunner:
         return migration_files
 
     def _split_sql_statements(self, sql_content: str) -> List[str]:
-        """تجزیه متن SQL به دستورات مجزا بدون کامنت‌ها و خطوط خالی."""
+        """Split SQL content into individual statements, ignoring comments and blank lines."""
         lines = []
         for line in sql_content.splitlines():
             stripped = line.strip()
@@ -205,8 +205,8 @@ class MigrationRunner:
     @contextmanager
     def _acquire_migration_lock(self, timeout_seconds: int = 30):
         """
-        دریافت قفل سراسری مایگریشن با MySQL GET_LOCK.
-        در صورت عدم دریافت قفل به هر دلیلی (Timeout, NULL, Exception)، بلافاصله با خطا متوقف می‌شود (Never Fail Open).
+        Acquire global migration lock using MySQL GET_LOCK.
+        If lock acquisition fails for any reason (Timeout, NULL, Exception), abort immediately (Never Fail Open).
         """
         lock_name = "polpot_migration_lock"
         lock_acquired = False
@@ -250,7 +250,7 @@ class MigrationRunner:
 
     def run_migrations(self) -> List[str]:
         """
-        اجرای تمام مایگریشن‌های معلق به صورت ترتیبی با مدیریت ایمن بیس‌لاین و قفل همزمانی.
+        Run all pending migrations sequentially with safe baseline detection and concurrency locking.
         """
         with self._acquire_migration_lock():
             self.ensure_migrations_table()
@@ -259,7 +259,7 @@ class MigrationRunner:
 
             applied_this_run: List[str] = []
 
-            # ارزیابی وضعیت دیتابیس موجود و مدیریت ایمن بیس‌لاین
+            # Evaluate existing database state and manage baseline safely
             state = self.evaluate_baseline_state()
 
             if state == "full_baseline" and self.BASELINE_VERSION not in applied_versions:
@@ -309,6 +309,6 @@ class MigrationRunner:
 
 
 def run_migrations(db: DatabaseManager = None, migrations_dir: Path | str = None) -> List[str]:
-    """تابع کمکی جهت اجرای مایگریشن‌ها."""
+    """Helper function to run migrations."""
     runner = MigrationRunner(db=db, migrations_dir=migrations_dir)
     return runner.run_migrations()

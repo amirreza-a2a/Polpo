@@ -18,8 +18,8 @@ logger = logging.getLogger("database.connection")
 
 class PooledConnectionWrapper:
     """
-    پروکسی روی اتصال خام PyMySQL جهت رهگیری متد close() و بازگرداندن اتصال به Pool.
-    تمام متدها و پراپرتی‌های اتصال به اتصال خام زیرین Delegate می‌شوند.
+    Proxy wrapper over a raw PyMySQL connection to intercept close() and return it to the pool.
+    All methods and attributes are delegated to the underlying raw connection.
     """
 
     def __init__(self, raw_conn, pool_manager: "DatabaseManager"):
@@ -28,7 +28,7 @@ class PooledConnectionWrapper:
         self._is_closed = False
 
     def close(self):
-        """بازگرداندن اتصال به استخر اتصالات با پاکسازی وضعیت تراکنش."""
+        """Return the connection to the pool while cleaning up transaction state."""
         if not self._is_closed:
             self._is_closed = True
             if self._pool_manager and self._raw_conn:
@@ -50,8 +50,8 @@ class PooledConnectionWrapper:
 
 class DatabaseManager:
     """
-    مدیریت اتصالات و تراکنش‌های پایگاه داده با پشتیبانی از Connection Pooling و Transaction Context.
-    این کلاس جزئیات درایور دیتابیس (PyMySQL) را پشت اینترفیس‌های context manager پنهان می‌کند.
+    Database connection and transaction manager supporting connection pooling and transaction contexts.
+    Hides driver details (PyMySQL) behind context manager interfaces.
     """
 
     def __init__(
@@ -78,7 +78,7 @@ class DatabaseManager:
         self._closed = False
 
     def _create_raw_connection(self):
-        """ایجاد یک اتصال خام جدید با درایور PyMySQL."""
+        """Create a new raw connection using the PyMySQL driver."""
         return pymysql.connect(
             host=self.host,
             port=self.port,
@@ -92,8 +92,8 @@ class DatabaseManager:
 
     def get_connection(self) -> PooledConnectionWrapper:
         """
-        دریافت یک اتصال زنده از Pool یا ساخت اتصال جدید در صورت وجود ظرفیت.
-        اتصال برگشتی در قالب PooledConnectionWrapper است تا close() اتصال را به pool بازگرداند.
+        Acquire an active connection from the pool or create a new one if within capacity.
+        Returns a PooledConnectionWrapper so that close() returns the connection to the pool.
         """
         if self._closed:
             raise RuntimeError("DatabaseManager has been closed.")
@@ -109,14 +109,14 @@ class DatabaseManager:
                         raw_conn = self._create_raw_connection()
                         self._created_connections += 1
 
-                # اگر ظرفیت پر بود، منتظر بازگشت یک اتصال می‌مانیم
+                # If at max capacity, wait for an available connection from the pool
                 if raw_conn is None:
                     try:
                         raw_conn = self._pool.get(timeout=self.connection_timeout)
                     except queue.Empty:
                         raise TimeoutError("Database connection pool exhausted; timeout waiting for connection.")
 
-            # سنجش سلامت اتصال
+            # Ping connection to verify liveness
             try:
                 raw_conn.ping(reconnect=True)
             except Exception as e:
@@ -133,7 +133,7 @@ class DatabaseManager:
 
     def release_connection(self, raw_conn):
         """
-        بازگرداندن اتصال خام به Pool همراه با Rollback تراکنش‌های معلق و ریست autocommit.
+        Return a raw connection to the pool, rolling back pending transactions and resetting autocommit.
         """
         if raw_conn is None:
             return
@@ -148,7 +148,7 @@ class DatabaseManager:
             return
 
         try:
-            # 1. Rollback هرگونه تراکنش معلق در صورت غیرفعال بودن autocommit
+            # 1. Roll back pending transaction if autocommit is disabled
             is_autocommit = True
             if hasattr(raw_conn, "get_autocommit"):
                 is_autocommit = raw_conn.get_autocommit()
@@ -161,14 +161,14 @@ class DatabaseManager:
                 except Exception:
                     pass
 
-            # 2. ریست autocommit به مقدار پیش‌فرض True
+            # 2. Reset autocommit to default True
             if hasattr(raw_conn, "autocommit"):
                 raw_conn.autocommit(True)
 
-            # 3. قرار دادن اتصال سالم در صف Pool
+            # 3. Place healthy connection back into pool queue
             self._pool.put_nowait(raw_conn)
         except queue.Full:
-            # در صورتی که صف پر باشد، اتصال اضافه بسته می‌شود
+            # If queue is full, close excess connection
             with self._lock:
                 self._created_connections -= 1
             try:
@@ -187,7 +187,7 @@ class DatabaseManager:
     @contextmanager
     def connection(self) -> Generator[PooledConnectionWrapper, None, None]:
         """
-        Context Manager جهت دریافت اتصال و بازگرداندن تضمینی به Pool پس از خروج از بلوک.
+        Context manager to acquire a connection and reliably return it to the pool upon exit.
         """
         conn = self.get_connection()
         try:
@@ -198,7 +198,7 @@ class DatabaseManager:
     @contextmanager
     def cursor(self) -> Generator[Any, None, None]:
         """
-        Context Manager جهت اجرای کوئری با Cursor و آزادسازی خودکار منابع.
+        Context manager to execute queries via a cursor and automatically release resources.
         """
         with self.connection() as conn:
             with conn.cursor() as cur:
@@ -207,8 +207,8 @@ class DatabaseManager:
     @contextmanager
     def transaction(self) -> Generator[Any, None, None]:
         """
-        Context Manager تراکنش صریح (Explicit Transaction).
-        در صورت اتمام موفقیت‌آمیز بلوک commit شده و در صورت بروز خطا rollback می‌شود.
+        Context manager for explicit transactions.
+        Commits on successful completion and rolls back if an error occurs.
         """
         with self.connection() as conn:
             conn.autocommit(False)
@@ -227,7 +227,7 @@ class DatabaseManager:
                 conn.autocommit(True)
 
     def close(self):
-        """بستن تمام اتصالات موجود در Pool."""
+        """Close all connections in the pool."""
         with self._lock:
             self._closed = True
             while not self._pool.empty():
@@ -245,7 +245,7 @@ _GLOBAL_LOCK = threading.Lock()
 
 
 def get_db_manager() -> DatabaseManager:
-    """دریافت یا ساخت Instance سراسری DatabaseManager."""
+    """Get or create the global DatabaseManager singleton instance."""
     global _GLOBAL_DB_MANAGER
     if _GLOBAL_DB_MANAGER is None:
         with _GLOBAL_LOCK:
@@ -256,7 +256,7 @@ def get_db_manager() -> DatabaseManager:
 
 def get_connection() -> PooledConnectionWrapper:
     """
-    تابع کمکی سازگار با کدهای قدیمی جهت دریافت اتصال مستقیم.
-    اتصال حاصل پس از فراخوانی .close() به Pool بازمی‌گردد.
+    Compatibility helper for legacy code to acquire a pooled database connection.
+    The resulting connection returns to the pool when .close() is called.
     """
     return get_db_manager().get_connection()

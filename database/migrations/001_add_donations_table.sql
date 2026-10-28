@@ -1,6 +1,6 @@
 -- ============================================================
 --  001_add_donations_table.sql
---  ایجاد جدول ذخیره اهداهای عمومی API (جایگزین bot_data در حافظه)
+--  Create table to store public API donations (replaces in-memory bot_data)
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS `donations` (

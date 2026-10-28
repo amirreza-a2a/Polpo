@@ -73,8 +73,8 @@ def release_lock():
 
 def run():
     """
-    نقطه ورود اجرای Worker.
-    کارها را از طریق JobExecutionService اجرا می‌نماید.
+    Worker entry point.
+    Executes queued jobs via JobExecutionService.
     """
     try:
         acquired = acquire_lock()
@@ -89,13 +89,13 @@ def run():
     try:
         container = get_app_container()
 
-        # ─── اول صف Pipeline 1 ──────────────────────────────
+        # ─── Pipeline 1 queue first ──────────────────────────────
         job = container.job_execution_service.execute_next_job()
         if job is not None:
             print(f"🚀 پردازش جاب #{job.id} (Pipeline 1) پایان یافت. وضعیت: {job.status.value}")
             return
 
-        # ─── اگر خالی بود، صف Pipeline 2 ────────────────────
+        # ─── Pipeline 2 queue if Pipeline 1 is empty ─────────────
         p2_job = container.job_execution_service.execute_next_pipeline2_job()
         if p2_job is not None:
             print(f"🚀 پردازش جاب هوشمند #{p2_job.id} (Pipeline 2) پایان یافت. وضعیت: {p2_job.status.value}")

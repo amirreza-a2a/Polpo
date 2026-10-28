@@ -1,5 +1,5 @@
 # ============================================================
-#  handlers/common.py  –  /start و موارد مشترک
+#  handlers/common.py  –  /start and common handlers
 # ============================================================
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup

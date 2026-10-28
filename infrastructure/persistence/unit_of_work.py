@@ -17,8 +17,8 @@ from infrastructure.persistence.repositories import (
 
 class MySQLUnitOfWork(IUnitOfWork):
     """
-    پیاده‌سازی MySQL درگاه Unit of Work با اتصال اشتراکی استخراج‌شده از Pool.
-    تمام عملیات‌های چند-مخزنی در محدوده یک تراکنش واحد انجام می‌شوند.
+    MySQL implementation of the Unit of Work port using a pooled connection.
+    All multi-repository operations run within a single transaction boundary.
     """
 
     def __init__(self, db_manager: DatabaseManager):
@@ -31,7 +31,7 @@ class MySQLUnitOfWork(IUnitOfWork):
         self._conn.begin()
         self._tx_active = True
 
-        # اتصال مخازن به اتصال تراکنشی فعال
+        # Bind repositories to active transactional connection
         self.jobs = MySQLJobRepository(self._conn)
         self.pipeline2_jobs = MySQLPipeline2JobRepository(self._conn)
         self.users = MySQLUserRepository(self._conn)
@@ -49,7 +49,7 @@ class MySQLUnitOfWork(IUnitOfWork):
                     self.commit()
         finally:
             if self._conn:
-                self._conn.close()  # بازگرداندن اتصال به pool
+                self._conn.close()  # Return connection to pool
                 self._conn = None
 
     def commit(self) -> None:

@@ -24,7 +24,7 @@ from core.ai.exceptions import (
 
 def format_telegram_error(exc: Exception) -> str:
     """
-    ترجمه استثناهای دامنه و کاربرد به پیام‌های راهنمای فارسی سازگار با محیط تلگرام.
+    Translates domain and application exceptions into Persian guidance messages suitable for Telegram.
     """
     if isinstance(exc, QuotaExceededError):
         return "❌ سهمیه‌ی روزانه‌ی شما تمام شده است.\nمی‌توانید فردا دوباره تلاش کنید یا با کلید API اختصاصی ادامه دهید."

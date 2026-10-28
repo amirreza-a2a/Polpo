@@ -17,9 +17,9 @@ logger = logging.getLogger("polpot.telegram.notifier")
 
 class TelegramProgressNotifier(IProgressNotifier):
     """
-    آداپتور اطلاع‌رسانی و ارسال نتایج تلگرام.
-    رویدادهای دامنه را به پیام‌های کاربری و اسناد Markdown/ZIP تلگرام تبدیل و ارسال می‌کند.
-    فاقد هرگونه منطق بیزینس یا دسترسی مستقیم به پایگاه‌داده.
+    Telegram notification and results delivery adapter.
+    Converts domain events into user-facing Telegram messages and Markdown/ZIP documents.
+    Contains no business logic or direct database access.
     """
 
     def __init__(
@@ -134,7 +134,7 @@ class TelegramProgressNotifier(IProgressNotifier):
         text = f"✅ پردازش کار #{job_id} با موفقیت به پایان رسید.\nدر حال ارسال فایل خروجی..."
         self._dispatch_text_sync(tg_id, text)
 
-        # ارسال سند مارک‌داون خروجی در صورت وجود مخزن آرتیفکت
+        # Deliver output markdown document if artifact storage is configured
         if self.storage and output_handle_uri:
             try:
                 handle = ArtifactHandle(
@@ -154,7 +154,7 @@ class TelegramProgressNotifier(IProgressNotifier):
             except Exception as e:
                 logger.warning(f"Could not deliver completed markdown artifact to {tg_id}: {e}")
 
-            # ارسال فایل تصاویر فشرده (ZIP) در صورت وجود
+            # Deliver zipped images (ZIP) if present
             try:
                 zip_handle = ArtifactHandle(
                     storage_backend=StorageBackendType.LOCAL_FS,
