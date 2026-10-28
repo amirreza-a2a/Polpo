@@ -20,6 +20,7 @@ class TestDeveloperDocumentationContract(unittest.TestCase):
         cls.ci_rules_path = cls.repo_root / "docs" / "ci-repository-rules.md"
         cls.ci_workflow_path = cls.repo_root / ".github" / "workflows" / "ci.yml"
         cls.adr_004_path = cls.repo_root / "docs" / "adr" / "2026-10-22-adr-004-pipeline2-artifact-lineage-and-canonical-publication-contract.md"
+        cls.roadmap_path = cls.repo_root / "docs" / "quality" / "stabilization-roadmap.md"
 
         cls.agents_text = cls.agents_path.read_text(encoding="utf-8")
         cls.context_text = cls.context_path.read_text(encoding="utf-8")
@@ -27,6 +28,7 @@ class TestDeveloperDocumentationContract(unittest.TestCase):
         cls.ci_rules_text = cls.ci_rules_path.read_text(encoding="utf-8")
         cls.ci_workflow_text = cls.ci_workflow_path.read_text(encoding="utf-8")
         cls.adr_004_text = cls.adr_004_path.read_text(encoding="utf-8")
+        cls.roadmap_text = cls.roadmap_path.read_text(encoding="utf-8")
 
     def test_product_branding_consistency(self):
         """Current-facing documentation titles and system overviews must refer to Polpo rather than legacy PolpoT."""
@@ -40,6 +42,13 @@ class TestDeveloperDocumentationContract(unittest.TestCase):
         )
         self.assertIn("Polpo is a **desktop-first, local-first, embedded application**", self.agents_text)
         self.assertIn("**Polpo** is a desktop-first, local-first, serverless Document Intelligence", self.context_text)
+
+        # Active developer docs must have zero deprecated PolpoT references
+        self.assertNotIn("PolpoT", self.agents_text, "AGENTS.md must not contain legacy PolpoT references")
+        self.assertNotIn("PolpoT", self.skills_text, "skills.md must not contain legacy PolpoT references")
+        self.assertNotIn("PolpoT", self.ci_rules_text, "ci-repository-rules.md must not contain legacy PolpoT references")
+        context_active = re.sub(r"\*Historical Context.*?\n", "", self.context_text, flags=re.DOTALL)
+        self.assertNotIn("PolpoT", context_active, "CONTEXT.md must not contain unescaped PolpoT outside historical notes")
 
     def test_agents_standing_rules_core_invariants(self):
         """AGENTS.md must define clean architecture, local-first persistence, credential security, and frozen legacy boundaries."""
@@ -102,6 +111,13 @@ class TestDeveloperDocumentationContract(unittest.TestCase):
         # Must define Pipeline2Job entity
         self.assertIn("### 2.2 `Pipeline2Job`", self.context_text)
         self.assertIn("core/entities/job.py", self.context_text)
+
+        # Must explicitly reference and link to ADR-004
+        self.assertIn(
+            "[ADR-004](docs/adr/2026-10-22-adr-004-pipeline2-artifact-lineage-and-canonical-publication-contract.md)",
+            self.context_text,
+            "CONTEXT.md must link to ADR-004",
+        )
 
     def test_context_md_canonical_immutability_and_two_phase_publication(self):
         """CONTEXT.md must document that canonical version files are immutable and use atomic two-phase publication."""
@@ -206,6 +222,7 @@ class TestDeveloperDocumentationContract(unittest.TestCase):
             self.context_path,
             self.skills_path,
             self.ci_rules_path,
+            self.roadmap_path,
         ]
 
         for doc_path in audited_docs:
