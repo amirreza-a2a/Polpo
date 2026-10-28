@@ -3,7 +3,7 @@
 A lightweight project-level guide for selecting and sequencing the agent skills installed on the agent for Polpo development.
 
 > [!NOTE]
-> The skills themselves are installed in the external agent environment (`~/.agents/skills/` or `~/.gemini/skills/`) and **must not** be copied, vendored, or reimplemented inside this repository. The 16 skills cataloged below have been verified present in the active agent environment. This document serves solely as a practical routing and sequencing guide for agents working on this codebase.
+> The skills themselves are installed in the external agent environment (`~/.agents/skills/` or `~/.gemini/skills/`) and **must not** be copied, vendored, or reimplemented inside this repository. The 16 core development workflow skills cataloged below have been verified present in the active agent environment (which contains a wider inventory of installed skills). This document serves solely as a practical routing and sequencing guide for agents working on this codebase.
 
 ---
 

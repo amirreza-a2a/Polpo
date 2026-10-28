@@ -33,7 +33,7 @@ The atomic domain execution unit representing a PDF document processing workflow
 * **Output Path (`output_path`):** The absolute or managed URI to the currently active canonical Markdown artifact on disk.
 
 ### 2.2 `Pipeline2Job`
-The subordinate domain execution unit representing a Pipeline 2 typography refinement workflow (`core/entities/job.py`), governed by ADR-004.
+The subordinate domain execution unit representing a Pipeline 2 typography refinement workflow (`core/entities/job.py`), governed by [ADR-004](docs/adr/2026-10-22-adr-004-pipeline2-artifact-lineage-and-canonical-publication-contract.md).
 * **Lineage & Source Version (`source_version`):** Explicitly persists the canonical version (`DocumentVersionRecord.version`) from which the refinement was generated (set to `1` for auto-triggered runs following Pipeline 1, or resolved from the active canonical document for manual submissions). Legacy jobs without recorded lineage have `source_version = NULL` and cannot be adopted automatically.
 * **Derivative Artifact Output:** Refined Markdown is persisted strictly as an auxiliary artifact (`ArtifactType.PIPELINE2_MARKDOWN`) at `p2_output_{p2_job_id}.md`. Execution completion transitions the entity to `JobStatus.DONE` without mutating `jobs.output_path` or incrementing version watermarks.
 * **Distinct Application Event Contract:** Upon completion, `JobExecutionService` emits `Pipeline2CompletedEvent(job_id, source_job_id, output_artifact_uri, source_version)`, a typed event distinct from `JobCompletedEvent`. It is adapted into Qt signal `pipeline2_completed_received` to notify the UI of refinement availability without corrupting parent job canonical paths.
@@ -117,7 +117,7 @@ The pure, standalone, thread-safe three-state process reliability governor (`CLO
   * `HALF_OPEN`: Allows exactly one atomic probe request via `with breaker.probe_permit():` while rejecting concurrent requests with `MathCircuitBreakerOpenError`. A successful probe closes the breaker, resets cooldown to 30.0s, and clears failure history; a failed probe re-opens it with doubled cooldown up to `MAX_COOLDOWN_SECONDS = 240.0`. Exiting the permit without recording an outcome safely releases the probe slot and preserves `HALF_OPEN` status.
 
 ### 2.14 `Document PDF Export`
-The publication-grade document generation pipeline compiling canonical Markdown into vector PDF files via external Quarto CLI and XeLaTeX (ADR-003).
+The publication-grade document generation pipeline compiling canonical Markdown into vector PDF files via external Quarto CLI and XeLaTeX ([ADR-003](docs/adr/2026-10-12-adr-003-quarto-pdf-export-integration.md)).
 * **Canonical Source Authority:** PDF compilation operates strictly on immutable on-disk canonical Markdown artifacts (`output_{job_id}_v{version}.md`). The transient QML preview scene graph is never scraped or rasterized.
 * **Save-Before-Export Gate:** If the active editor holds unsaved changes or unresolved merge conflicts, the export workflow prompts the user to save, committing a monotonic canonical version (`v{N+1}`) under OCC before compilation begins.
 * **Format Preservation:** The stored canonical document is never modified in-place or mutated to accommodate PDF generation. Export-specific preambles and font mappings are injected exclusively inside an ephemeral staging workspace.
@@ -125,7 +125,7 @@ The publication-grade document generation pipeline compiling canonical Markdown 
 * **Strict Non-Networked Ordinary Export:** Ordinary document compilation strictly enforces `latex-auto-install: false`, preventing silent package downloads or external network activity during export.
 
 ### 2.15 `SetupAssistant & Runtime Readiness` (Proposed Implementation Concept)
-The conceptual in-app discovery and diagnostics model governing external CLI tool prerequisites (Quarto CLI, TeX Live, TinyTeX) for PDF generation (ADR-003).
+The conceptual in-app discovery and diagnostics model governing external CLI tool prerequisites (Quarto CLI, TeX Live, TinyTeX) for PDF generation ([ADR-003](docs/adr/2026-10-12-adr-003-quarto-pdf-export-integration.md)).
 * **External Prerequisite Policy:** Quarto is an external prerequisite in the initial implementation. It is discovered dynamically through system `PATH` or a user-configured path in `AppSettings`, without relying on machine-specific hardcoded paths.
 * **Graceful Degradation:** The absence of Quarto or TeX disables only PDF export capabilities and never blocks application launch or document review workflows.
 * **Grouped-Consent Package Recovery:** For Quarto-managed TinyTeX environments, missing LaTeX packages produce actionable diagnostics and offer an asynchronous, user-authorized recovery action. A single explicit confirmation authorizes installing the identified missing dependency set.
