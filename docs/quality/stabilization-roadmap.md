@@ -510,12 +510,12 @@ flowchart TD
 
 ---
 
-### [ ] FA-01 — Audit and Correct Persian Comments and Code Annotations
+### [x] FA-01 — Audit and Correct Persian Comments and Code Annotations
 
 - **ID:** `FA-01`
 - **Title:** Audit and Clean Up Persian Comments, Annotations, and Docstrings
 - **Priority:** P3 (Normal)
-- **Status:** `NOT_STARTED`
+- **Status:** `COMPLETED`
 - **Dependencies:** `STAB-00`
 - **Scope:**
   - Scan and categorize all Persian text occurrences across the codebase (1523 lines identified across 59 files).
@@ -535,19 +535,19 @@ flowchart TD
 - **Recommended Skill Sequence:**
   `code-review → implement → code-review again`
 - **Acceptance Criteria:**
-  1. Technical docstrings and comments in core, application, infrastructure, and desktop interfaces are in clear, professional English.
-  2. Legitimate Persian test fixtures, regex patterns, and prompt templates are preserved without regression.
-  3. Zero functional code changes or logic regressions are introduced.
-  4. All quality gates and test suites pass cleanly.
+  1. Technical docstrings and comments in core, application, infrastructure, and desktop interfaces are in clear, professional English. [Verified — 20 files translated to clean English technical comments/docstrings; verified with quality gates and AST invariant checks]
+  2. Legitimate Persian test fixtures, regex patterns, and prompt templates are preserved without regression. [Verified — zero diff on `prompts/`, `tests/`, `infrastructure/document/pymupdf_processor.py`, and `interfaces/desktop/self_test.py`]
+  3. Zero functional code changes or logic regressions are introduced. [Verified — AST dump comparison against `origin/main` confirmed 100% identical AST structure across all 18 modified Python files]
+  4. All quality gates and test suites pass cleanly. [Verified — quality gates passed (whitespace, compilation, 55 AST invariants), full test suite passed (2,190 passed, 6 skipped, 2 warnings, 37 subtests in 116.53s)]
 - **Verification Commands:**
   ```bash
   git diff --check
   ./.venv/bin/python scripts/run_quality_gates.py --mode=working-tree
   ./.venv/bin/pytest tests/ -q
   ```
-- **Branch Suggestion:** `docs/persian-comment-hygiene`
-- **PR / CI / Merge Record:** Unstarted
-- **Notes & Risks:** `git diff --check` must confirm zero whitespace or encoding defects introduced.
+- **Branch Suggestion:** `refactor/audit-persian-annotations`
+- **PR / CI / Merge Record:** [PR #150](https://github.com/amirreza-a2a/Polpo/pull/150) merged into `main` at `22dba41e7f34f78e4dcf0175b2bf13b5fc321cf7` (Implementation). All 4 required CI status checks passed on implementation PR #150: `quality-gates` (42s), `secret-scan` (9s), `test-linux` (1m55s), `test-windows` (5m3s). Full test suite: 2,190 passed, 6 skipped, 2 warnings, 37 subtests passed in 116.53s on Linux (2,196 total collected items). AST equivalence verified 100% across all 18 modified Python files.
+- **Notes & Risks:** `git diff --check` confirmed zero whitespace or encoding defects introduced.
 
 ---
 
@@ -946,6 +946,7 @@ The following standing constraints apply to all stabilization operations:
 | **2026-10-23** | `THEME-02` | Verified theme switching lifecycle across system/dark/light preferences; hardened ThemeController against missing style hints and portal errors; ensured Qt.ColorScheme.Unknown deterministically defaults to dark; eliminated spurious signal emissions; replaced all 231 unauthorized hardcoded fallback color literals across 24 QML files with transparent; coupled MathJax foreground colors to theme palette while preserving cache neutrality and URL pixmap isolation; verified WCAG 2.2 contrast compliance (14.64:1 to 17.39:1 text contrast, SC 1.4.11 focus ring contrast >= 3:1, and documented SC 1.4.3 inactive button exemptions); synchronized QGuiApplication palette on startup; handled raw integer OS scheme signals; wired focus rings across representative interactive controls; eliminated scanner false positives on regular text strings; added 35 unit and characterization tests. | [#141](https://github.com/amirreza-a2a/Polpo/pull/141) / `f11c95c`<br/>[#143](https://github.com/amirreza-a2a/Polpo/pull/143) / `3d71f98` | Merged cleanly into `main` after all 4 required status checks passed on both PRs (`quality-gates` [43s], `secret-scan` [10s], `test-linux` [2m7s], `test-windows` [5m44s]). Full test suite: 2173 passed, 6 skipped on Linux. 71 focused theme/math/accessibility tests passed. |
 | **2026-10-23** | `DOC-01` | Reconciled public-facing documentation (`README.md`, `CHANGELOG.md`, `docs/linux-installation.md`, `docs/packaging.md`) with desktop reality; documented active release freeze and pre-release candidate status (`v0.1.0-rc.1`); clarified stable channel 404 behavior; differentiated Ubuntu 24.04 CI runner from Ubuntu 22.04 packaging baseline (glibc >= 2.35) and separated automated CI evidence from community package manager mappings; added `mathjax-full 3.2.2` and `ADR-004`; updated packaged self-test migration range to `001` through `005` across 9 tables; clarified Pandoc musl static linkage vs application glibc requirement; added macOS notarization guidance disclaimer; updated `[Unreleased]` changelog section while preserving historical entries; added deterministic documentation contract test suite. | [#145](https://github.com/amirreza-a2a/Polpo/pull/145) / `c7181a5`<br/>[#146](https://github.com/amirreza-a2a/Polpo/pull/146) / `5a9d8b6` | Merged cleanly into `main` after all 4 required status checks passed on both PRs (implementation PR #145: `quality-gates` [1m5s], `secret-scan` [10s], `test-linux` [2m7s], `test-windows` [2m58s]; closeout PR #146: `quality-gates` [37s], `secret-scan` [11s], `test-linux` [1m43s], `test-windows` [5m14s]). Full test suite at implementation: 2,181 passed, 6 skipped on Linux (2,187 collected). 8 documentation contract tests (12 subtests) passed. |
 | **2026-10-28** | `DOC-02` | Reconciled developer documentation (`AGENTS.md`, `CONTEXT.md`, `docs/agents/skills.md`, `docs/ci-repository-rules.md`) with desktop architecture reality; eliminated `PolpoT` branding discrepancies across core developer documentation; aligned Pipeline 2 semantics with ADR-004 (secondary typography refinement producing `PIPELINE2_MARKDOWN` adopted under OCC via human action); defined `Pipeline2Job` entity and isolated frozen legacy surfaces (`handlers/`, `interfaces/telegram/`, `main.py`, `services/worker.py`, legacy database modules); cataloged all 16 environment skills and strictly prohibited skill vendoring; verified branch protection contract against live GitHub settings (`quality-gates`, `test-linux`, `test-windows`, `secret-scan`, `strict: true`, linear history, zero admin bypass); added automated developer documentation contract test suite. | [#147](https://github.com/amirreza-a2a/Polpo/pull/147) / `515fd05`<br/>[#148](https://github.com/amirreza-a2a/Polpo/pull/148) / `d7eabb5` | Merged cleanly into `main` after all 4 required status checks passed on both PRs (implementation PR #147: `quality-gates` [56s], `secret-scan` [11s], `test-linux` [1m36s], `test-windows` [6m13s]; closeout PR #148: `quality-gates` [43s], `secret-scan` [9s], `test-linux` [1m50s], `test-windows` [4m2s]). Full test suite: 2,190 passed, 6 skipped, 2 warnings, 37 subtests passed in 107.19s on Linux (2,196 total collected items). 9 developer documentation contract unit tests (25 subtests) and 8 public documentation tests (12 subtests) passed. |
+| **2026-10-28** | `FA-01` | Audited and corrected Persian technical comments and docstrings across 20 source files in accordance with `AGENTS.md` Rule 20; preserved Category B assets (prompt templates, legitimate regex patterns, test strings, user-facing UI messages); verified zero functional changes via 100% identical AST comparison across all 18 modified Python files; confirmed clean git diff and quality gates. | [#150](https://github.com/amirreza-a2a/Polpo/pull/150) / `22dba41` | Merged cleanly into `main` after all 4 required status checks passed on PR #150 (`quality-gates` [42s], `secret-scan` [9s], `test-linux` [1m55s], `test-windows` [5m3s]). Full test suite: 2,190 passed, 6 skipped, 2 warnings, 37 subtests passed in 116.53s on Linux. |
 
 ---
 
@@ -955,7 +956,7 @@ When starting or continuing work on this stabilization roadmap:
 
 1. **Do not create an ad-hoc plan.** Read this roadmap (`docs/quality/stabilization-roadmap.md`).
 2. **Check Git state:** Confirm branch is `main`, `git status` is clean, and local is synced with `origin/main`.
-3. **Select one target task:** Choose the next uncompleted task in dependency order (`FA-01: Audit & Correct Persian Comments & Annotations` is the next sequential task).
+3. **Select one target task:** Choose the next uncompleted task in dependency order (`CI-01: Audit CI & Quality-Gate Reliability` is the next sequential task).
 4. **Follow Section 6 (`/boost` Automation Contract):**
    - Create a dedicated branch.
    - Execute the recommended skill sequence.
