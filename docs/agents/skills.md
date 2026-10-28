@@ -1,15 +1,15 @@
 # Agent Skills Routing Guide
 
-A lightweight project-level guide for selecting and sequencing the agent skills installed on the agent for PolpoT development.
+A lightweight project-level guide for selecting and sequencing the agent skills installed on the agent for Polpo development.
 
 > [!NOTE]
-> The skills themselves are installed in the agent environment (`~/.agents/skills/` or `~/.gemini/skills/`) and **must not** be copied, vendored, or reimplemented inside this repository. This document serves solely as a practical routing and sequencing guide for agents working on this codebase.
+> The skills themselves are installed in the external agent environment (`~/.agents/skills/` or `~/.gemini/skills/`) and **must not** be copied, vendored, or reimplemented inside this repository. The 16 skills cataloged below have been verified present in the active agent environment. This document serves solely as a practical routing and sequencing guide for agents working on this codebase.
 
 ---
 
 ## 1. Purpose
 
-When working on PolpoT, agents must choose the appropriate skill rather than applying ad-hoc approaches. This guide answers:
+When working on Polpo, agents must choose the appropriate skill rather than applying ad-hoc approaches. This guide answers:
 
 > **"Given the type of work I am doing, which installed skill should I call, when should I call it, and what skill usually comes next?"**
 
@@ -31,7 +31,7 @@ This is a routing guide, not a skill registry or an internal implementation refe
 | `diagnosing-bugs` | Investigating an unexpected failure, flaky test, or performance regression before jumping to speculative fixes; requires establishing a tight feedback loop. | Tracking down intermittent `database is locked` errors during concurrent job processing or identifying GUI thread blocking during PDF rasterization. |
 | `triage` | Evaluating, categorizing, verifying, and prioritizing raw incoming issue reports or requests to produce agent-ready briefs. | Triaging reported issues in the GitHub repository, assigning canonical labels (`needs-triage`, `ready-for-agent`, `needs-info`), and drafting repro steps. |
 | `retro` | Conducting a structured retrospective after completing a substantial milestone, major feature, or architectural phase. | Reviewing architectural friction, concurrency lessons, and agent efficiency following the completion of Phase 8 desktop persistence. |
-| `domain-modeling` | Clarifying, unifying, or refining domain concepts, ubiquitous language, and entity boundaries across layers. | Defining precise boundaries between `Job`, `ApiSlot`, `CredentialRef`, and `VisualRegion` to avoid god-object contamination. |
+| `domain-modeling` | Clarifying, unifying, or refining domain concepts, ubiquitous language, and entity boundaries across layers. | Defining precise boundaries between `Job`, `Pipeline2Job`, `ApiSlot`, `CredentialRef`, `VisualRegion`, and `DocumentVersionRecord` to avoid god-object contamination. |
 | `improve-codebase-architecture` | Surveying existing subsystems for architectural debt, layer leakage, or shallow abstractions, and identifying deepening opportunities. | Scanning `infrastructure/persistence/` or legacy `handlers/` to identify direct SQL leaks or presentation coupling violating clean architecture rules. |
 | `codebase-design` | Designing a brand-new subsystem, module interface, or clean architectural seam from scratch. | Designing a new pluggable AI provider fallback pipeline or an asynchronous document extraction engine behind narrow interfaces. |
 | `research` | Investigating external facts, SDK capabilities, third-party libraries, or platform constraints against primary sources via a background agent. | Investigating Google GenAI Python SDK streaming capabilities, PySide6 QML custom paint item limitations, or OS keyring Linux fallbacks. |
@@ -121,6 +121,7 @@ current work → handoff → next session
 5. **Do not use a skill to silently expand phase scope**: Maintain strict boundaries defined in the active phase or ticket.
 6. **Automated test passes do not automatically prove correct GUI/runtime behavior**: In a desktop Qt application, verify signal delivery, thread boundaries, and GUI responsiveness beyond unit test assertions.
 7. **Important settled architecture/domain decisions must become durable documentation**: Record architectural decisions in ADRs (`docs/adr/`) and domain terms in `CONTEXT.md`.
+8. **Zero skill vendoring**: Installed agent skills reside in the external agent runtime environment (`~/.agents/skills/` or `~/.gemini/skills/`) and **must never** be copied, vendored, or committed into the repository under any circumstances.
 
 ---
 
