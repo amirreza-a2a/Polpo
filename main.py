@@ -26,25 +26,25 @@ from handlers.quick_convert import handle_quick_photo
 
 from handlers.user import (
     show_panel, show_my_apis,
-    # تاریخچه و آرشیو (جدید)
+    # History and archive
     show_history, redeliver_job,
     show_resume_options, resume_same_api,
     resume_new_api, resume_api_source, resume_fallback,
     toggle_auto_retry,
     toggle_auto_p2_start, set_auto_p2_prompt,
 
-    # افزودن API خصوصی
+    # Add private API
     start_add_api,
     receive_api_key,
     receive_api_model_callback, receive_api_model_text,
     receive_api_base_url_callback, receive_api_base_url_text,
     receive_api_label,
-    # اهدا
+    # Donation
     start_donate,
     receive_donate_key,
     receive_donate_model_callback, receive_donate_model_text,
     receive_donate_base_url_callback, receive_donate_base_url_text,
-    # سایر
+    # Other
     delete_api_confirm, toggle_fallback, cancel,
     WAITING_API_KEY, WAITING_API_LABEL, WAITING_API_MODEL, WAITING_API_BASE_URL,
     WAITING_DONATE_KEY, WAITING_DONATE_MODEL, WAITING_DONATE_BASE_URL,
@@ -80,7 +80,7 @@ from handlers.admin import (
     receive_p2_prompt_title, receive_p2_prompt_desc, receive_p2_prompt_text,
     toggle_p2_prompt, set_default_p2_prompt, delete_p2_prompt_handler,
     ADD_P2_PROMPT_TITLE, ADD_P2_PROMPT_DESC, ADD_P2_PROMPT_TEXT,
-    # پرامپت تبدیل سریع (جدید)
+    # Quick convert prompt
     show_quick_convert_prompt, start_edit_quick_convert_prompt,
     receive_quick_convert_prompt,
     EDIT_QUICK_CONVERT_PROMPT,
@@ -92,7 +92,7 @@ logger = get_logger("main")
 
 async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    هندلر سراسری خطاهای تلگرام جهت لاگ‌کردن ساختاریافته استثناها و ارسال پیام مناسب به کاربر.
+    Global Telegram error handler to log structured exceptions and send an appropriate error message to the user.
     """
     logger.error("Exception while handling an update:", exc_info=context.error)
 
@@ -121,7 +121,7 @@ def main():
     #  ConversationHandlers
     # ════════════════════════════════════════════════════════
 
-    # ─── API خصوصی (۴ مرحله) ──────────────────────────────
+    # ─── Private API (4 steps) ──────────────────────────────
     add_api_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_add_api, pattern="^add_api$")],
         states={
@@ -143,7 +143,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    # ─── اهدای API (۴ مرحله) ──────────────────────────────
+    # ─── API Donation (4 steps) ────────────────────────────
     donate_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_donate, pattern="^panel_donate$")],
         states={
@@ -162,7 +162,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    # ─── افزودن API عمومی ادمین (۵ مرحله) ─────────────────
+    # ─── Admin public API addition (5 steps) ───────────────
     add_pub_api_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_add_public_api, pattern="^adm_add_pub_api$")],
         states={
@@ -187,7 +187,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    # ─── ویرایش API عمومی (۲ مرحله) ───────────────────────
+    # ─── Edit public API (2 steps) ─────────────────────────
     edit_pub_api_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_edit_pub_api, pattern="^adm_edit_pub:")],
         states={
@@ -203,7 +203,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    # ─── افزودن پرامپت Pipeline1 (۳ مرحله) ─────────────────
+    # ─── Add Pipeline 1 prompt (3 steps) ───────────────────
     add_prompt_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_add_prompt, pattern="^adm_add_prompt$")],
         states={
@@ -217,7 +217,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    # ─── افزودن پرامپت Pipeline2 (۳ مرحله) ─────────────────
+    # ─── Add Pipeline 2 prompt (3 steps) ───────────────────
     add_p2_prompt_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_add_p2_prompt, pattern="^adm_add_p2_prompt$")],
         states={
@@ -231,7 +231,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    # ─── ویرایش پرامپت تبدیل سریع (۱ مرحله) ────────────────
+    # ─── Edit quick convert prompt (1 step) ────────────────
     edit_quick_prompt_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_edit_quick_convert_prompt,
                                            pattern="^adm_edit_quick_prompt$")],
@@ -245,14 +245,14 @@ def main():
     )
 
     # ════════════════════════════════════════════════════════
-    #  ثبت هندلرها
+    #  Register handlers
     # ════════════════════════════════════════════════════════
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler("panel", lambda u, c: show_panel(u, c)))
 
-    # ConversationHandlers (باید قبل از CallbackQueryHandlers عمومی باشند)
+    # ConversationHandlers (must precede generic CallbackQueryHandlers)
     app.add_handler(add_api_conv)
     app.add_handler(donate_conv)
     app.add_handler(add_pub_api_conv)
@@ -264,10 +264,10 @@ def main():
     # PDF
     app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
 
-    # تبدیل سریع تصویر (بدون دکمه، بدون صف)
+    # Quick photo convert (no buttons, no queue)
     app.add_handler(MessageHandler(filters.PHOTO, handle_quick_photo))
 
-    # ─── Callbacks کاربر ───────────────────────────────────
+    # ─── User callbacks ─────────────────────────────────────
     app.add_handler(CallbackQueryHandler(show_panel,        pattern="^panel_main$"))
     app.add_handler(CallbackQueryHandler(show_my_apis,      pattern="^panel_apis$"))
     app.add_handler(CallbackQueryHandler(toggle_fallback,   pattern="^toggle_fallback$"))
@@ -279,7 +279,7 @@ def main():
     app.add_handler(CallbackQueryHandler(on_api_source_selected,   pattern="^api_source:"))
     app.add_handler(CallbackQueryHandler(on_fallback_selected,     pattern="^fallback:"))
 
-    # ─── تاریخچه و آرشیو ────────────────────────────────────
+    # ─── History and archive ────────────────────────────────
     app.add_handler(CallbackQueryHandler(show_history,         pattern=r"^history_page:\d+$"))
     app.add_handler(CallbackQueryHandler(redeliver_job,        pattern=r"^redeliver:\d+$"))
     app.add_handler(CallbackQueryHandler(show_resume_options,  pattern=r"^resume_show:\d+$"))
@@ -288,7 +288,7 @@ def main():
     app.add_handler(CallbackQueryHandler(resume_api_source,    pattern=r"^resume_api_src:"))
     app.add_handler(CallbackQueryHandler(resume_fallback,      pattern=r"^resume_fallback:"))
 
-    # ─── Pipeline 2 (کاربر) ────────────────────────────────
+    # ─── Pipeline 2 (User) ──────────────────────────────────
     app.add_handler(CallbackQueryHandler(toggle_auto_p2_start,        pattern="^toggle_auto_p2$"))
     app.add_handler(CallbackQueryHandler(set_auto_p2_prompt,          pattern=r"^set_auto_p2_prompt:\d+$"))
     app.add_handler(CallbackQueryHandler(start_pipeline2,             pattern=r"^start_p2:\d+$"))
@@ -296,7 +296,7 @@ def main():
     app.add_handler(CallbackQueryHandler(on_p2_api_source_selected,   pattern="^p2_api_source:"))
     app.add_handler(CallbackQueryHandler(on_p2_fallback_selected,     pattern="^p2_fallback:"))
 
-    # ─── Callbacks ادمین ────────────────────────────────────
+    # ─── Admin callbacks ────────────────────────────────────
     app.add_handler(CallbackQueryHandler(show_public_apis,      pattern="^adm_public_apis$"))
     app.add_handler(CallbackQueryHandler(show_prompts,          pattern="^adm_prompts$"))
     app.add_handler(CallbackQueryHandler(toggle_pub_api,        pattern="^adm_toggle_pub:"))
@@ -308,13 +308,13 @@ def main():
     app.add_handler(CallbackQueryHandler(reject_donation,       pattern="^admin_reject_donation:"))
     app.add_handler(CallbackQueryHandler(adm_back,              pattern="^adm_back$"))
 
-    # ─── Pipeline 2 (ادمین) ────────────────────────────────
+    # ─── Pipeline 2 (Admin) ─────────────────────────────────
     app.add_handler(CallbackQueryHandler(show_p2_prompts,          pattern="^adm_p2_prompts$"))
     app.add_handler(CallbackQueryHandler(toggle_p2_prompt,         pattern="^adm_toggle_p2_prompt:"))
     app.add_handler(CallbackQueryHandler(set_default_p2_prompt,    pattern="^adm_default_p2_prompt:"))
     app.add_handler(CallbackQueryHandler(delete_p2_prompt_handler, pattern="^adm_del_p2_prompt:"))
 
-    # ─── پرامپت تبدیل سریع (ادمین) ──────────────────────────
+    # ─── Quick convert prompt (Admin) ───────────────────────
     app.add_handler(CallbackQueryHandler(show_quick_convert_prompt, pattern="^adm_quick_prompt$"))
 
     app.add_handler(MessageHandler(filters.COMMAND, unknown_command))

@@ -36,7 +36,7 @@ def is_admin(user_id: int) -> bool:
 
 
 # ════════════════════════════════════════════════════════════
-#  پنل اصلی
+#  Main panel
 # ════════════════════════════════════════════════════════════
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -68,7 +68,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ════════════════════════════════════════════════════════════
-#  مدیریت API عمومی — لیست
+#  Public API management — list
 # ════════════════════════════════════════════════════════════
 
 async def show_public_apis(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -107,7 +107,7 @@ async def show_public_apis(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ════════════════════════════════════════════════════════════
-#  افزودن API عمومی
+#  Add public API
 # ════════════════════════════════════════════════════════════
 
 async def start_add_public_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -247,7 +247,7 @@ async def receive_pub_api_limit(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 # ════════════════════════════════════════════════════════════
-#  ویرایش مدل و Base URL یک API عمومی
+#  Edit model and Base URL of a public API
 # ════════════════════════════════════════════════════════════
 
 async def start_edit_pub_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -349,13 +349,13 @@ async def _save_edited_pub_api(msg_or_query, context, base_url: str, edit_msg: b
 
 
 def add_public_api(*args, **kwargs):
-    """تابع کمکی جهت حفظ سازگاری ماژول با تست‌های مانیتورینگ کاراکتریزاسیون."""
+    """Helper function to preserve module compatibility with characterization monitoring tests."""
     container = get_app_container()
     return container.api_service.register_public_api(*args, **kwargs)
 
 
 # ════════════════════════════════════════════════════════════
-#  تایید/رد اهدا
+#  Approve/reject donation
 # ════════════════════════════════════════════════════════════
 
 async def approve_donation(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -405,7 +405,7 @@ async def reject_donation(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ════════════════════════════════════════════════════════════
-#  مدیریت پرامپت‌ها
+#  Prompt management
 # ════════════════════════════════════════════════════════════
 
 async def show_prompts(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -550,7 +550,7 @@ async def adm_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ════════════════════════════════════════════════════════════
-#  توابع کمکی
+#  Helper functions
 # ════════════════════════════════════════════════════════════
 
 async def _adm_send_model_selection(msg_or_query, provider, models, step, edit=False):

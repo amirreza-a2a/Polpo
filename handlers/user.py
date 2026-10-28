@@ -25,7 +25,7 @@ WAITING_DONATE_BASE_URL = 12
 
 HISTORY_PER_PAGE = 5
 
-# ─── emoji وضعیت ─────────────────────────────────────────
+# ─── Status emoji ──────────────────────────────────────────
 STATUS_EMOJI = {
     "pending":    "⏳",
     "processing": "⚙️",
@@ -36,7 +36,7 @@ STATUS_EMOJI = {
 
 
 def escape_md(text: str) -> str:
-    """کاراکترهای خاص Markdown (نسخه legacy) را escape می‌کند."""
+    """Escape special Markdown characters (legacy format)."""
     if not text:
         return text
     for ch in ['_', '*', '`', '[', ']']:
@@ -45,7 +45,7 @@ def escape_md(text: str) -> str:
 
 
 # ════════════════════════════════════════════════════════════
-#  پنل اصلی
+#  Main panel
 # ════════════════════════════════════════════════════════════
 
 async def show_panel(update, context):
@@ -91,7 +91,7 @@ async def show_panel(update, context):
 
 
 # ════════════════════════════════════════════════════════════
-#  تاریخچه صفحه‌بندی‌شده
+#  Paginated history
 # ════════════════════════════════════════════════════════════
 
 async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -122,7 +122,7 @@ async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"   {job.processed_pages}/{job.total_pages} صفحه — `{job.status}`"
         )
 
-    # دکمه‌های هر جاب
+    # Action buttons for each job
     action_buttons = []
     for job in jobs:
         row = []
@@ -141,7 +141,7 @@ async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if row:
             action_buttons.append(row)
 
-    # دکمه‌های صفحه‌بندی
+    # Pagination buttons
     nav = []
     if page > 1:
         nav.append(InlineKeyboardButton("◀️ قبلی", callback_data=f"history_page:{page-1}"))
@@ -161,7 +161,7 @@ async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ════════════════════════════════════════════════════════════
-#  دریافت مجدد فایل‌های done
+#  Redelivery of completed (done) job files
 # ════════════════════════════════════════════════════════════
 
 async def redeliver_job(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -206,7 +206,7 @@ async def redeliver_job(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ════════════════════════════════════════════════════════════
-#  Resume — نمایش گزینه‌ها
+#  Resume — show options
 # ════════════════════════════════════════════════════════════
 
 async def show_resume_options(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -244,7 +244,7 @@ async def show_resume_options(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 # ════════════════════════════════════════════════════════════
-#  Resume — با تنظیمات قبلی
+#  Resume — with previous settings
 # ════════════════════════════════════════════════════════════
 
 async def resume_same_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -275,7 +275,7 @@ async def resume_same_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ════════════════════════════════════════════════════════════
-#  Resume — با API جدید
+#  Resume — with new API
 # ════════════════════════════════════════════════════════════
 
 async def resume_new_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -378,7 +378,7 @@ async def _do_resume_with_chain(query, context, job_id: int, user_db_id: int,
 
 
 # ════════════════════════════════════════════════════════════
-#  مدیریت API های کاربر
+#  User API management
 # ════════════════════════════════════════════════════════════
 
 async def show_my_apis(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -727,7 +727,7 @@ async def cancel(update, context):
     return ConversationHandler.END
 
 
-# ─── توابع کمکی مدل/base_url ─────────────────────────────
+# ─── Helper functions: model / base_url ──────────────────────
 
 async def _send_model_selection(msg, provider, models, prefix="new_api", step="۲/۴"):
     shown   = models[:8]

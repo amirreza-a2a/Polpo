@@ -10,7 +10,7 @@ from interfaces.telegram.error_formatter import format_telegram_error
 
 
 # ════════════════════════════════════════════════════════════
-#  شروع فلو — از دکمه "✨ پردازش هوشمند" در تاریخچه
+#  Flow start — from "✨ Smart Processing" button in history
 # ════════════════════════════════════════════════════════════
 
 async def start_pipeline2(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -54,7 +54,7 @@ async def start_pipeline2(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ════════════════════════════════════════════════════════════
-#  انتخاب پرامپت → انتخاب API
+#  Prompt selection -> API selection
 # ════════════════════════════════════════════════════════════
 
 async def on_p2_prompt_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -111,7 +111,7 @@ async def on_p2_fallback_selected(update: Update, context: ContextTypes.DEFAULT_
 
 
 # ════════════════════════════════════════════════════════════
-#  ساخت نهایی pipeline2_job
+#  Finalize and construct pipeline2_job
 # ════════════════════════════════════════════════════════════
 
 async def _finalize_p2_job(query, context: ContextTypes.DEFAULT_TYPE,

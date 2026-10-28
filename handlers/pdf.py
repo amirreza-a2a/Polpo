@@ -12,24 +12,24 @@ from interfaces.telegram.error_formatter import format_telegram_error
 
 
 def get_or_create_user(*args, **kwargs):
-    """تابع کمکی جهت حفظ سازگاری با تست‌های کاراکتریزاسیون."""
+    """Helper function to preserve compatibility with characterization tests."""
     container = get_app_container()
     return container.user_service.get_or_create_telegram_user(*args, **kwargs)
 
 
 def reset_daily_pages_if_needed(*args, **kwargs):
-    """تابع کمکی جهت حفظ سازگاری با تست‌های کاراکتریزاسیون."""
+    """Helper function to preserve compatibility with characterization tests."""
     pass
 
 
 def count_user_pending_jobs(*args, **kwargs):
-    """تابع کمکی جهت حفظ سازگاری با تست‌های کاراکتریزاسیون."""
+    """Helper function to preserve compatibility with characterization tests."""
     container = get_app_container()
     return container.job_query_service.get_user_pending_job_count(*args, **kwargs)
 
 
 def get_user_private_apis(*args, **kwargs):
-    """تابع کمکی جهت حفظ سازگاری با تست‌های کاراکتریزاسیون."""
+    """Helper function to preserve compatibility with characterization tests."""
     container = get_app_container()
     return container.api_service.list_user_apis(*args, **kwargs)
 
@@ -193,7 +193,7 @@ async def _finalize_job(query, context: ContextTypes.DEFAULT_TYPE,
         job_resp = container.job_submission_service.submit_job(cmd)
         job_id = job_resp.id
 
-        # آرشیو تلگرام
+        # Telegram source archive
         try:
             import io
             file_buf = io.BytesIO(pdf_data["file_bytes"])

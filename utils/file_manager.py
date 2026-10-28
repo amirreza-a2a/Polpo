@@ -1,5 +1,5 @@
 # ============================================================
-#  utils/file_manager.py  –  مدیریت فایل‌های موقت و خروجی
+#  utils/file_manager.py  –  Temporary and output file management (legacy)
 # ============================================================
 
 import os
@@ -20,7 +20,7 @@ def get_temp_path(filename: str) -> str:
 
 
 def get_job_dir(job_id: int) -> str:
-    """پوشه اصلی یک جاب را برمی‌گرداند و می‌سازد."""
+    """Return and create the main directory for a job."""
     path = os.path.join(OUTPUT_DIR, f"job_{job_id}")
     Path(path).mkdir(parents=True, exist_ok=True)
     return path
@@ -29,7 +29,7 @@ def get_job_dir(job_id: int) -> str:
 
 
 def get_pipeline2_dir(p2_job_id: int) -> str:
-    """مسیر پوشه‌ی اختصاصی pipeline2_job را برمی‌گرداند و می‌سازد."""
+    """Return and create the dedicated directory for a pipeline2_job."""
     d = os.path.join(OUTPUT_DIR, "pipeline2", f"job_{p2_job_id}")
     os.makedirs(d, exist_ok=True)
     return d
@@ -37,24 +37,24 @@ def get_pipeline2_dir(p2_job_id: int) -> str:
 
 
 def get_output_path(job_id: int) -> str:
-    """مسیر فایل MD خروجی را برمی‌گرداند."""
+    """Return the path to the output Markdown file."""
     return os.path.join(get_job_dir(job_id), "output.md")
 
 
 def get_attachments_dir(job_id: int) -> str:
-    """پوشه attachments یک جاب را برمی‌گرداند و می‌سازد."""
+    """Return and create the attachments directory for a job."""
     path = os.path.join(get_job_dir(job_id), "attachments")
     Path(path).mkdir(parents=True, exist_ok=True)
     return path
 
 
 def get_zip_path(job_id: int) -> str:
-    """مسیر فایل zip خروجی attachments را برمی‌گرداند."""
+    """Return the path to the attachments zip file."""
     return os.path.join(get_job_dir(job_id), "attachments.zip")
 
 
 def has_attachments(job_id: int) -> bool:
-    """آیا این جاب عکسی دارد؟"""
+    """Check whether this job has image attachments."""
     attachments_dir = os.path.join(OUTPUT_DIR, f"job_{job_id}", "attachments")
     if not os.path.exists(attachments_dir):
         return False
@@ -64,8 +64,8 @@ def has_attachments(job_id: int) -> bool:
 
 def create_attachments_zip(job_id: int) -> str | None:
     """
-    پوشه attachments را zip می‌کند.
-    مسیر فایل zip را برمی‌گرداند یا None اگر عکسی نباشد.
+    Compress the attachments directory into a zip file.
+    Returns the zip file path, or None if no attachments exist.
     """
     if not has_attachments(job_id):
         return None
@@ -86,7 +86,7 @@ def create_attachments_zip(job_id: int) -> str | None:
 
 
 def delete_file(path: str):
-    """یک فایل را حذف می‌کند (بدون خطا اگر وجود نداشته باشد)."""
+    """Delete a file safely (no-op if it does not exist)."""
     try:
         if path and os.path.exists(path):
             os.remove(path)
@@ -95,16 +95,16 @@ def delete_file(path: str):
 
 
 def cleanup_temp_input(job: dict):
-    """فایل موقت ورودی PDF را حذف می‌کند اما پوشه خروجی را نگه می‌دارد."""
+    """Delete the temporary input PDF file while retaining the output directory."""
     delete_file(job.get("file_path"))
 
 
 def cleanup_job_files(job: dict):
-    """تمام فایل‌های موقت و خروجی مربوط به یک جاب را حذف می‌کند."""
-    # فایل PDF اصلی
+    """Delete all temporary and output files associated with a job."""
+    # Original PDF file
     delete_file(job.get("file_path"))
 
-    # پوشه کامل job (MD + attachments + zip)
+    # Complete job directory (MD + attachments + zip)
     job_dir = os.path.join(OUTPUT_DIR, f"job_{job['id']}")
     try:
         if os.path.exists(job_dir):

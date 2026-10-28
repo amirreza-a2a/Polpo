@@ -21,7 +21,7 @@ async def handle_quick_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
     status_msg = await update.message.reply_text("⏳ در حال پردازش تصویر...")
 
     try:
-        # دانلود بزرگ‌ترین سایز عکس
+        # Download the highest resolution photo
         photo = update.message.photo[-1]
         file_obj = await photo.get_file()
         photo_bytes = await file_obj.download_as_bytearray()

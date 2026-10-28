@@ -16,7 +16,7 @@ from infrastructure.persistence.migration_runner import (
 
 def init_db():
     """
-    راه‌اندازی پایگاه داده با استفاده از Migration Runner نسخه‌بندی‌شده.
+    Initialize the database using the versioned Migration Runner.
     """
     applied = run_migrations()
     print(f"✅ دیتابیس با موفقیت راه‌اندازی شد. (مایگریشن‌های اعمال‌شده: {len(applied)})")

@@ -1,5 +1,5 @@
 # ============================================================
-#  utils/rate_limiter.py  –  کنترل نرخ درخواست (RPM)
+#  utils/rate_limiter.py  –  Request rate limiting (RPM, legacy)
 # ============================================================
 
 import time
@@ -10,7 +10,7 @@ from config import RATE_FILE
 
 logger = logging.getLogger("rate_limiter")
 
-# RPM پیش‌فرض به تفکیک provider
+# Default RPM by provider
 DEFAULT_RPM = {
     "google":     5,     # Gemini Flash Free Tier
     "openai":     60,
@@ -44,7 +44,7 @@ def _save(data: dict):
 
 def _make_key(api_id: int | str, provider: str = None, api_type: str = None) -> str:
     """
-    تولید کلید یکتا برای هر اسلات API جهت جلوگیری از تداخل کلید بین APIهای مختلف.
+    Generate a unique key for each API slot to avoid key collisions across different APIs.
     """
     parts = []
     if provider:
@@ -57,9 +57,9 @@ def _make_key(api_id: int | str, provider: str = None, api_type: str = None) -> 
 
 def wait_if_needed(api_id: int | str | dict, provider: str = None, api_type: str = None):
     """
-    اگر از آخرین درخواست به این API زمان کافی نگذشته، صبر می‌کند.
-    بر اساس RPM provider محاسبه می‌شود.
-    پشتیبانی از دریافت dict (ورودی کامل اسلات API) یا شناسه‌های مجزا.
+    Sleep if insufficient time has passed since the last request to this API.
+    Calculated based on the provider RPM.
+    Supports either a dict representing an API slot or individual parameters.
     """
     if isinstance(api_id, dict):
         provider = api_id.get("provider", provider)
@@ -67,7 +67,7 @@ def wait_if_needed(api_id: int | str | dict, provider: str = None, api_type: str
         api_id = api_id.get("id", 0)
 
     rpm = DEFAULT_RPM.get(provider, 30)
-    min_interval = 60.0 / rpm          # ثانیه بین هر درخواست
+    min_interval = 60.0 / rpm          # Seconds between requests
 
     data    = _load()
     key     = _make_key(api_id, provider, api_type)
@@ -80,13 +80,13 @@ def wait_if_needed(api_id: int | str | dict, provider: str = None, api_type: str
     if wait_for > 0:
         time.sleep(wait_for)
 
-    # ثبت زمان این درخواست
+    # Record timestamp of this request
     data[key] = time.time()
     _save(data)
 
 
 def mark_request_sent(api_id: int | str | dict, provider: str = None, api_type: str = None):
-    """زمان آخرین درخواست را ثبت می‌کند (بدون صبر کردن)."""
+    """Record the timestamp of the last request without sleeping."""
     if isinstance(api_id, dict):
         provider = api_id.get("provider", provider)
         api_type = api_id.get("type", api_type)

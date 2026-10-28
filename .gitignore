@@ -1,33 +1,33 @@
-# فایل‌های پایتون و کش
+# Python and cache files
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# فایل‌های لاگ و دیتابیس (اگر دیتابیس محلی دارید)
+# Log and database files (local databases)
 *.log
 logs/
 *.db
 *.sqlite3
 
-# فایل‌های موقت و سیستم‌عامل
+# Temporary and OS files
 temp_files/
 worker.lock
 .DS_Store
 Thumbs.db
 
-# فایل‌های حساس و شخصی
+# Sensitive and private files
 .env
 rate_limits.json
 
-# فایل‌های پروژه که نباید در گیت باشند
+# Local workspace artifacts and output files
 pdf_bot.zip
 project_snapshot.txt
 cropped_charts/
 output_files/
 my_notes/
 
-# دایرکتوری tmp
+# Temporary directory
 tmp/
 
 # Standalone binary runtimes and dependencies (TICK-001)
