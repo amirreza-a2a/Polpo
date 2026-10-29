@@ -73,27 +73,35 @@ jobs:
 
       - name: Run quality gates (pull request)
         if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           python scripts/run_quality_gates.py \
             --mode=commit-range \
-            --base ${{ github.event.pull_request.base.sha }} \
-            --head ${{ github.event.pull_request.head.sha }}
+            --base "${BASE_SHA}" \
+            --head "${HEAD_SHA}"
 
       - name: Run quality gates (push)
         if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+        env:
+          BASE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.event.after }}
         run: |
           python scripts/run_quality_gates.py \
             --mode=commit-range \
-            --base ${{ github.event.before }} \
-            --head ${{ github.event.after }}
+            --base "${BASE_SHA}" \
+            --head "${HEAD_SHA}"
 
       - name: Run quality gates (push zero-SHA fallback)
         if: github.event_name == 'push' && github.event.before == '0000000000000000000000000000000000000000'
+        env:
+          HEAD_SHA: ${{ github.event.after }}
         run: |
           python scripts/run_quality_gates.py \
             --mode=commit-range \
-            --base ${{ github.event.after }}~1 \
-            --head ${{ github.event.after }}
+            --base "${HEAD_SHA}~1" \
+            --head "${HEAD_SHA}"
 
   test-linux:
     name: test-linux
