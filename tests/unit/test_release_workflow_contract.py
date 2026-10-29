@@ -8,6 +8,8 @@ import shutil
 import subprocess
 import unittest
 
+from tests.unit.workflow_expression_scanner import find_unsafe_run_interpolations
+
 
 class TestReleaseWorkflowContract(unittest.TestCase):
     """Rigorous contract and security assertions for .github/workflows/release.yml."""
@@ -69,23 +71,7 @@ class TestReleaseWorkflowContract(unittest.TestCase):
         All dynamically evaluated context values (e.g. github.ref, inputs, runner.temp) must be passed
         via step-level 'env:' variables and referenced via quoted shell variables to eliminate script-injection risks.
         """
-        lines = self.content.splitlines()
-        in_run = False
-        run_indent = 0
-        violations = []
-        for i, line in enumerate(lines, 1):
-            run_match = re.match(r"^(\s*)run:\s*(\|)?", line)
-            if run_match:
-                in_run = True
-                run_indent = len(run_match.group(1))
-                continue
-            if in_run:
-                current_indent = len(line) - len(line.lstrip())
-                if line.strip() and current_indent <= run_indent:
-                    in_run = False
-                elif "${{" in line:
-                    violations.append(f"Line {i}: {line.strip()}")
-
+        violations = find_unsafe_run_interpolations(self.content)
         self.assertEqual(
             violations,
             [],

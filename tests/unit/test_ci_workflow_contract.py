@@ -9,6 +9,8 @@ import shutil
 import subprocess
 import unittest
 
+from tests.unit.workflow_expression_scanner import find_unsafe_run_interpolations
+
 
 class TestCIWorkflowContract(unittest.TestCase):
     """Rigorous contract and security assertions for CI workflows and quality gates."""
@@ -194,23 +196,7 @@ class TestCIWorkflowContract(unittest.TestCase):
         via step-level 'env:' variables and referenced via quoted shell variables to eliminate script-injection risks.
         """
         for name, content in self.all_workflows.items():
-            lines = content.splitlines()
-            in_run = False
-            run_indent = 0
-            violations = []
-            for i, line in enumerate(lines, 1):
-                run_match = re.match(r"^(\s*)run:\s*(\|)?", line)
-                if run_match:
-                    in_run = True
-                    run_indent = len(run_match.group(1))
-                    continue
-                if in_run:
-                    current_indent = len(line) - len(line.lstrip())
-                    if line.strip() and current_indent <= run_indent:
-                        in_run = False
-                    elif "${{" in line:
-                        violations.append(f"Line {i}: {line.strip()}")
-
+            violations = find_unsafe_run_interpolations(content)
             with self.subTest(workflow=name):
                 self.assertEqual(
                     violations,
@@ -274,6 +260,149 @@ class TestCIWorkflowContract(unittest.TestCase):
         self.assertNotIn("contents: write", pre_publish)
         self.assertNotIn("id-token: write", pre_publish)
         self.assertNotIn("attestations: write", pre_publish)
+
+
+
+class TestWorkflowExpressionScanner(unittest.TestCase):
+    """Regression and contract tests for find_unsafe_run_interpolations helper."""
+
+    def test_detects_unsafe_inline_run_scalars(self):
+        """Unsafe ${{ ... }} expressions must be detected on inline run: scalar commands."""
+        test_cases = [
+            ("double_quoted", '      - run: echo "${{ github.event.issue.title }}"'),
+            ("single_quoted", "      - run: echo '${{ github.actor }}'"),
+            ("unquoted_bare", "      - run: echo ${{ github.sha }}"),
+            ("expression_only", "      - run: ${{ github.action }}"),
+            ("python_inline", '      - run: python -c "print(\'${{ github.ref }}\')"'),
+            ("without_leading_dash", '        run: echo "${{ github.sha }}"'),
+            ("with_trailing_comment", '      - run: echo "hello" # ${{ github.sha }}'),
+        ]
+
+        for name, line in test_cases:
+            content = f"jobs:\n  test:\n    steps:\n{line}\n"
+            violations = find_unsafe_run_interpolations(content)
+            with self.subTest(case=name):
+                self.assertEqual(len(violations), 1, f"Expected 1 violation for {name}, got {violations}")
+                self.assertIn("${{", violations[0])
+
+    def test_detects_unsafe_multiline_script_expressions(self):
+        """Unsafe ${{ ... }} expressions must be detected across all supported YAML block scalar styles."""
+        test_cases = [
+            ("literal_pipe", "        run: |\n          echo \"${{ github.sha }}\""),
+            ("literal_strip", "        run: |-\n          echo \"${{ github.sha }}\""),
+            ("literal_keep", "        run: |+\n          echo \"${{ github.sha }}\""),
+            ("folded", "        run: >\n          echo \"${{ github.sha }}\""),
+            ("folded_strip", "        run: >-\n          echo \"${{ github.sha }}\""),
+            ("folded_keep", "        run: >+\n          echo \"${{ github.sha }}\""),
+            ("explicit_indent", "        run: |2\n          echo \"${{ github.sha }}\""),
+            ("bare_multiline", "        run:\n          echo \"${{ github.sha }}\""),
+            ("with_header_comment", "        run: | # execute test\n          echo \"${{ github.sha }}\""),
+            ("hyphen_literal_pipe", "      - run: |\n          echo \"${{ github.sha }}\""),
+        ]
+
+        for name, snippet in test_cases:
+            content = f"jobs:\n  test:\n    steps:\n{snippet}\n"
+            violations = find_unsafe_run_interpolations(content)
+            with self.subTest(case=name):
+                self.assertEqual(len(violations), 1, f"Expected 1 violation for {name}, got {violations}")
+                self.assertIn("${{", violations[0])
+
+    def test_allows_safe_step_level_env_variables(self):
+        """Expressions placed in step-level env: variables must be permitted without false positives."""
+        safe_workflow = """
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Safe multiline step
+        env:
+          TAG: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          echo "Building for tag: $TAG"
+          echo "Commit: $COMMIT_SHA"
+      - name: Safe inline step
+        env:
+          ACTOR: ${{ github.actor }}
+        run: echo "Triggered by $ACTOR"
+"""
+        violations = find_unsafe_run_interpolations(safe_workflow)
+        self.assertEqual(violations, [], f"Expected zero violations, got: {violations}")
+
+    def test_allows_unrelated_expressions_in_non_script_fields(self):
+        """Unrelated expressions in if:, with:, name:, runs-on:, and matrix fields must not be flagged."""
+        safe_workflow = """
+name: CI-${{ github.workflow }}
+on:
+  push:
+    branches:
+      - ${{ github.event.repository.default_branch }}
+jobs:
+  matrix-job:
+    if: ${{ github.actor != 'dependabot[bot]' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+    steps:
+      - name: Checkout step ${{ matrix.os }}
+        id: checkout
+        if: ${{ success() }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run safe script
+        run: echo "Static script"
+"""
+        violations = find_unsafe_run_interpolations(safe_workflow)
+        self.assertEqual(violations, [], f"Expected zero violations, got: {violations}")
+
+    def test_multiline_script_preserves_blank_lines_and_detects_violations(self):
+        """Blank lines inside multiline script bodies must not terminate scanning prematurely."""
+        workflow_with_blank_lines = """
+jobs:
+  test:
+    steps:
+      - name: Step with blank lines and comments
+        run: |
+          echo "Start"
+
+          # Middle comment
+          echo "${{ github.event.issue.title }}"
+
+          echo "End"
+        env:
+          KEY: ${{ github.ref }}
+"""
+        violations = find_unsafe_run_interpolations(workflow_with_blank_lines)
+        self.assertEqual(len(violations), 1, f"Expected exactly 1 violation, got: {violations}")
+        self.assertIn("github.event.issue.title", violations[0])
+        # Ensure the sibling env: variable was not treated as a violation
+        for v in violations:
+            self.assertNotIn("KEY:", v)
+
+    def test_consecutive_run_steps_and_indentation_transitions(self):
+        """Transitions between multiline and inline run steps must be tracked cleanly."""
+        workflow = """
+jobs:
+  test:
+    steps:
+      - name: First step safe
+        run: |
+          echo "safe multiline"
+      - name: Second step unsafe inline
+        run: echo "${{ github.sha }}"
+      - name: Third step safe
+        run: echo "all good"
+      - name: Fourth step unsafe multiline
+        run: |
+          echo "${{ github.ref }}"
+"""
+        violations = find_unsafe_run_interpolations(workflow)
+        self.assertEqual(len(violations), 2, f"Expected 2 violations, got: {violations}")
+        self.assertIn("github.sha", violations[0])
+        self.assertIn("github.ref", violations[1])
 
 
 if __name__ == "__main__":
