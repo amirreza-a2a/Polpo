@@ -168,7 +168,7 @@ class TestCIWorkflowContract(unittest.TestCase):
         self.assertIn("github.event_name == 'push'", self.ci_content)
 
     def test_runtime_cache_key_and_paths_contract(self):
-        """Verifies runtime cache key incorporates os, arch, manifest hash, and package-lock hash."""
+        """Verifies runtime cache key incorporates os, arch, manifest hash, and package-lock hash without restore-keys."""
         expected_key_pattern = r"runtimes-\$\{\{\s*runner\.os\s*\}\}-\$\{\{\s*runner\.arch\s*\}\}-\$\{\{\s*hashFiles\('resources/runtimes\.json',\s*'resources/mathjax/package-lock\.json'\)\s*\}\}"
         for name, content in self.all_workflows.items():
             if "actions/cache@" in content:
@@ -180,7 +180,79 @@ class TestCIWorkflowContract(unittest.TestCase):
                     )
                     self.assertIn("resources/bin", content)
                     self.assertIn("resources/mathjax/node", content)
+                    self.assertIn("resources/mathjax/node.exe", content)
                     self.assertIn("resources/mathjax/node_modules", content)
+                    # Runtime cache must not use loose restore-keys to prevent corrupt/partial cache reuse
+                    self.assertNotIn("restore-keys:", content)
+                    # Standalone verification must be present
+                    self.assertIn("scripts/verify_mathjax_worker.py", content)
+
+    def test_no_unsafe_context_interpolation_in_run_blocks(self):
+        """Verifies that no GitHub Actions expressions (${{ ... }}) are interpolated directly into run: script bodies across all workflows.
+
+        All dynamically evaluated context values (e.g. github.ref, inputs, commit SHAs) must be passed
+        via step-level 'env:' variables and referenced via quoted shell variables to eliminate script-injection risks.
+        """
+        for name, content in self.all_workflows.items():
+            lines = content.splitlines()
+            in_run = False
+            run_indent = 0
+            violations = []
+            for i, line in enumerate(lines, 1):
+                run_match = re.match(r"^(\s*)run:\s*(\|)?", line)
+                if run_match:
+                    in_run = True
+                    run_indent = len(run_match.group(1))
+                    continue
+                if in_run:
+                    current_indent = len(line) - len(line.lstrip())
+                    if line.strip() and current_indent <= run_indent:
+                        in_run = False
+                    elif "${{" in line:
+                        violations.append(f"Line {i}: {line.strip()}")
+
+            with self.subTest(workflow=name):
+                self.assertEqual(
+                    violations,
+                    [],
+                    f"Found unsafe ${{ ... }} context expressions inside run: blocks in {name}:\n"
+                    + "\n".join(violations),
+                )
+
+    def test_release_restricted_actions_isolation(self):
+        """Verifies publishing actions are strictly isolated to the publish-release job in release.yml."""
+        restricted_actions = [
+            "softprops/action-gh-release",
+            "actions/attest-build-provenance",
+        ]
+        # In ci.yml and periodic-validation.yml, restricted actions must never appear
+        for name in ("ci.yml", "periodic-validation.yml"):
+            for action in restricted_actions:
+                with self.subTest(workflow=name, action=action):
+                    self.assertNotIn(action, self.all_workflows[name])
+
+        # In release.yml, restricted actions must appear ONLY in publish-release
+        job_blocks = self.release_content.split("\n  publish-release:")
+        pre_publish = job_blocks[0]
+        for action in restricted_actions:
+            with self.subTest(workflow="release.yml", action=action, section="pre-publish"):
+                self.assertNotIn(action, pre_publish)
+
+    def test_ci_and_release_matrix_consistency(self):
+        """Verifies CI/release matrices validate the supported Python versions and platform families."""
+        # pyproject.toml requires Python >= 3.10 and declares 3.10, 3.11, 3.12
+        for py_ver in ("3.10", "3.11", "3.12"):
+            found = False
+            for content in self.all_workflows.values():
+                if f"'{py_ver}'" in content or f'"{py_ver}"' in content or f" {py_ver}" in content:
+                    found = True
+                    break
+            self.assertTrue(found, f"Python version {py_ver} declared in pyproject.toml is not tested in any workflow")
+
+        # OS runners: Linux (ubuntu-24.04 and 22.04), Windows (windows-2025), macOS (macos-15)
+        for os_runner in ("ubuntu-24.04", "windows-2025", "macos-15", "ubuntu-22.04"):
+            found = any(os_runner in content for content in self.all_workflows.values())
+            self.assertTrue(found, f"Platform runner {os_runner} is not present in workflow matrices")
 
     def test_release_manual_dispatch_safety_invariant(self):
         """Verifies release workflow publish job is restricted to tag push events."""
