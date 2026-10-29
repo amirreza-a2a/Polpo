@@ -52,12 +52,12 @@ This document serves as the **single source of truth** for stabilization. Future
 | Property | Verified Value | Evidence Source |
 | :--- | :--- | :--- |
 | **Active Baseline Branch** | `main` | `git status` |
-| **HEAD Commit SHA (main)** | `94253289a129a9e70be673c49adf1b542123bb52` | `git rev-parse HEAD` |
-| **Commit Message** | `docs(quality): record completion and merge evidence for CI-01 (#154) (#155)` | `git log -1` |
+| **HEAD Commit SHA (main)** | `ab4ea4f9c5d2dfcfd2ea78051a6d713c77d612e5` | `git rev-parse HEAD` |
+| **Commit Message** | `ci(audit): eliminate unsafe expression interpolation and harden contract assertions (#157)` | `git log -1` |
 | **Remote Synchronization** | Up to date with `origin/main` | `git status -sb` |
 | **Working Tree Status** | Clean (no modified, untracked, or staged files) | `git status --porcelain` |
 | **Latest Git Tag** | `v0.1.0-rc.1` | `git tag -l` |
-| **Git Describe** | `v0.1.0-rc.1-37-g9425328` | `git describe --tags --always` |
+| **Git Describe** | `v0.1.0-rc.1-39-gab4ea4f` | `git describe --tags --always` |
 | **GitHub Releases** | Exactly 1 Pre-release: `v0.1.0-rc.1` (Zero stable releases published) | `gh release list` |
 | **Application Version** | `APP_NAME = "Polpo"`, `__version__ = "0.1.0"`, `VERSION_INFO = (0, 1, 0)` | `core/version.py:9-11`, `pyproject.toml:7` |
 
@@ -106,17 +106,17 @@ Verified on local workstation host environment under `./.venv`:
   - Headless MathJax Worker: 8/8 contract checks verified passing via `python scripts/verify_mathjax_worker.py` (MathJax 3.2.2).
 - **Quality Gates Execution:**
   - Command: `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python scripts/run_quality_gates.py --mode=working-tree`
-  - Outcome: **PASSED (exit code 0)** in 3.70s.
-  - Scope: Whitespace check clean, Python bytecode compilation across `core`, `application`, `infrastructure`, `interfaces`, `tests` clean, 79 AST architecture and workflow contract invariant tests (138 subtests) passed.
+  - Outcome: **PASSED (exit code 0)** in 3.86s.
+  - Scope: Whitespace check clean, Python bytecode compilation across `core`, `application`, `infrastructure`, `interfaces`, `tests` clean, 82 AST architecture and workflow contract invariant tests (147 subtests) passed.
 - **Independent Test Suite Executions:**
   - **Unit Tests:** `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/unit/ -q -rs`
-    - Outcome: **2091 passed, 0 skipped, 2 warnings, 175 subtests passed in 84.58s** (exit code 0).
+    - Outcome: **2094 passed, 0 skipped, 2 warnings, 184 subtests passed in 84.58s** (exit code 0).
   - **Characterization Tests:** `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/characterization/ -q -rs`
     - Outcome: **32 passed, 0 skipped in 0.44s** (exit code 0).
   - **Integration Tests:** `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/integration/ -q -rs`
     - Outcome: **77 passed, 6 skipped in 29.98s** (exit code 0, 83 collected items).
   - **Complete Test Suite:** `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/ -q -rs`
-    - Outcome: **2200 passed, 6 skipped, 2 warnings, 175 subtests passed in 108.55s** (exit code 0, 2206 total collected items).
+    - Outcome: **2203 passed, 6 skipped, 2 warnings, 184 subtests passed in 105.12s** (exit code 0, 2209 total collected items).
 - **Observed Warnings (2 ResourceWarnings):**
   - `tests/unit/test_ai_adapters.py:46`: `ResourceWarning: unclosed file <.../core/ai/types.py>`
   - `tests/unit/test_ai_adapters.py:46`: `ResourceWarning: unclosed file <.../core/ai/exceptions.py>`
@@ -589,7 +589,7 @@ flowchart TD
   pytest tests/unit/test_ci_workflow_contract.py tests/unit/test_release_workflow_contract.py -q
   ```
 - **Branch Suggestion:** `ci/quality-gate-audit`
-- **PR / CI / Merge Record:** [PR #154](https://github.com/amirreza-a2a/Polpo/pull/154) merged into `main` at `6f1c9efa6ab5d14b3b2f2de0d4225eb447aa00f2` (Implementation); [PR #155](https://github.com/amirreza-a2a/Polpo/pull/155) merged at `94253289a129a9e70be673c49adf1b542123bb52` (Roadmap Closeout). All 4 required CI status checks passed on implementation PR #154 (`quality-gates` [40s], `secret-scan` [10s], `test-linux` [2m3s], `test-windows` [3m39s]) and closeout PR #155 (`quality-gates` [49s], `secret-scan` [7s], `test-linux` [1m50s], `test-windows` [4m28s]). Full test suite: 2,200 passed, 6 skipped, 2 warnings, 175 subtests passed in 108.55s on Linux (2,206 total collected items). Added `tests/unit/test_ci_workflow_contract.py` (10 tests, 138 subtests) and wired into default quality gates.
+- **PR / CI / Merge Record:** [PR #154](https://github.com/amirreza-a2a/Polpo/pull/154) merged into `main` at `6f1c9efa6ab5d14b3b2f2de0d4225eb447aa00f2` (Implementation); [PR #155](https://github.com/amirreza-a2a/Polpo/pull/155) merged at `94253289a129a9e70be673c49adf1b542123bb52` (Roadmap Closeout); [PR #157](https://github.com/amirreza-a2a/Polpo/pull/157) merged at `ab4ea4f9c5d2dfcfd2ea78051a6d713c77d612e5` (Contract Hardening & Unsafe Expression Interpolation Fix). All 4 required CI status checks passed on implementation PR #154 (`quality-gates` [40s], `secret-scan` [10s], `test-linux` [2m3s], `test-windows` [3m39s]), closeout PR #155 (`quality-gates` [49s], `secret-scan` [7s], `test-linux` [1m50s], `test-windows` [4m28s]), and hardening PR #157 (`quality-gates` [38s], `secret-scan` [11s], `test-linux` [1m50s], `test-windows` [3m20s]). Full test suite: 2,203 passed, 6 skipped, 2 warnings, 184 subtests passed on Linux (2,209 total collected items). Hardened `tests/unit/test_ci_workflow_contract.py` (13 tests, 147 subtests) and wired into default quality gates.
 - **Notes & Risks:** Precondition residual FA-01 finding (commented-out Persian handler fragment in `tests/characterization/test_job_submission.py`) corrected in separate [PR #153](https://github.com/amirreza-a2a/Polpo/pull/153) merged at `2aca2e8e66fe87105a6891cbbb238ffbe7ebe2d0`. Zero whitespace or lint defects.
 
 ---
@@ -954,6 +954,7 @@ The following standing constraints apply to all stabilization operations:
 | **2026-10-28** | `FA-01` | Audited and corrected Persian technical comments and docstrings across 20 source files in accordance with `AGENTS.md` Rule 20; preserved Category B assets (prompt templates, legitimate regex patterns, test strings, user-facing UI messages); verified zero functional changes via 100% identical AST comparison across all 18 modified Python files; confirmed clean git diff and quality gates. | [#150](https://github.com/amirreza-a2a/Polpo/pull/150) / `22dba41`<br/>[#151](https://github.com/amirreza-a2a/Polpo/pull/151) / `8642432` | Merged cleanly into `main` after all 4 required status checks passed on both PRs (implementation PR #150: `quality-gates` [42s], `secret-scan` [9s], `test-linux` [1m55s], `test-windows` [5m3s]; closeout PR #151: `quality-gates` [38s], `secret-scan` [8s], `test-linux` [1m56s], `test-windows` [4m31s]). Full test suite: 2,190 passed, 6 skipped, 2 warnings, 37 subtests passed in 114.40s on Linux. |
 | **2026-10-29** | `FA-01-RES` | Corrected leftover commented-out legacy handler code fragment with Persian error string in `tests/characterization/test_job_submission.py` per `AGENTS.md` Rule 20 and 23. Zero functional logic or runtime string changes. | [#153](https://github.com/amirreza-a2a/Polpo/pull/153) / `2aca2e8` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [37s], `secret-scan` [9s], `test-linux` [1m42s], `test-windows` [4m8s]). Full test suite: 2,190 passed, 6 skipped on Linux. |
 | **2026-10-29** | `CI-01` | Audited GitHub Actions across `ci.yml`, `periodic-validation.yml`, and `release.yml`; migrated all actions to verified Node 24 releases pinned to 40-char SHAs; proved release publication gating and least-privilege permissions; validated runtime cache invalidation contracts; added automated CI workflow contract suite (`test_ci_workflow_contract.py`); hardened `scripts/run_quality_gates.py` default architecture tests. | [#154](https://github.com/amirreza-a2a/Polpo/pull/154) / `6f1c9ef`<br/>[#155](https://github.com/amirreza-a2a/Polpo/pull/155) / `9425328` | Merged cleanly into `main` after all 4 required status checks passed on both PRs (implementation PR #154: `quality-gates` [40s], `secret-scan` [10s], `test-linux` [2m3s], `test-windows` [3m39s]; closeout PR #155: `quality-gates` [49s], `secret-scan` [7s], `test-linux` [1m50s], `test-windows` [4m28s]). Full test suite: 2,200 passed, 6 skipped, 2 warnings, 175 subtests passed in 108.55s on Linux. |
+| **2026-10-29** | `CI-01-HARDEN` | Hardened CI workflow contracts and eliminated unsafe context expression interpolation in ci.yml run blocks; added automated tests for run block expression absence, cache strictness (node.exe, no restore-keys, verify_mathjax_worker invocation), publishing action isolation, and Python/OS matrix claims (3.10, 3.11, 3.12). | [#157](https://github.com/amirreza-a2a/Polpo/pull/157) / `ab4ea4f` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [38s], `secret-scan` [11s], `test-linux` [1m50s], `test-windows` [3m20s]). Full test suite: 2,203 passed, 6 skipped, 2 warnings, 184 subtests passed on Linux. |
 
 ---
 
