@@ -45,19 +45,20 @@ This document serves as the **single source of truth** for stabilization. Future
 *DOC-02 Historical Implementation Snapshot: 2026-10-28 14:18 UTC+03:30 (Commit `515fd05`, PR #147)*<br/>
 *DOC-02 Verified Closeout Snapshot: 2026-10-28 14:36 UTC+03:30 (Commit `d7eabb5`, PR #148)*<br/>
 *FA-01 Historical Implementation Snapshot: 2026-10-28 17:51 UTC+03:30 (Commit `22dba41`, PR #150)*<br/>
-*FA-01 Verified Closeout Snapshot: 2026-10-28 18:02 UTC+03:30 (Commit `8642432`, PR #151)*
+*FA-01 Verified Closeout Snapshot: 2026-10-28 18:02 UTC+03:30 (Commit `8642432`, PR #151)*<br/>
+*STAB-01 Verified Execution Snapshot: 2026-10-29 22:40 UTC+03:30 (Commit `bb41c82`, PR #160)*
 
 ### 2.1 Git and Working Tree State
 
 | Property | Verified Value | Evidence Source |
 | :--- | :--- | :--- |
 | **Active Baseline Branch** | `main` | `git status` |
-| **HEAD Commit SHA (main)** | `ab4ea4f9c5d2dfcfd2ea78051a6d713c77d612e5` | `git rev-parse HEAD` |
-| **Commit Message** | `ci(audit): eliminate unsafe expression interpolation and harden contract assertions (#157)` | `git log -1` |
+| **HEAD Commit SHA (main)** | `bb41c826ee34dbde9dcb748ddfd2896329faf669` | `git rev-parse HEAD` |
+| **Commit Message** | `fix(runtime): resolve cross-platform subprocess flags, self-test coverage, and concurrency stability (STAB-01) (#160)` | `git log -1` |
 | **Remote Synchronization** | Up to date with `origin/main` | `git status -sb` |
 | **Working Tree Status** | Clean (no modified, untracked, or staged files) | `git status --porcelain` |
 | **Latest Git Tag** | `v0.1.0-rc.1` | `git tag -l` |
-| **Git Describe** | `v0.1.0-rc.1-39-gab4ea4f` | `git describe --tags --always` |
+| **Git Describe** | `v0.1.0-rc.1-42-gbb41c82` | `git describe --tags --always` |
 | **GitHub Releases** | Exactly 1 Pre-release: `v0.1.0-rc.1` (Zero stable releases published) | `gh release list` |
 | **Application Version** | `APP_NAME = "Polpo"`, `__version__ = "0.1.0"`, `VERSION_INFO = (0, 1, 0)` | `core/version.py:9-11`, `pyproject.toml:7` |
 
@@ -79,16 +80,16 @@ The `main` branch is protected by GitHub Classic Branch Protection (`docs/ci-rep
 
 ### 2.3 Continuous Integration Verification Status
 
-Verified from GitHub Actions run `39598309337` (triggered on push to `main` at commit `55fd3d5`):
+Verified from GitHub Actions run `40937604597` (triggered on push to `main` at commit `bb41c82`):
 
 | Check / Job Name | Runner Environment | Outcome | Duration | Notes / Evidence |
 | :--- | :--- | :--- | :--- | :--- |
-| `quality-gates` | `ubuntu-24.04` (Python 3.12) | **PASSED** | 37s | Whitespace check, bytecode compilation across 5 packages, 48 AST architecture invariant tests. |
-| `secret-scan` | `ubuntu-24.04` | **PASSED** | 11s | Gitleaks Action (`v3.0.0`, SHA `e0c47f4f...`), 0 leaks detected. |
-| `test-linux` | `ubuntu-24.04` (Python 3.12, offscreen Qt) | **PASSED** | 1m 43s | **2050 passed, 13 skipped, 2 warnings in 60.07s** (2063 total collected). |
-| `test-windows` | `windows-2025` (Python 3.12, offscreen Qt) | **PASSED** | 5m 14s | **2013 passed, 50 skipped, 2 warnings in 198.63s** (2063 total collected). |
+| `quality-gates` | `ubuntu-24.04` (Python 3.12) | **PASSED** | 39s | Whitespace check, bytecode compilation across 5 packages, 88 AST architecture and contract invariant tests (164 subtests). |
+| `secret-scan` | `ubuntu-24.04` | **PASSED** | 7s | Gitleaks Action (`v3.0.0`, SHA `e0c47f4f...`), 0 leaks detected. |
+| `test-linux` | `ubuntu-24.04` (Python 3.12, offscreen Qt) | **PASSED** | 2m 1s | Full test suite passed (2212 passed, 6 skipped, 2 warnings, 201 subtests passed in 123.55s). |
+| `test-windows` | `windows-2025` (Python 3.12, offscreen Qt) | **PASSED** | 3m 29s | Full test suite passed with Windows Job Object and CREATE_NO_WINDOW verifications. |
 
-*(Historical reference: Previous run `39494645119` on commit `9b8c54e` also passed all 4 checks: quality-gates 56s, secret-scan 9s, test-linux 1m 51s, test-windows 3m 50s).*
+*(Historical reference: PR #160 run `40936638653` also passed all 4 checks: quality-gates 43s, secret-scan 11s, test-linux 1m 38s, test-windows 4m 20s).*
 
 *Known CI Annotations:* Resolved in CI-01 (PR #154). All workflow actions migrated to official Node 24 releases (`actions/setup-node@v7.1.0`, `actions/cache@v6.1.0`, `actions/upload-artifact@v7.0.2`, `actions/download-artifact@v8.0.2`, `actions/attest-build-provenance@v4.2.2`, `softprops/action-gh-release@v3.0.3`), eliminating Node 20 deprecation notices across all workflows.
 
@@ -594,12 +595,12 @@ flowchart TD
 
 ---
 
-### [ ] STAB-01 — Review Cross-Platform and Runtime Reliability
+### [x] STAB-01 — Review Cross-Platform and Runtime Reliability
 
 - **ID:** `STAB-01`
 - **Title:** Cross-Platform and Runtime Reliability Audit (Linux & Windows)
 - **Priority:** P2 (Medium)
-- **Status:** `NOT_STARTED`
+- **Status:** `COMPLETED`
 - **Dependencies:** `P2-01`, `P2-02`, `THEME-01`, `CI-01`
 - **Scope:**
   - Audit Windows vs Linux behavior: path separators (`pathlib.Path` usage), subprocess window suppression (`CREATE_NO_WINDOW`), file locking semantics, and non-blocking process termination.
@@ -609,7 +610,11 @@ flowchart TD
   - Review headless self-test: verify `interfaces/desktop/self_test.py` covers all critical subsystems.
 - **Non-Goals:** Large speculative refactorings.
 - **Evidence & File Paths:**
-  - `interfaces/desktop/self_test.py`
+  - `infrastructure/markdown/pandoc_binary.py:230,274` (`CREATE_NO_WINDOW` flags on Windows)
+  - `interfaces/desktop/self_test.py:42,327,337,369,438` (005 migration, UnitOfWork, canary credential isolation, artifact roundtrip, main entry point)
+  - `tests/unit/test_desktop_runtime_concurrency.py:140,181` (10s wait timeout, post-shutdown state verification)
+  - `tests/unit/test_pandoc_binary.py:458` (regression test for Windows subprocess flags)
+  - `tests/unit/test_desktop_self_test.py:100,118,135` (self-test assertions, direct module execution, migration coverage)
   - `infrastructure/math/mathjax_supervisor.py`
   - `infrastructure/math/circuit_breaker.py`
   - `infrastructure/persistence/sqlite/`
@@ -617,10 +622,10 @@ flowchart TD
 - **Recommended Skill Sequence:**
   `improve-codebase-architecture → triage → diagnosing-bugs → to-tickets → tdd → implement → code-review → runtime verification`
 - **Acceptance Criteria:**
-  1. Identified cross-platform risks are classified by severity and evidence.
-  2. Confirmed bugs have reproducible regression tests and narrow fixes.
-  3. Windows and Linux test suites continue to pass in CI without new skips.
-  4. No credential leaks are detected by Gitleaks or unit tests.
+  1. Identified cross-platform risks are classified by severity and evidence. [Verified — 8 findings classified and audited; Windows subprocess flash, self-test missing entry point/migration, and concurrency race diagnosed and resolved]
+  2. Confirmed bugs have reproducible regression tests and narrow fixes. [Verified — CREATE_NO_WINDOW tested in test_pandoc_binary.py; self_test entry point, migration list, UnitOfWork, canary credential isolation, and artifact roundtrip tested in test_desktop_self_test.py; concurrency race hardened in test_desktop_runtime_concurrency.py]
+  3. Windows and Linux test suites continue to pass in CI without new skips. [Verified — PR #160 passed all 4 checks: test-linux (1m38s), test-windows (4m20s); push CI run 40937604597 passed: test-linux (2m1s), test-windows (3m29s)]
+  4. No credential leaks are detected by Gitleaks or unit tests. [Verified — Gitleaks 0 leaks in 7s; test_architecture_security.py and self-test synthetic canary checks passed]
 - **Verification Commands:**
   ```bash
   ./.venv/bin/pytest tests/unit/test_architecture_security.py -v
@@ -628,7 +633,7 @@ flowchart TD
   ./.venv/bin/python -m interfaces.desktop.self_test
   ```
 - **Branch Suggestion:** `fix/cross-platform-reliability`
-- **PR / CI / Merge Record:** Unstarted
+- **PR / CI / Merge Record:** [PR #160](https://github.com/amirreza-a2a/Polpo/pull/160) merged into `main` at `bb41c826ee34dbde9dcb748ddfd2896329faf669`. All 4 required CI status checks passed on PR #160: `quality-gates` (43s), `secret-scan` (11s), `test-linux` (1m38s), `test-windows` (4m20s). Push CI run 40937604597 passed: `quality-gates` (39s), `secret-scan` (7s), `test-linux` (2m1s), `test-windows` (3m29s). Full test suite: 2,212 passed, 6 skipped, 2 warnings, 201 subtests passed on Linux. 28 self-test and 28 pandoc tests verified.
 - **Notes & Risks:** `AGENTS.md` Rule 28 (Cross-Platform Desktop Requirements).
 
 ---
@@ -955,6 +960,8 @@ The following standing constraints apply to all stabilization operations:
 | **2026-10-29** | `FA-01-RES` | Corrected leftover commented-out legacy handler code fragment with Persian error string in `tests/characterization/test_job_submission.py` per `AGENTS.md` Rule 20 and 23. Zero functional logic or runtime string changes. | [#153](https://github.com/amirreza-a2a/Polpo/pull/153) / `2aca2e8` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [37s], `secret-scan` [9s], `test-linux` [1m42s], `test-windows` [4m8s]). Full test suite: 2,190 passed, 6 skipped on Linux. |
 | **2026-10-29** | `CI-01` | Audited GitHub Actions across `ci.yml`, `periodic-validation.yml`, and `release.yml`; migrated all actions to verified Node 24 releases pinned to 40-char SHAs; proved release publication gating and least-privilege permissions; validated runtime cache invalidation contracts; added automated CI workflow contract suite (`test_ci_workflow_contract.py`); hardened `scripts/run_quality_gates.py` default architecture tests. | [#154](https://github.com/amirreza-a2a/Polpo/pull/154) / `6f1c9ef`<br/>[#155](https://github.com/amirreza-a2a/Polpo/pull/155) / `9425328` | Merged cleanly into `main` after all 4 required status checks passed on both PRs (implementation PR #154: `quality-gates` [40s], `secret-scan` [10s], `test-linux` [2m3s], `test-windows` [3m39s]; closeout PR #155: `quality-gates` [49s], `secret-scan` [7s], `test-linux` [1m50s], `test-windows` [4m28s]). Full test suite: 2,200 passed, 6 skipped, 2 warnings, 175 subtests passed in 108.55s on Linux. |
 | **2026-10-29** | `CI-01-HARDEN` | Hardened CI workflow contracts and eliminated unsafe context expression interpolation in ci.yml run blocks; added automated tests for run block expression absence, cache strictness (node.exe, no restore-keys, verify_mathjax_worker invocation), publishing action isolation, and Python/OS matrix claims (3.10, 3.11, 3.12). | [#157](https://github.com/amirreza-a2a/Polpo/pull/157) / `ab4ea4f` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [38s], `secret-scan` [11s], `test-linux` [1m50s], `test-windows` [3m20s]). Full test suite: 2,203 passed, 6 skipped, 2 warnings, 184 subtests passed on Linux. |
+| **2026-10-29** | `CI-SCAN-COV` | Hardened workflow expression scanner to detect inline `run:` interpolations; added standalone scanner module (`tests/unit/workflow_expression_scanner.py`) and 6 contract unit tests. | [#159](https://github.com/amirreza-a2a/Polpo/pull/159) / `4dc3ccb` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [34s], `secret-scan` [11s], `test-linux` [1m55s], `test-windows` [9m59s]). Full test suite passed. |
+| **2026-10-29** | `STAB-01` | Audited cross-platform runtime reliability; added CREATE_NO_WINDOW on Windows in Pandoc extensions inspection and active probe; added `005_pipeline2_source_version.sql`, UnitOfWork access, canary credential isolation without SQLite leakage, artifact storage roundtripping, and direct execution entry point to `interfaces/desktop/self_test.py`; hardened `test_desktop_runtime_concurrency.py` with 10s wait loop and post-shutdown re-query eliminating Windows CI timing flakes; added regression tests across `test_pandoc_binary.py` and `test_desktop_self_test.py`. | [#160](https://github.com/amirreza-a2a/Polpo/pull/160) / `bb41c82` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [43s], `secret-scan` [11s], `test-linux` [1m38s], `test-windows` [4m20s]). Push CI run 40937604597 passed: `quality-gates` (39s), `secret-scan` (7s), `test-linux` (2m1s), `test-windows` (3m29s). Full test suite: 2,212 passed, 6 skipped, 2 warnings, 201 subtests passed in 123.55s. |
 
 ---
 
@@ -964,7 +971,7 @@ When starting or continuing work on this stabilization roadmap:
 
 1. **Do not create an ad-hoc plan.** Read this roadmap (`docs/quality/stabilization-roadmap.md`).
 2. **Check Git state:** Confirm branch is `main`, `git status` is clean, and local is synced with `origin/main`.
-3. **Select one target task:** Choose the next uncompleted task in dependency order (`STAB-01: Review Cross-Platform and Runtime Reliability` is the next sequential task).
+3. **Select one target task:** Choose the next uncompleted task in dependency order (`STAB-02: Milestone Verification and Retrospective` is the next sequential task).
 4. **Follow Section 6 (`/boost` Automation Contract):**
    - Create a dedicated branch.
    - Execute the recommended skill sequence.
