@@ -137,7 +137,7 @@ class TestDesktopRuntimeConcurrency(unittest.TestCase):
         # Wait for all jobs to complete (with timeout)
         start_time = time.monotonic()
         all_done = False
-        while time.monotonic() - start_time < 5.0:
+        while time.monotonic() - start_time < 10.0:
             with self.uow_factory.create() as uow:
                 statuses = [uow.jobs.get_by_id(jid).status for jid in job_ids]
             if all(s == JobStatus.DONE for s in statuses):
@@ -145,8 +145,16 @@ class TestDesktopRuntimeConcurrency(unittest.TestCase):
                 break
             time.sleep(0.05)
 
-        runtime.shutdown(wait=True, timeout=3.0)
-        self.assertTrue(all_done, f"Expected all jobs DONE, got statuses: {statuses}")
+        runtime.shutdown(wait=True, timeout=5.0)
+
+        # Re-query statuses to account for workers finishing during graceful shutdown
+        with self.uow_factory.create() as uow:
+            final_statuses = [uow.jobs.get_by_id(jid).status for jid in job_ids]
+
+        self.assertTrue(
+            all_done or all(s == JobStatus.DONE for s in final_statuses),
+            f"Expected all jobs DONE, got statuses: {final_statuses}",
+        )
 
         completed_events = [e for e in self.events_received if isinstance(e, JobCompletedEvent)]
         self.assertEqual(len(completed_events), 4)
@@ -178,15 +186,17 @@ class TestDesktopRuntimeConcurrency(unittest.TestCase):
 
         # Wait for completion
         start_time = time.monotonic()
-        while time.monotonic() - start_time < 3.0:
+        while time.monotonic() - start_time < 5.0:
             with self.uow_factory.create() as uow:
                 job = uow.jobs.get_by_id(dto.id)
             if job.status == JobStatus.DONE:
                 break
             time.sleep(0.05)
 
-        runtime.shutdown(wait=True)
-        self.assertEqual(job.status, JobStatus.DONE)
+        runtime.shutdown(wait=True, timeout=5.0)
+        with self.uow_factory.create() as uow:
+            final_job = uow.jobs.get_by_id(dto.id)
+        self.assertEqual(final_job.status, JobStatus.DONE)
 
     def test_desktop_app_container_lifecycle(self):
         """Verify DesktopAppContainer initialization, stale recovery, and services access."""

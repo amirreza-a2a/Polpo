@@ -97,6 +97,9 @@ def test_self_test_in_process(capsys):
     assert "MathJax vector SVG render execution" in captured.out
     assert "Default prompt seeding bootstrap" in captured.out
     assert "LaTeX preamble template staging" in captured.out
+    assert "UnitOfWork repository access" in captured.out
+    assert "Credential isolation and resolution" in captured.out
+    assert "Artifact storage roundtrip" in captured.out
     assert "Self-test PASSED" in captured.out
 
 
@@ -113,6 +116,36 @@ def test_self_test_subprocess():
     )
     assert result.returncode == 0
     assert "Self-test PASSED" in result.stdout
+
+
+def test_self_test_direct_module_execution_subprocess():
+    """Direct subprocess invocation of interfaces.desktop.self_test module exits 0 and passes diagnostics."""
+    env = os.environ.copy()
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    result = subprocess.run(
+        [sys.executable, "-m", "interfaces.desktop.self_test"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env=env,
+    )
+    assert result.returncode == 0
+    assert "Polpo Desktop Diagnostic Self-Test" in result.stdout
+    assert "UnitOfWork repository access" in result.stdout
+    assert "Credential isolation and resolution" in result.stdout
+    assert "Artifact storage roundtrip" in result.stdout
+    assert "Self-test PASSED" in result.stdout
+
+
+def test_self_test_required_migrations_covers_all_sql_files():
+    """REQUIRED_MIGRATIONS must contain 005_pipeline2_source_version.sql and match migrations directory."""
+    from interfaces.desktop.self_test import REQUIRED_MIGRATIONS
+    from infrastructure.paths import get_runtime_resource_path
+
+    assert "005_pipeline2_source_version.sql" in REQUIRED_MIGRATIONS
+    migrations_dir = get_runtime_resource_path("infrastructure/persistence/sqlite/migrations")
+    disk_migrations = sorted(f.name for f in migrations_dir.glob("*.sql"))
+    assert sorted(REQUIRED_MIGRATIONS) == disk_migrations
 
 
 def test_self_test_failure_on_missing_critical_asset():
