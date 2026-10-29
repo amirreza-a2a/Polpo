@@ -454,3 +454,26 @@ def _find_system_pandoc() -> Path | None:
     import shutil
     found = shutil.which("pandoc")
     return Path(found) if found else None
+
+
+def test_pandoc_binary_verify_extensions_and_probe_pass_create_no_window_on_windows(tmp_path: Path):
+    """Pandoc extension inspection and probe pass CREATE_NO_WINDOW when running on Windows."""
+    test_binary = _create_mock_binary(tmp_path / "pandoc")
+    resolver = PandocBinaryResolver()
+
+    captured_kwargs: list[dict[str, Any]] = []
+
+    def mock_run(cmd, *args, **kwargs):
+        captured_kwargs.append(dict(kwargs))
+        if "--list-extensions=commonmark_x" in cmd:
+            return MagicMock(returncode=0, stdout=SAMPLE_VALID_EXTENSIONS_OUTPUT, stderr="")
+        elif "-f" in cmd and "commonmark_x+sourcepos" in cmd:
+            return MagicMock(returncode=0, stdout=SAMPLE_VALID_PROBE_JSON, stderr="")
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    with patch("sys.platform", "win32"), patch("subprocess.run", side_effect=mock_run):
+        resolver.validate_binary(test_binary)
+
+    assert len(captured_kwargs) == 2
+    for kw in captured_kwargs:
+        assert kw.get("creationflags") == getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)

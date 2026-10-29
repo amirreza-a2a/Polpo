@@ -227,6 +227,11 @@ class PandocBinaryResolver:
 
     def _verify_extensions(self, path: Path, timeout: float = 5.0) -> None:
         """Inspect commonmark_x extension support using --list-extensions=commonmark_x."""
+        kwargs: dict[str, Any] = {}
+        if sys.platform == "win32":
+            # Suppress console window flash when spawned from desktop GUI on Windows
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
         try:
             proc = subprocess.run(
                 [str(path), "--list-extensions=commonmark_x"],
@@ -236,6 +241,7 @@ class PandocBinaryResolver:
                 errors="replace",
                 timeout=timeout,
                 check=False,
+                **kwargs,
             )
         except (OSError, subprocess.SubprocessError) as err:
             raise PandocIncompatibleError(
@@ -265,6 +271,11 @@ class PandocBinaryResolver:
         timeout: float = 5.0,
     ) -> dict[str, Any]:
         """Execute active capability probe verifying commonmark_x+sourcepos and data-pos emission."""
+        kwargs: dict[str, Any] = {}
+        if sys.platform == "win32":
+            # Suppress console window flash when spawned from desktop GUI on Windows
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
         try:
             proc = subprocess.run(
                 [str(path), "-f", "commonmark_x+sourcepos", "-t", "json"],
@@ -275,6 +286,7 @@ class PandocBinaryResolver:
                 errors="replace",
                 timeout=timeout,
                 check=False,
+                **kwargs,
             )
         except (OSError, subprocess.SubprocessError) as err:
             raise PandocIncompatibleError(

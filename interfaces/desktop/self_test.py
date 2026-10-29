@@ -39,6 +39,7 @@ REQUIRED_MIGRATIONS = [
     "002_visual_regions.sql",
     "003_artifact_version_watermarks.sql",
     "004_publish_intents_and_document_versions.sql",
+    "005_pipeline2_source_version.sql",
 ]
 
 
@@ -270,6 +271,8 @@ def run_self_test(output: TextIO | None = None) -> int:
     try:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)
+            from core.entities.artifact import ArtifactType
+            from core.entities.credential_ref import CredentialRef
             from interfaces.desktop.composition import DesktopAppContainer
             from infrastructure.pdf.staging_workspace import StagingWorkspaceManager
 
@@ -284,6 +287,7 @@ def run_self_test(output: TextIO | None = None) -> int:
                 db_path=tmp_root / "selftest_smoke.db",
                 artifacts_dir=tmp_root / "artifacts",
                 vault_path=tmp_root / "vault.enc",
+                passphrase="SelfTestCanaryPassphrase123!",
                 scheduler_tick_interval=100.0,
             )
             try:
@@ -324,6 +328,57 @@ def run_self_test(output: TextIO | None = None) -> int:
                         diag.pass_check("Default prompt seeding bootstrap", f"All {prompt_count} curated prompt templates seeded")
                 finally:
                     conn.close()
+
+                # Verify UnitOfWork repository access and default settings
+                with container.uow_factory.create() as uow:
+                    settings = uow.settings.get()
+                    if settings is None:
+                        diag.fail_check("UnitOfWork repository access", "Default AppSettings not found via UnitOfWork")
+                    else:
+                        diag.pass_check(
+                            "UnitOfWork repository access",
+                            f"AppSettings resolved (max_concurrent_jobs={settings.max_concurrent_jobs})",
+                        )
+
+                # Verify synthetic canary credential isolation and resolution
+                canary_key = "selftest_secret_token_abcdef123456"
+                canary_ref_id = "selftest_canary_slot"
+                container.encrypted_store.store_secret(canary_ref_id, canary_key)
+                resolved_key = container.credential_resolver.resolve_api_key(
+                    CredentialRef(canary_ref_id, "test_provider", "encrypted_store")
+                )
+                if resolved_key != canary_key:
+                    diag.fail_check("Credential isolation and resolution", "Resolved canary key did not match stored key")
+                else:
+                    # Verify no raw secrets leaked into SQLite database
+                    leak_conn = container.db_manager.create_connection()
+                    try:
+                        leak_cur = leak_conn.cursor()
+                        leak_cur.execute("SELECT * FROM api_slots;")
+                        slots_dump = str(leak_cur.fetchall())
+                        if canary_key in slots_dump:
+                            diag.fail_check("Credential isolation and resolution", "Raw canary secret leaked into api_slots table")
+                        else:
+                            diag.pass_check(
+                                "Credential isolation and resolution",
+                                "Synthetic canary stored and resolved cleanly without database leakage",
+                            )
+                    finally:
+                        leak_conn.close()
+
+                # Verify local artifact storage roundtrip
+                artifact_probe_payload = b"# Polpo Self-Test Artifact Storage Probe\n"
+                handle = container.storage.store(
+                    job_id=99999,
+                    artifact_type=ArtifactType.OUTPUT_MARKDOWN,
+                    filename="selftest_probe.md",
+                    data=artifact_probe_payload,
+                )
+                retrieved_payload = container.storage.retrieve(handle)
+                if retrieved_payload != artifact_probe_payload:
+                    diag.fail_check("Artifact storage roundtrip", "Retrieved payload does not match stored bytes")
+                else:
+                    diag.pass_check("Artifact storage roundtrip", f"{len(retrieved_payload)} bytes stored and retrieved cleanly")
             finally:
                 container.shutdown()
     except Exception as exc:
@@ -379,3 +434,7 @@ def run_self_test(output: TextIO | None = None) -> int:
     diag.log("Self-test PASSED: All required runtime and packaging invariants verified.")
     diag.log("=" * 64)
     return 0
+
+
+if __name__ == "__main__":
+    sys.exit(run_self_test())
