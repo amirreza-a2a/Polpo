@@ -90,7 +90,7 @@ Verified from GitHub Actions run `39598309337` (triggered on push to `main` at c
 
 *(Historical reference: Previous run `39494645119` on commit `9b8c54e` also passed all 4 checks: quality-gates 56s, secret-scan 9s, test-linux 1m 51s, test-windows 3m 50s).*
 
-*Known CI Annotations:* GitHub Actions emitted deprecation notices for Node.js 20 targeting in `actions/cache@v4.2.2` and `actions/setup-node@v4.2.0`, currently forced to run on Node.js 24 on runners.
+*Known CI Annotations:* Resolved in CI-01 (PR #154). All workflow actions migrated to official Node 24 releases (`actions/setup-node@v7.1.0`, `actions/cache@v6.1.0`, `actions/upload-artifact@v7.0.2`, `actions/download-artifact@v8.0.2`, `actions/attest-build-provenance@v4.2.2`, `softprops/action-gh-release@v3.0.3`), eliminating Node 20 deprecation notices across all workflows.
 
 ### 2.4 Local Verification Environment (Linux Tier-1 Reference Host)
 
@@ -106,17 +106,17 @@ Verified on local workstation host environment under `./.venv`:
   - Headless MathJax Worker: 8/8 contract checks verified passing via `python scripts/verify_mathjax_worker.py` (MathJax 3.2.2).
 - **Quality Gates Execution:**
   - Command: `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python scripts/run_quality_gates.py --mode=working-tree`
-  - Outcome: **PASSED (exit code 0)** in 3.63s.
-  - Scope: Whitespace check clean, Python bytecode compilation across `core`, `application`, `infrastructure`, `interfaces`, `tests` clean, 55 AST architecture invariant tests passed.
+  - Outcome: **PASSED (exit code 0)** in 3.70s.
+  - Scope: Whitespace check clean, Python bytecode compilation across `core`, `application`, `infrastructure`, `interfaces`, `tests` clean, 79 AST architecture and workflow contract invariant tests (138 subtests) passed.
 - **Independent Test Suite Executions:**
   - **Unit Tests:** `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/unit/ -q -rs`
-    - Outcome: **2081 passed, 0 skipped, 2 warnings, 37 subtests passed in 82.23s** (exit code 0).
+    - Outcome: **2091 passed, 0 skipped, 2 warnings, 175 subtests passed in 84.58s** (exit code 0).
   - **Characterization Tests:** `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/characterization/ -q -rs`
     - Outcome: **32 passed, 0 skipped in 0.44s** (exit code 0).
   - **Integration Tests:** `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/integration/ -q -rs`
     - Outcome: **77 passed, 6 skipped in 29.98s** (exit code 0, 83 collected items).
   - **Complete Test Suite:** `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/ -q -rs`
-    - Outcome: **2190 passed, 6 skipped, 2 warnings, 37 subtests passed in 107.19s** (exit code 0, 2196 total collected items).
+    - Outcome: **2200 passed, 6 skipped, 2 warnings, 175 subtests passed in 108.55s** (exit code 0, 2206 total collected items).
 - **Observed Warnings (2 ResourceWarnings):**
   - `tests/unit/test_ai_adapters.py:46`: `ResourceWarning: unclosed file <.../core/ai/types.py>`
   - `tests/unit/test_ai_adapters.py:46`: `ResourceWarning: unclosed file <.../core/ai/exceptions.py>`
@@ -553,12 +553,12 @@ flowchart TD
 
 ---
 
-### [ ] CI-01 — Audit Continuous Integration and Quality-Gate Reliability
+### [x] CI-01 — Audit Continuous Integration and Quality-Gate Reliability
 
 - **ID:** `CI-01`
 - **Title:** Audit Continuous Integration, Workflow Triggers, and Gate Reliability
 - **Priority:** P1 (High)
-- **Status:** `NOT_STARTED`
+- **Status:** `COMPLETED`
 - **Dependencies:** `STAB-00`
 - **Scope:**
   - Audit `.github/workflows/ci.yml`, `periodic-validation.yml`, and `release.yml`.
@@ -572,22 +572,25 @@ flowchart TD
   - `.github/workflows/ci.yml`
   - `.github/workflows/periodic-validation.yml`
   - `.github/workflows/release.yml:386-397`
-  - `scripts/run_quality_gates.py:25-32`
+  - `scripts/run_quality_gates.py:25-34`
+  - `tests/unit/test_ci_workflow_contract.py`
+  - `tests/unit/test_release_workflow_contract.py`
 - **Recommended Skill Sequence:**
   `diagnosing-bugs → research → tdd → implement → code-review → CI verification`
 - **Acceptance Criteria:**
-  1. Workflow actions are pinned securely to immutable SHAs with explanatory comments.
-  2. Manual dry-run workflows are proven incapable of publishing release assets.
-  3. Quality gate runner executes all architectural boundary checks.
-  4. CI matrix accurately reflects supported Python and OS baselines.
+  1. Workflow actions are pinned securely to immutable SHAs with explanatory comments. [Verified — migrated actions/setup-node to v7.1.0 (SHA `949feb2...`), actions/cache to v6.1.0 (SHA `55cc834...`), actions/upload-artifact to v7.0.2 (SHA `cf430e0...`), actions/download-artifact to v8.0.2 (SHA `9000827...`), actions/attest-build-provenance to v4.2.2 (SHA `4d10147...`), softprops/action-gh-release to v3.0.3 (SHA `efb3536...`), all running on Node 24 with 40-char commit SHAs and inline comments; actions/checkout and actions/setup-python verified already on Node 24]
+  2. Manual dry-run workflows are proven incapable of publishing release assets. [Verified — publish-release in release.yml strictly gated to push event on refs/tags/v* with needs dependencies on tier-2 validation and packaging smoke tests; contract verified by test_release_workflow_contract.py and test_ci_workflow_contract.py]
+  3. Quality gate runner executes all architectural boundary checks. [Verified — run_quality_gates.py executes diff check, bytecode compilation, and 8 invariant suites including test_release_workflow_contract.py and test_ci_workflow_contract.py]
+  4. CI matrix accurately reflects supported Python and OS baselines. [Verified — Tier-1 reference is Ubuntu 24.04 and Windows 2025 on Python 3.12; Tier-2 periodic matrix validates macOS 15 ARM64 and Linux Python 3.10 and 3.11; packaging baseline is Ubuntu 22.04 and Windows 2025; all matching pyproject.toml requires-python >= 3.10]
 - **Verification Commands:**
   ```bash
   ./.venv/bin/python scripts/run_quality_gates.py --mode=working-tree
-  gh workflow list
+  actionlint .github/workflows/*.yml
+  pytest tests/unit/test_ci_workflow_contract.py tests/unit/test_release_workflow_contract.py -q
   ```
 - **Branch Suggestion:** `ci/quality-gate-audit`
-- **PR / CI / Merge Record:** Unstarted
-- **Notes & Risks:** Workflow changes must be tested on dedicated feature branches before PR creation.
+- **PR / CI / Merge Record:** [PR #154](https://github.com/amirreza-a2a/Polpo/pull/154) merged into `main` at `6f1c9efa6ab5d14b3b2f2de0d4225eb447aa00f2` (Implementation); [PR #155](https://github.com/amirreza-a2a/Polpo/pull/155) (Roadmap Closeout). All 4 required CI status checks passed on implementation PR #154 (`quality-gates` [40s], `secret-scan` [10s], `test-linux` [2m3s], `test-windows` [3m39s]). Full test suite: 2,200 passed, 6 skipped, 2 warnings, 175 subtests passed in 108.55s on Linux (2,206 total collected items). Added `tests/unit/test_ci_workflow_contract.py` (10 tests, 138 subtests) and wired into default quality gates.
+- **Notes & Risks:** Precondition residual FA-01 finding (commented-out Persian handler fragment in `tests/characterization/test_job_submission.py`) corrected in separate [PR #153](https://github.com/amirreza-a2a/Polpo/pull/153) merged at `2aca2e8e66fe87105a6891cbbb238ffbe7ebe2d0`. Zero whitespace or lint defects.
 
 ---
 
@@ -929,8 +932,8 @@ The following standing constraints apply to all stabilization operations:
 6. **Naming Inconsistencies (`THEME-01`, `DOC-01`):** Several presentation files still reference the legacy name `PolpoT` (e.g. `Main.qml:14` window title `PolpoT — Desktop Document Intelligence`, `Sidebar.qml:18`).
 7. **Public Documentation Release Claims (`DOC-01`):** `docs/linux-installation.md` contains references to installation channels and distribution tiers that must be aligned with actual CI evidence (Ubuntu 22.04 and 24.04 tested) and the active release freeze.
 8. **Persian Comments in Code (`FA-01`):** Approximately 1523 lines with Persian characters exist across 59 files. Legacy files (`infrastructure/persistence/connection.py`, `handlers/`) contain full Persian docstrings. Legitimate Persian assets (prompt templates in `prompts/templates/fa/`, test strings in `self_test.py`, regex in `pymupdf_processor.py`) must be separated from developer comments requiring English translation.
-9. **CI Node.js Deprecation Annotations (`CI-01`):** GitHub Actions logs show deprecation warnings for Node.js 20 in `actions/cache@v4.2.2` and `actions/setup-node@v4.2.0`, which are forced to run on Node.js 24 on modern runners.
-10. **Release Dry-Run Safety (`CI-01`):** `release.yml` includes an explicit guard (`if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')`) preventing `publish-release` from executing during manual `workflow_dispatch` dry-runs.
+9. **CI Node.js Deprecation Annotations (`CI-01`):** [Resolved in CI-01] Migrated all workflow action pins to official Node 24 releases (`actions/setup-node@v7.1.0`, `actions/cache@v6.1.0`, `actions/upload-artifact@v7.0.2`, `actions/download-artifact@v8.0.2`, `actions/attest-build-provenance@v4.2.2`, `softprops/action-gh-release@v3.0.3`), eliminating Node 20 deprecation notices across all workflows.
+10. **Release Dry-Run Safety (`CI-01`):** [Verified in CI-01] `release.yml` includes an explicit guard (`if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')`) preventing `publish-release` from executing during manual `workflow_dispatch` dry-runs, verified by automated contract tests in `test_release_workflow_contract.py` and `test_ci_workflow_contract.py`.
 
 ---
 
@@ -949,6 +952,8 @@ The following standing constraints apply to all stabilization operations:
 | **2026-10-23** | `DOC-01` | Reconciled public-facing documentation (`README.md`, `CHANGELOG.md`, `docs/linux-installation.md`, `docs/packaging.md`) with desktop reality; documented active release freeze and pre-release candidate status (`v0.1.0-rc.1`); clarified stable channel 404 behavior; differentiated Ubuntu 24.04 CI runner from Ubuntu 22.04 packaging baseline (glibc >= 2.35) and separated automated CI evidence from community package manager mappings; added `mathjax-full 3.2.2` and `ADR-004`; updated packaged self-test migration range to `001` through `005` across 9 tables; clarified Pandoc musl static linkage vs application glibc requirement; added macOS notarization guidance disclaimer; updated `[Unreleased]` changelog section while preserving historical entries; added deterministic documentation contract test suite. | [#145](https://github.com/amirreza-a2a/Polpo/pull/145) / `c7181a5`<br/>[#146](https://github.com/amirreza-a2a/Polpo/pull/146) / `5a9d8b6` | Merged cleanly into `main` after all 4 required status checks passed on both PRs (implementation PR #145: `quality-gates` [1m5s], `secret-scan` [10s], `test-linux` [2m7s], `test-windows` [2m58s]; closeout PR #146: `quality-gates` [37s], `secret-scan` [11s], `test-linux` [1m43s], `test-windows` [5m14s]). Full test suite at implementation: 2,181 passed, 6 skipped on Linux (2,187 collected). 8 documentation contract tests (12 subtests) passed. |
 | **2026-10-28** | `DOC-02` | Reconciled developer documentation (`AGENTS.md`, `CONTEXT.md`, `docs/agents/skills.md`, `docs/ci-repository-rules.md`) with desktop architecture reality; eliminated `PolpoT` branding discrepancies across core developer documentation; aligned Pipeline 2 semantics with ADR-004 (secondary typography refinement producing `PIPELINE2_MARKDOWN` adopted under OCC via human action); defined `Pipeline2Job` entity and isolated frozen legacy surfaces (`handlers/`, `interfaces/telegram/`, `main.py`, `services/worker.py`, legacy database modules); cataloged all 16 environment skills and strictly prohibited skill vendoring; verified branch protection contract against live GitHub settings (`quality-gates`, `test-linux`, `test-windows`, `secret-scan`, `strict: true`, linear history, zero admin bypass); added automated developer documentation contract test suite. | [#147](https://github.com/amirreza-a2a/Polpo/pull/147) / `515fd05`<br/>[#148](https://github.com/amirreza-a2a/Polpo/pull/148) / `d7eabb5` | Merged cleanly into `main` after all 4 required status checks passed on both PRs (implementation PR #147: `quality-gates` [56s], `secret-scan` [11s], `test-linux` [1m36s], `test-windows` [6m13s]; closeout PR #148: `quality-gates` [43s], `secret-scan` [9s], `test-linux` [1m50s], `test-windows` [4m2s]). Full test suite: 2,190 passed, 6 skipped, 2 warnings, 37 subtests passed in 107.19s on Linux (2,196 total collected items). 9 developer documentation contract unit tests (25 subtests) and 8 public documentation tests (12 subtests) passed. |
 | **2026-10-28** | `FA-01` | Audited and corrected Persian technical comments and docstrings across 20 source files in accordance with `AGENTS.md` Rule 20; preserved Category B assets (prompt templates, legitimate regex patterns, test strings, user-facing UI messages); verified zero functional changes via 100% identical AST comparison across all 18 modified Python files; confirmed clean git diff and quality gates. | [#150](https://github.com/amirreza-a2a/Polpo/pull/150) / `22dba41`<br/>[#151](https://github.com/amirreza-a2a/Polpo/pull/151) / `8642432` | Merged cleanly into `main` after all 4 required status checks passed on both PRs (implementation PR #150: `quality-gates` [42s], `secret-scan` [9s], `test-linux` [1m55s], `test-windows` [5m3s]; closeout PR #151: `quality-gates` [38s], `secret-scan` [8s], `test-linux` [1m56s], `test-windows` [4m31s]). Full test suite: 2,190 passed, 6 skipped, 2 warnings, 37 subtests passed in 114.40s on Linux. |
+| **2026-10-29** | `FA-01-RES` | Corrected leftover commented-out legacy handler code fragment with Persian error string in `tests/characterization/test_job_submission.py` per `AGENTS.md` Rule 20 and 23. Zero functional logic or runtime string changes. | [#153](https://github.com/amirreza-a2a/Polpo/pull/153) / `2aca2e8` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [37s], `secret-scan` [9s], `test-linux` [1m42s], `test-windows` [4m8s]). Full test suite: 2,190 passed, 6 skipped on Linux. |
+| **2026-10-29** | `CI-01` | Audited GitHub Actions across `ci.yml`, `periodic-validation.yml`, and `release.yml`; migrated all actions to verified Node 24 releases pinned to 40-char SHAs; proved release publication gating and least-privilege permissions; validated runtime cache invalidation contracts; added automated CI workflow contract suite (`test_ci_workflow_contract.py`); hardened `scripts/run_quality_gates.py` default architecture tests. | [#154](https://github.com/amirreza-a2a/Polpo/pull/154) / `6f1c9ef` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [40s], `secret-scan` [10s], `test-linux` [2m3s], `test-windows` [3m39s]). Full test suite: 2,200 passed, 6 skipped, 2 warnings, 175 subtests passed in 108.55s on Linux. |
 
 ---
 
@@ -958,7 +963,7 @@ When starting or continuing work on this stabilization roadmap:
 
 1. **Do not create an ad-hoc plan.** Read this roadmap (`docs/quality/stabilization-roadmap.md`).
 2. **Check Git state:** Confirm branch is `main`, `git status` is clean, and local is synced with `origin/main`.
-3. **Select one target task:** Choose the next uncompleted task in dependency order (`CI-01: Audit CI & Quality-Gate Reliability` is the next sequential task).
+3. **Select one target task:** Choose the next uncompleted task in dependency order (`STAB-01: Review Cross-Platform and Runtime Reliability` is the next sequential task).
 4. **Follow Section 6 (`/boost` Automation Contract):**
    - Create a dedicated branch.
    - Execute the recommended skill sequence.
