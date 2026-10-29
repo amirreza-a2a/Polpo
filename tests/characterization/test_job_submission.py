@@ -32,10 +32,6 @@ class TestJobSubmissionCharacterization(unittest.TestCase):
         pages_left = DAILY_PAGE_LIMIT - pages_used # 5
 
         self.assertLess(pages_left, total_pages)
-        # In handlers/pdf.py:
-        # if not private_apis:
-        #     pages_left = DAILY_PAGE_LIMIT - db_user["daily_pages_used"]
-        #     if total_pages > pages_left: return "❌ این PDF دارای 10 صفحه است..."
         should_reject = total_pages > pages_left
         self.assertTrue(should_reject)
 
