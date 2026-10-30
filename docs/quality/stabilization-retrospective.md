@@ -4,9 +4,10 @@
 **Repository:** `amirreza-a2a/Polpo`<br/>
 **Working Directory:** `/home/amirreza-a2a/DevelopPOlpo/PolpoT`<br/>
 **Date:** 2026-10-30<br/>
-**Starting Baseline SHA:** `79e7940e1f4cdb2938ecb336c58eed22bd18b1fa`<br/>
+**Starting Baseline SHA (STAB-01 Closeout):** `79e7940e1f4cdb2938ecb336c58eed22bd18b1fa`<br/>
 **Implementation Merge SHA:** `714e78d07b22412f528c044b3695182151aede0e` (PR #162)<br/>
-**Final Closeout Merge SHA:** `2b55de09c33dddbffe039b34d2ee35662daab4e7` (PR #163)<br/>
+**Historical STAB-02 Closeout Merge SHA:** `2b55de09c33dddbffe039b34d2ee35662daab4e7` (PR #163)<br/>
+**Subsequent Reconciliation Hardening Merge SHA:** `8a7670a3c68fe07248786074863e2182aef0cc1c` (PR #164)<br/>
 **Milestone:** `STAB-02` (Final Stabilization Milestone Closeout)<br/>
 **Status:** COMPLETE & AUTHORITATIVE<br/>
 
@@ -25,8 +26,11 @@ Prior to stabilization, the repository contained significant architectural drift
 - CI workflows relied on Node.js 20 actions facing platform deprecation, with unhardened inline expressions and potential release dry-run hazards.
 - Windows-specific runtime risks (subprocess console flashing, process group termination, and file-locking differences) lacked regression proof.
 
-Across 12 major task initiatives encompassing 38 pull requests, the stabilization roadmap (`docs/quality/stabilization-roadmap.md`) systematically resolved these defects without introducing feature creep or breaking changes. As of commit `79e7940e1f4cdb2938ecb336c58eed22bd18b1fa` (and its final STAB-02 closeout), the codebase achieves:
-1. **100% Passing Test Suite:** 2,212 passed, 6 skipped, 2 warnings, 201 subtests passed across 2,218 collected items in 152s on Linux reference hosts, and 2,013 passed, 50 skipped on Windows Server 2025 CI.
+Across 12 major task initiatives encompassing 40 pull requests through STAB-02 closeout (PRs #124–#163) and 41 pull requests including subsequent post-STAB-02 reconciliation hardening (PRs #124–#164), the stabilization roadmap (`docs/quality/stabilization-roadmap.md`) systematically resolved these defects without introducing feature creep or breaking changes. Progressing from the STAB-01 closeout baseline (`79e7940e1f4cdb2938ecb336c58eed22bd18b1fa`) through the STAB-02 implementation merge (`714e78d07b22412f528c044b3695182151aede0e`, PR #162), the historical STAB-02 milestone closeout (`2b55de09c33dddbffe039b34d2ee35662daab4e7`, PR #163), and subsequent reconciliation hardening (`8a7670a3c68fe07248786074863e2182aef0cc1c`, PR #164), the codebase achieves:
+1. **Zero Test Failures with Explicitly Classified Skips:** All executed tests passed with zero failures and fully classified skips across reference environments:
+   - **Local Linux Reference Host (Noble 24.04):** 2,212 passed, 6 skipped (Windows Job Object integration tests), 2 warnings, 201 subtests passed across 2,218 collected items in 136.04s (historical STAB-01 implementation PR #160 recorded 123.55s on a lighter suite).
+   - **Linux CI Runner (`ubuntu-24.04`):** 2,205 passed, 13 skipped (6 Windows Job Object + 7 optional host tooling tests), 2 warnings, 201 subtests passed across 2,218 collected items in ~1m 35s (historical STAB-01 push CI run `40940519039` recorded 152.03s in its test execution step).
+   - **Windows Server 2025 CI (`windows-2025`):** 2,168 passed, 50 skipped (all 6 Windows Job Object tests pass; 36 Linux-only installer/updater + 7 POSIX-only + 7 optional tooling tests skip), 0 failures, 2 warnings, 201 subtests passed across 2,218 collected items in ~4m 42s. (Earlier intermediate baseline STAB-00 reported 2,013 passed / 50 skipped prior to subsequent test suite additions).
 2. **Deterministic Quality Gates:** Diff hygiene, bytecode compilation across 5 packages, and 88 AST architecture and contract invariant tests (164 subtests) pass in ~4 seconds.
 3. **Headless Self-Test Coverage:** The desktop diagnostic self-test (`interfaces.desktop.self_test`) verifies 12 runtime and packaging invariants (Pandoc AST parsing, MathJax SVG rendering, SQLite bootstrap, UnitOfWork access, credential isolation, and QML compilation) in isolated headless environments.
 4. **Enforced Security and Release Safeguards:** All GitHub Actions workflows run on Node 24 pinned to immutable 40-character commit SHAs, release publication is strictly gated to authenticated pushes on `refs/tags/v*`, and the mandatory release freeze remains intact (`v0.1.0-rc.1` pre-release candidate).
@@ -76,7 +80,7 @@ The stabilization roadmap progressed through six distinct architectural phases:
 | **FA-01** | [PR #150](https://github.com/amirreza-a2a/Polpo/pull/150) | `22dba4135840f766c093218f548e8451d67dfc1c` | [PR #151](https://github.com/amirreza-a2a/Polpo/pull/151) (`8642432a...`), [PR #152](https://github.com/amirreza-a2a/Polpo/pull/152) (`39c1157f...`), [PR #153](https://github.com/amirreza-a2a/Polpo/pull/153) (`2aca2e8e...`) | Translated Persian technical comments and docstrings across 20 source files to English; preserved Persian prompt templates and test strings; verified 100% AST invariance across all modified Python files. |
 | **CI-01** | [PR #154](https://github.com/amirreza-a2a/Polpo/pull/154) | `6f1c9efa6ab5d14b3b2f2de0d4225eb447aa00f2` | [PR #155](https://github.com/amirreza-a2a/Polpo/pull/155) (`94253289...`), [PR #156](https://github.com/amirreza-a2a/Polpo/pull/156) (`bb83f41e...`), [PR #157](https://github.com/amirreza-a2a/Polpo/pull/157) (`ab4ea4f9...`), [PR #158](https://github.com/amirreza-a2a/Polpo/pull/158) (`dd081b99...`), [PR #159](https://github.com/amirreza-a2a/Polpo/pull/159) (`4dc3ccb3...`) | Migrated GitHub Actions to Node 24 pinned to 40-char SHAs; validated release gating; eliminated unsafe expression interpolation in `run:` blocks; added standalone workflow expression scanner and contract tests. |
 | **STAB-01** | [PR #160](https://github.com/amirreza-a2a/Polpo/pull/160) | `bb41c826ee34dbde9dcb748ddfd2896329faf669` | [PR #161](https://github.com/amirreza-a2a/Polpo/pull/161) (`79e7940e...`) | Cross-platform audit: Windows `CREATE_NO_WINDOW` subprocess suppression in Pandoc; self-test Migration 005 and UnitOfWork coverage; hardened concurrency wait loops; resolved timing flakes. |
-| **STAB-02** | [PR #162](https://github.com/amirreza-a2a/Polpo/pull/162) | `714e78d07b22412f528c044b3695182151aede0e` | [PR #163](https://github.com/amirreza-a2a/Polpo/pull/163) (`2b55de09...`) | Full verification pass, retrospective authoring, and feature-ready handoff baseline. |
+| **STAB-02** | [PR #162](https://github.com/amirreza-a2a/Polpo/pull/162) | `714e78d07b22412f528c044b3695182151aede0e` | [PR #163](https://github.com/amirreza-a2a/Polpo/pull/163) (`2b55de09...`), [PR #164](https://github.com/amirreza-a2a/Polpo/pull/164) (`8a7670a3...`) | Full verification pass, retrospective authoring, feature-ready handoff baseline, and subsequent documentation link/SHA reconciliation hardening. |
 
 ---
 
@@ -281,7 +285,9 @@ With the stabilization milestone successfully closed, Polpo is ready to transiti
 
 - **Canonical Repository:** `amirreza-a2a/Polpo`
 - **Starting Branch:** `main`
-- **Verified Starting Baseline:** `2b55de09c33dddbffe039b34d2ee35662daab4e7` (milestone closeout commit on `main`, following PR #162 at `714e78d07b22412f528c044b3695182151aede0e`).
+- **Historical STAB-02 Closeout Baseline:** `2b55de09c33dddbffe039b34d2ee35662daab4e7` (milestone closeout commit on `main` at PR #163, following PR #162 at `714e78d07b22412f528c044b3695182151aede0e`).
+- **Subsequent Reconciliation Hardening Baseline:** `8a7670a3c68fe07248786074863e2182aef0cc1c` (post-STAB-02 documentation link & SHA hardening at PR #164).
+- **Branching Directive:** Developers must always fetch the latest `origin/main` (`git checkout main && git pull origin main`) before branching rather than branching from an arbitrary historical snapshot SHA.
 - **Core Directives:**
   - `AGENTS.md`: Mandatory standing rules governing clean architecture, local-first execution, and security.
   - `CONTEXT.md`: Ubiquitous language, entity boundaries, and system overview.
@@ -319,7 +325,7 @@ QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software \
 ### 10.4 GitHub Pull Request & Merge Gating
 
 All pull requests targeting `main` must:
-1. Be based on the latest `origin/main` (`strict: true`).
+1. Be based on the latest `origin/main` (`strict: true`). Developers must run `git checkout main && git pull origin main` before branching and ensure feature branches are rebased on latest `origin/main`.
 2. Pass the four mandatory CI checks:
    - `quality-gates`
    - `secret-scan`
