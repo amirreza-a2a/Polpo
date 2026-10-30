@@ -21,6 +21,7 @@ class TestDeveloperDocumentationContract(unittest.TestCase):
         cls.ci_workflow_path = cls.repo_root / ".github" / "workflows" / "ci.yml"
         cls.adr_004_path = cls.repo_root / "docs" / "adr" / "2026-10-22-adr-004-pipeline2-artifact-lineage-and-canonical-publication-contract.md"
         cls.roadmap_path = cls.repo_root / "docs" / "quality" / "stabilization-roadmap.md"
+        cls.retro_path = cls.repo_root / "docs" / "quality" / "stabilization-retrospective.md"
 
         cls.agents_text = cls.agents_path.read_text(encoding="utf-8")
         cls.context_text = cls.context_path.read_text(encoding="utf-8")
@@ -223,6 +224,7 @@ class TestDeveloperDocumentationContract(unittest.TestCase):
             self.skills_path,
             self.ci_rules_path,
             self.roadmap_path,
+            self.retro_path,
         ]
 
         for doc_path in audited_docs:
