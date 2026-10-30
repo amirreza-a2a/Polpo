@@ -48,19 +48,19 @@ This document serves as the **single source of truth** for stabilization. Future
 *FA-01 Verified Closeout Snapshot: 2026-10-28 18:02 UTC+03:30 (Commit `8642432`, PR #151)*<br/>
 *STAB-01 Verified Execution Snapshot: 2026-10-29 22:40 UTC+03:30 (Commit `bb41c82`, PR #160)*<br/>
 *STAB-01 Verified Closeout Snapshot: 2026-10-29 22:59 UTC+03:30 (Commit `79e7940`, PR #161)*<br/>
-*STAB-02 Verified Execution Snapshot: 2026-10-30 16:45 UTC+03:30 (Commit `79e7940`, PR Pending)*
+*STAB-02 Historical Implementation Snapshot: 2026-10-30 16:51 UTC+03:30 (Commit `714e78d`, PR #162)*
 
 ### 2.1 Git and Working Tree State
 
 | Property | Verified Value | Evidence Source |
 | :--- | :--- | :--- |
 | **Active Baseline Branch** | `main` | `git status` |
-| **HEAD Commit SHA (main)** | `79e7940e1f4cdb2938ecb336c58eed22bd18b1fa` | `git rev-parse HEAD` |
-| **Commit Message** | `docs(quality): reconcile roadmap for STAB-01 completion and baseline advancement (#161)` | `git log -1` |
+| **HEAD Commit SHA (main)** | `714e78d07b22412f528c044b3695182151aede0e` | `git rev-parse HEAD` |
+| **Commit Message** | `docs(quality): milestone verification, retrospective, and final handoff (STAB-02) (#162)` | `git log -1` |
 | **Remote Synchronization** | Up to date with `origin/main` | `git status -sb` |
 | **Working Tree Status** | Clean (no modified, untracked, or staged files) | `git status --porcelain` |
 | **Latest Git Tag** | `v0.1.0-rc.1` | `git tag -l` |
-| **Git Describe** | `v0.1.0-rc.1-43-g79e7940` | `git describe --tags --always` |
+| **Git Describe** | `v0.1.0-rc.1-44-g714e78d` | `git describe --tags --always` |
 | **GitHub Releases** | Exactly 1 Pre-release: `v0.1.0-rc.1` (Zero stable releases published) | `gh release list` |
 | **Application Version** | `APP_NAME = "Polpo"`, `__version__ = "0.1.0"`, `VERSION_INFO = (0, 1, 0)` | `core/version.py:9-11`, `pyproject.toml:7` |
 
@@ -671,7 +671,7 @@ flowchart TD
   QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m interfaces.desktop.self_test
   ```
 - **Branch Suggestion:** `docs/stabilization-milestone-retro`
-- **PR / CI / Merge Record:** Implementation PR on branch `docs/stabilization-milestone-retro`. Verified on `79e7940e1f4cdb2938ecb336c58eed22bd18b1fa` and push run `40940519039`.
+- **PR / CI / Merge Record:** [PR #162](https://github.com/amirreza-a2a/Polpo/pull/162) merged into `main` at `714e78d07b22412f528c044b3695182151aede0e` (Implementation); [PR #163](https://github.com/amirreza-a2a/Polpo/pull/163) (Closeout). All 4 required CI status checks passed on PR #162: `quality-gates`, `secret-scan`, `test-linux`, `test-windows`. Full test suite passed across Linux (2,212 passed, 6 skipped) and Windows CI (2,013 passed, 50 skipped).
 - **Notes & Risks:** Must not advance release tag or channel. Mandatory release freeze preserved.
 
 ---
@@ -966,7 +966,7 @@ The following standing constraints apply to all stabilization operations:
 | **2026-10-29** | `CI-SCAN-COV` | Hardened workflow expression scanner to detect inline `run:` interpolations; added standalone scanner module (`tests/unit/workflow_expression_scanner.py`) and 6 contract unit tests. | [#159](https://github.com/amirreza-a2a/Polpo/pull/159) / `4dc3ccb` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [34s], `secret-scan` [11s], `test-linux` [1m55s], `test-windows` [9m59s]). Full test suite passed. |
 | **2026-10-29** | `STAB-01` | Audited cross-platform runtime reliability; added CREATE_NO_WINDOW on Windows in Pandoc extensions inspection and active probe; added `005_pipeline2_source_version.sql`, UnitOfWork access, canary credential isolation without SQLite leakage, artifact storage roundtripping, and direct execution entry point to `interfaces/desktop/self_test.py`; hardened `test_desktop_runtime_concurrency.py` with 10s wait loop and post-shutdown re-query eliminating Windows CI timing flakes; added regression tests across `test_pandoc_binary.py` and `test_desktop_self_test.py`. | [#160](https://github.com/amirreza-a2a/Polpo/pull/160) / `bb41c82` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [43s], `secret-scan` [11s], `test-linux` [1m38s], `test-windows` [4m20s]). Push CI run 40937604597 passed: `quality-gates` (39s), `secret-scan` (7s), `test-linux` (2m1s), `test-windows` (3m29s). Full test suite: 2,212 passed, 6 skipped, 2 warnings, 201 subtests passed in 123.55s. |
 | **2026-10-29** | `STAB-01-CLOSEOUT` | Reconciled roadmap for STAB-01 completion, recorded execution snapshot, and advanced baseline to `79e7940e1f4cdb2938ecb336c58eed22bd18b1fa`. | [#161](https://github.com/amirreza-a2a/Polpo/pull/161) / `79e7940` | Merged cleanly into `main` after all 4 required status checks passed. Push CI run 40940519039 passed all checks. |
-| **2026-10-30** | `STAB-02` | Completed final stabilization milestone verification and comprehensive retrospective (`docs/quality/stabilization-retrospective.md`); verified 100% passing test suite across Linux (2,212 passed, 6 skipped, 2 warnings, 201 subtests) and Windows Server 2025 CI; verified quality gates (88 AST invariants, 164 subtests); verified headless self-test (12/12 runtime/packaging invariants); verified release freeze and GitHub Actions Node 24 immutable pins; authored feature handoff guide. | PR Pending | All 4 required CI checks verified on exact head SHAs across all 38 stabilization PRs. |
+| **2026-10-30** | `STAB-02` | Completed final stabilization milestone verification and comprehensive retrospective (`docs/quality/stabilization-retrospective.md`); verified 100% passing test suite across Linux (2,212 passed, 6 skipped, 2 warnings, 201 subtests) and Windows Server 2025 CI; verified quality gates (88 AST invariants, 164 subtests); verified headless self-test (12/12 runtime/packaging invariants); verified release freeze and GitHub Actions Node 24 immutable pins; authored feature handoff guide. | [#162](https://github.com/amirreza-a2a/Polpo/pull/162) / `714e78d` | Merged cleanly into `main` after all 4 required status checks passed. Closeout [PR #163](https://github.com/amirreza-a2a/Polpo/pull/163). |
 
 ---
 
