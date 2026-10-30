@@ -48,19 +48,20 @@ This document serves as the **single source of truth** for stabilization. Future
 *FA-01 Verified Closeout Snapshot: 2026-10-28 18:02 UTC+03:30 (Commit `8642432`, PR #151)*<br/>
 *STAB-01 Verified Execution Snapshot: 2026-10-29 22:40 UTC+03:30 (Commit `bb41c82`, PR #160)*<br/>
 *STAB-01 Verified Closeout Snapshot: 2026-10-29 22:59 UTC+03:30 (Commit `79e7940`, PR #161)*<br/>
-*STAB-02 Historical Implementation Snapshot: 2026-10-30 16:51 UTC+03:30 (Commit `714e78d`, PR #162)*
+*STAB-02 Historical Implementation Snapshot: 2026-10-30 16:51 UTC+03:30 (Commit `714e78d`, PR #162)*<br/>
+*STAB-02 Verified Closeout Snapshot: 2026-10-30 17:23 UTC+03:30 (Commit `2b55de0`, PR #163)*
 
 ### 2.1 Git and Working Tree State
 
 | Property | Verified Value | Evidence Source |
 | :--- | :--- | :--- |
 | **Active Baseline Branch** | `main` | `git status` |
-| **HEAD Commit SHA (main)** | `714e78d07b22412f528c044b3695182151aede0e` | `git rev-parse HEAD` |
-| **Commit Message** | `docs(quality): milestone verification, retrospective, and final handoff (STAB-02) (#162)` | `git log -1` |
+| **HEAD Commit SHA (main)** | `2b55de09c33dddbffe039b34d2ee35662daab4e7` | `git rev-parse HEAD` |
+| **Commit Message** | `docs(quality): reconcile roadmap and retrospective with STAB-02 merge evidence (#162) (#163)` | `git log -1` |
 | **Remote Synchronization** | Up to date with `origin/main` | `git status -sb` |
 | **Working Tree Status** | Clean (no modified, untracked, or staged files) | `git status --porcelain` |
 | **Latest Git Tag** | `v0.1.0-rc.1` | `git tag -l` |
-| **Git Describe** | `v0.1.0-rc.1-44-g714e78d` | `git describe --tags --always` |
+| **Git Describe** | `v0.1.0-rc.1-45-g2b55de0` | `git describe --tags --always` |
 | **GitHub Releases** | Exactly 1 Pre-release: `v0.1.0-rc.1` (Zero stable releases published) | `gh release list` |
 | **Application Version** | `APP_NAME = "Polpo"`, `__version__ = "0.1.0"`, `VERSION_INFO = (0, 1, 0)` | `core/version.py:9-11`, `pyproject.toml:7` |
 
@@ -109,17 +110,17 @@ Verified on local workstation host environment under `./.venv`:
   - Headless MathJax Worker: 8/8 contract checks verified passing via `python scripts/verify_mathjax_worker.py` (MathJax 3.2.2).
 - **Quality Gates Execution:**
   - Command: `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python scripts/run_quality_gates.py --mode=working-tree`
-  - Outcome: **PASSED (exit code 0)** in 3.86s.
-  - Scope: Whitespace check clean, Python bytecode compilation across `core`, `application`, `infrastructure`, `interfaces`, `tests` clean, 82 AST architecture and workflow contract invariant tests (147 subtests) passed.
+  - Outcome: **PASSED (exit code 0)** in 3.71s.
+  - Scope: Whitespace check clean, Python bytecode compilation across `core`, `application`, `infrastructure`, `interfaces`, `tests` clean, 88 AST architecture and workflow contract invariant tests (164 subtests) passed.
 - **Independent Test Suite Executions:**
   - **Unit Tests:** `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/unit/ -q -rs`
-    - Outcome: **2094 passed, 0 skipped, 2 warnings, 184 subtests passed in 84.58s** (exit code 0).
+    - Outcome: **2103 passed, 0 skipped, 2 warnings, 201 subtests passed in 108.74s** (exit code 0).
   - **Characterization Tests:** `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/characterization/ -q -rs`
-    - Outcome: **32 passed, 0 skipped in 0.44s** (exit code 0).
+    - Outcome: **41 passed, 0 skipped in 0.51s** (exit code 0, 41 collected items).
   - **Integration Tests:** `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/integration/ -q -rs`
-    - Outcome: **77 passed, 6 skipped in 29.98s** (exit code 0, 83 collected items).
+    - Outcome: **68 passed, 6 skipped in 35.00s** (exit code 0, 74 collected items).
   - **Complete Test Suite:** `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m pytest tests/ -q -rs`
-    - Outcome: **2203 passed, 6 skipped, 2 warnings, 184 subtests passed in 105.12s** (exit code 0, 2209 total collected items).
+    - Outcome: **2212 passed, 6 skipped, 2 warnings, 201 subtests passed in 136.04s** (exit code 0, 2218 total collected items).
 - **Observed Warnings (2 ResourceWarnings):**
   - `tests/unit/test_ai_adapters.py:46`: `ResourceWarning: unclosed file <.../core/ai/types.py>`
   - `tests/unit/test_ai_adapters.py:46`: `ResourceWarning: unclosed file <.../core/ai/exceptions.py>`
@@ -661,7 +662,7 @@ flowchart TD
   `code-review → retro → handoff`
 - **Acceptance Criteria:**
   1. All completed items in this roadmap have recorded PR URLs, merge commit SHAs, and CI outcomes. [Verified — Sections 2, 3, and 9]
-  2. Full test suite passes across Linux and Windows CI. [Verified — Linux: 2,212 passed, 6 skipped, 2 warnings, 201 subtests passed; Windows CI: 2,013 passed, 50 skipped; zero failures]
+  2. Full test suite passes across Linux and Windows CI. [Verified — Linux: 2,212 passed, 6 skipped, 2 warnings, 201 subtests passed; Windows CI: 2,168 passed, 50 skipped; zero failures]
   3. Retrospective document captures key architectural and operational findings. [Verified — `docs/quality/stabilization-retrospective.md`]
   4. Release freeze remains intact. [Verified — `v0.1.0-rc.1` pre-release candidate, zero releases published]
 - **Verification Commands:**
@@ -671,7 +672,7 @@ flowchart TD
   QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m interfaces.desktop.self_test
   ```
 - **Branch Suggestion:** `docs/stabilization-milestone-retro`
-- **PR / CI / Merge Record:** [PR #162](https://github.com/amirreza-a2a/Polpo/pull/162) merged into `main` at `714e78d07b22412f528c044b3695182151aede0e` (Implementation); [PR #163](https://github.com/amirreza-a2a/Polpo/pull/163) (Closeout). All 4 required CI status checks passed on PR #162: `quality-gates`, `secret-scan`, `test-linux`, `test-windows`. Full test suite passed across Linux (2,212 passed, 6 skipped) and Windows CI (2,013 passed, 50 skipped).
+- **PR / CI / Merge Record:** [PR #162](https://github.com/amirreza-a2a/Polpo/pull/162) merged into `main` at `714e78d07b22412f528c044b3695182151aede0e` (Implementation); [PR #163](https://github.com/amirreza-a2a/Polpo/pull/163) merged into `main` at `2b55de09c33dddbffe039b34d2ee35662daab4e7` (Closeout). All 4 required CI status checks passed on both PRs: `quality-gates`, `secret-scan`, `test-linux`, `test-windows`. Full test suite passed across Linux (2,212 passed, 6 skipped, 2 warnings, 201 subtests) and Windows CI (2,168 passed, 50 skipped).
 - **Notes & Risks:** Must not advance release tag or channel. Mandatory release freeze preserved.
 
 ---
@@ -966,7 +967,8 @@ The following standing constraints apply to all stabilization operations:
 | **2026-10-29** | `CI-SCAN-COV` | Hardened workflow expression scanner to detect inline `run:` interpolations; added standalone scanner module (`tests/unit/workflow_expression_scanner.py`) and 6 contract unit tests. | [#159](https://github.com/amirreza-a2a/Polpo/pull/159) / `4dc3ccb` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [34s], `secret-scan` [11s], `test-linux` [1m55s], `test-windows` [9m59s]). Full test suite passed. |
 | **2026-10-29** | `STAB-01` | Audited cross-platform runtime reliability; added CREATE_NO_WINDOW on Windows in Pandoc extensions inspection and active probe; added `005_pipeline2_source_version.sql`, UnitOfWork access, canary credential isolation without SQLite leakage, artifact storage roundtripping, and direct execution entry point to `interfaces/desktop/self_test.py`; hardened `test_desktop_runtime_concurrency.py` with 10s wait loop and post-shutdown re-query eliminating Windows CI timing flakes; added regression tests across `test_pandoc_binary.py` and `test_desktop_self_test.py`. | [#160](https://github.com/amirreza-a2a/Polpo/pull/160) / `bb41c82` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [43s], `secret-scan` [11s], `test-linux` [1m38s], `test-windows` [4m20s]). Push CI run 40937604597 passed: `quality-gates` (39s), `secret-scan` (7s), `test-linux` (2m1s), `test-windows` (3m29s). Full test suite: 2,212 passed, 6 skipped, 2 warnings, 201 subtests passed in 123.55s. |
 | **2026-10-29** | `STAB-01-CLOSEOUT` | Reconciled roadmap for STAB-01 completion, recorded execution snapshot, and advanced baseline to `79e7940e1f4cdb2938ecb336c58eed22bd18b1fa`. | [#161](https://github.com/amirreza-a2a/Polpo/pull/161) / `79e7940` | Merged cleanly into `main` after all 4 required status checks passed. Push CI run 40940519039 passed all checks. |
-| **2026-10-30** | `STAB-02` | Completed final stabilization milestone verification and comprehensive retrospective (`docs/quality/stabilization-retrospective.md`); verified 100% passing test suite across Linux (2,212 passed, 6 skipped, 2 warnings, 201 subtests) and Windows Server 2025 CI; verified quality gates (88 AST invariants, 164 subtests); verified headless self-test (12/12 runtime/packaging invariants); verified release freeze and GitHub Actions Node 24 immutable pins; authored feature handoff guide. | [#162](https://github.com/amirreza-a2a/Polpo/pull/162) / `714e78d` | Merged cleanly into `main` after all 4 required status checks passed. Closeout [PR #163](https://github.com/amirreza-a2a/Polpo/pull/163). |
+| **2026-10-30** | `STAB-02` | Completed final stabilization milestone verification and comprehensive retrospective (`docs/quality/stabilization-retrospective.md`); verified 100% passing test suite across Linux (2,212 passed, 6 skipped, 2 warnings, 201 subtests) and Windows Server 2025 CI (2,168 passed, 50 skipped); verified quality gates (88 AST invariants, 164 subtests); verified headless self-test (12/12 runtime/packaging invariants); verified release freeze and GitHub Actions Node 24 immutable pins; authored feature handoff guide. | [#162](https://github.com/amirreza-a2a/Polpo/pull/162) / `714e78d` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates`, `secret-scan`, `test-linux`, `test-windows`). Full test suite passed. |
+| **2026-10-30** | `STAB-02-CLOSEOUT` | Reconciled roadmap and retrospective with STAB-02 merge evidence, advanced milestone baseline to `2b55de09c33dddbffe039b34d2ee35662daab4e7`, and verified final closeout state. | [#163](https://github.com/amirreza-a2a/Polpo/pull/163) / `2b55de0` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates`, `secret-scan`, `test-linux`, `test-windows`). Milestone successfully concluded. |
 
 ---
 

@@ -4,7 +4,9 @@
 **Repository:** `amirreza-a2a/Polpo`<br/>
 **Working Directory:** `/home/amirreza-a2a/DevelopPOlpo/PolpoT`<br/>
 **Date:** 2026-10-30<br/>
-**Baseline Commit SHA:** `714e78d07b22412f528c044b3695182151aede0e` (Implementation Merge Commit)<br/>
+**Starting Baseline SHA:** `79e7940e1f4cdb2938ecb336c58eed22bd18b1fa`<br/>
+**Implementation Merge SHA:** `714e78d07b22412f528c044b3695182151aede0e` (PR #162)<br/>
+**Final Closeout Merge SHA:** `2b55de09c33dddbffe039b34d2ee35662daab4e7` (PR #163)<br/>
 **Milestone:** `STAB-02` (Final Stabilization Milestone Closeout)<br/>
 **Status:** COMPLETE & AUTHORITATIVE<br/>
 
@@ -74,7 +76,7 @@ The stabilization roadmap progressed through six distinct architectural phases:
 | **FA-01** | [PR #150](https://github.com/amirreza-a2a/Polpo/pull/150) | `22dba4135840f766c093218f548e8451d67dfc1c` | [PR #151](https://github.com/amirreza-a2a/Polpo/pull/151) (`8642432a...`), [PR #152](https://github.com/amirreza-a2a/Polpo/pull/152) (`39c1157f...`), [PR #153](https://github.com/amirreza-a2a/Polpo/pull/153) (`2aca2e8e...`) | Translated Persian technical comments and docstrings across 20 source files to English; preserved Persian prompt templates and test strings; verified 100% AST invariance across all modified Python files. |
 | **CI-01** | [PR #154](https://github.com/amirreza-a2a/Polpo/pull/154) | `6f1c9efa6ab5d14b3b2f2de0d4225eb447aa00f2` | [PR #155](https://github.com/amirreza-a2a/Polpo/pull/155) (`94253289...`), [PR #156](https://github.com/amirreza-a2a/Polpo/pull/156) (`bb83f41e...`), [PR #157](https://github.com/amirreza-a2a/Polpo/pull/157) (`ab4ea4f9...`), [PR #158](https://github.com/amirreza-a2a/Polpo/pull/158) (`dd081b99...`), [PR #159](https://github.com/amirreza-a2a/Polpo/pull/159) (`4dc3ccb3...`) | Migrated GitHub Actions to Node 24 pinned to 40-char SHAs; validated release gating; eliminated unsafe expression interpolation in `run:` blocks; added standalone workflow expression scanner and contract tests. |
 | **STAB-01** | [PR #160](https://github.com/amirreza-a2a/Polpo/pull/160) | `bb41c826ee34dbde9dcb748ddfd2896329faf669` | [PR #161](https://github.com/amirreza-a2a/Polpo/pull/161) (`79e7940e...`) | Cross-platform audit: Windows `CREATE_NO_WINDOW` subprocess suppression in Pandoc; self-test Migration 005 and UnitOfWork coverage; hardened concurrency wait loops; resolved timing flakes. |
-| **STAB-02** | [PR #162](https://github.com/amirreza-a2a/Polpo/pull/162) | `714e78d07b22412f528c044b3695182151aede0e` | Closeout PR #163 | Full verification pass, retrospective authoring, and feature-ready handoff baseline. |
+| **STAB-02** | [PR #162](https://github.com/amirreza-a2a/Polpo/pull/162) | `714e78d07b22412f528c044b3695182151aede0e` | [PR #163](https://github.com/amirreza-a2a/Polpo/pull/163) (`2b55de09...`) | Full verification pass, retrospective authoring, and feature-ready handoff baseline. |
 
 ---
 
@@ -101,7 +103,7 @@ Direct presentation imports of `sqlite3`, raw SQL strings in controllers, and co
 
 During Phase 1 (P2-03), an architectural ambiguity was uncovered: when Pipeline 2 (LLM typography and Persian punctuation refinement) completes, does its output automatically replace the document produced by Pipeline 1?
 
-The analysis formalized in [ADR-004](file:///home/amirreza-a2a/DevelopPOlpo/PolpoT/docs/adr/2026-10-22-adr-004-pipeline2-artifact-lineage-and-canonical-publication-contract.md) established:
+The analysis formalized in [ADR-004](../adr/2026-10-22-adr-004-pipeline2-artifact-lineage-and-canonical-publication-contract.md) established:
 1. **Pipeline 2 outputs are auxiliary derivative artifacts**, categorized as `ArtifactType.PIPELINE2_MARKDOWN` (`p2_output_{job_id}.md`).
 2. **Canonical adoption is an explicit, deliberate human action** initiated from the desktop UI (`MarkdownEditorPane.qml`).
 3. Automatic replacement would silently destroy user edits made in the review workspace between Pipeline 1 completion and Pipeline 2 completion.
@@ -251,12 +253,12 @@ The stabilization milestone has addressed all identified functional, architectur
 
 | Test Category | Local Linux (Noble 24.04) | Linux CI (`ubuntu-24.04`) | Windows CI (`windows-2025`) | Notes / Status |
 | :--- | :---: | :---: | :---: | :--- |
-| **Unit Tests** | **2,103 passed**, 0 failed | **2,103 passed**, 0 failed | **2,060 passed**, 43 skipped | Core domain, services, infrastructure, and presentation logic. |
-| **Characterization Tests** | **32 passed**, 0 failed | **32 passed**, 0 failed | **32 passed**, 0 failed | Legacy characterization suites verifying frozen behavior. |
-| **Integration Tests** | **77 passed**, 6 skipped | **77 passed**, 6 skipped | **71 passed**, 7 skipped | Multi-component pipelines, process trees, and persistence. |
-| **Total Test Items** | **2,212 passed / 2,218 total** | **2,212 passed / 2,218 total** | **2,013 passed / 2,063 total** | **Zero test failures across all platforms.** |
+| **Unit Tests** | **2,103 passed**, 0 skipped | **2,099 passed**, 4 skipped | **2,056 passed**, 47 skipped | Core domain, services, infrastructure, and presentation logic. |
+| **Characterization Tests** | **41 passed**, 0 skipped | **41 passed**, 0 skipped | **41 passed**, 0 skipped | Legacy and theme switching characterization suites. |
+| **Integration Tests** | **68 passed**, 6 skipped | **65 passed**, 9 skipped | **71 passed**, 3 skipped | Multi-component pipelines, process trees, and persistence. |
+| **Total Test Items** | **2,212 passed / 2,218 total** | **2,205 passed / 2,218 total** | **2,168 passed / 2,218 total** | **Zero test failures across all platforms.** |
 | **Subtest Total** | **201 subtests passed** | **201 subtests passed** | **201 subtests passed** | Parameterized AST architecture and contract checks. |
-| **Execution Duration** | **152.03s** | **~1m 35s** | **~4m 42s** | Fast execution with worker-local SQLite and memory caching. |
+| **Execution Duration** | **136.04s** | **~1m 35s** | **~4m 42s** | Fast execution with worker-local SQLite and memory caching. |
 
 ### Quality Gates & Static Verification
 
@@ -279,7 +281,7 @@ With the stabilization milestone successfully closed, Polpo is ready to transiti
 
 - **Canonical Repository:** `amirreza-a2a/Polpo`
 - **Starting Branch:** `main`
-- **Verified Starting Baseline:** `79e7940e1f4cdb2938ecb336c58eed22bd18b1fa` (and its merged STAB-02 milestone commit).
+- **Verified Starting Baseline:** `2b55de09c33dddbffe039b34d2ee35662daab4e7` (milestone closeout commit on `main`, following PR #162 at `714e78d07b22412f528c044b3695182151aede0e`).
 - **Core Directives:**
   - `AGENTS.md`: Mandatory standing rules governing clean architecture, local-first execution, and security.
   - `CONTEXT.md`: Ubiquitous language, entity boundaries, and system overview.
