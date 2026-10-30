@@ -50,7 +50,8 @@ This document serves as the **single source of truth** for stabilization. Future
 *STAB-01 Verified Closeout Snapshot: 2026-10-29 22:59 UTC+03:30 (Commit `79e7940`, PR #161)*<br/>
 *STAB-02 Historical Implementation Snapshot: 2026-10-30 16:51 UTC+03:30 (Commit `714e78d`, PR #162)*<br/>
 *STAB-02 Verified Closeout Snapshot: 2026-10-30 17:23 UTC+03:30 (Commit `2b55de0`, PR #163)*<br/>
-*Subsequent Documentation Link & SHA Reconciliation Snapshot: 2026-10-30 18:35 UTC+03:30 (Commit `8a7670a`, PR #164)*
+*Subsequent Documentation Link & SHA Reconciliation Snapshot: 2026-10-30 18:35 UTC+03:30 (Commit `8a7670a`, PR #164)*<br/>
+*Subsequent Evidence-Correction Reconciliation Snapshot: 2026-10-30 20:43 UTC+03:30 (Commit `15d4cb0`, PR #165)*
 
 ### 2.1 Git and Working Tree State (Historical Milestone Snapshot & Baseline Lineage)
 
@@ -59,11 +60,12 @@ This document serves as the **single source of truth** for stabilization. Future
 | **Active Baseline Branch** | `main` | `git status` |
 | **Historical STAB-02 Closeout SHA** | `2b55de09c33dddbffe039b34d2ee35662daab4e7` (Milestone closeout snapshot at PR #163) | Historical milestone closeout record |
 | **Subsequent Reconciliation SHA** | `8a7670a3c68fe07248786074863e2182aef0cc1c` (Post-STAB-02 documentation hardening at PR #164) | `git rev-parse HEAD` at PR #164 merge |
-| **Commit Message (PR #164)** | `docs(quality): reconcile roadmap and retrospective relative links and milestone SHA (#164)` | `git log -1` |
+| **Subsequent Evidence-Correction SHA** | `15d4cb09a731f6f7272eaa8704bf2b424d0260b2` (Post-STAB-02 evidence correction at PR #165) | `git rev-parse HEAD` at PR #165 merge |
+| **Commit Message (PR #165)** | `docs(quality): reconcile stabilization retrospective metrics, baseline lineage, and PR count (#165)` | `git log -1` |
 | **Remote Synchronization** | Up to date with `origin/main` (future developers must fetch latest `origin/main` before branching) | `git status -sb` |
 | **Working Tree Status** | Clean (no modified, untracked, or staged files) | `git status --porcelain` |
 | **Latest Git Tag** | `v0.1.0-rc.1` | `git tag -l` |
-| **Git Describe (PR #164)** | `v0.1.0-rc.1-46-g8a7670a` | `git describe --tags --always` |
+| **Git Describe (PR #165)** | `v0.1.0-rc.1-47-g15d4cb0` | `git describe --tags --always` |
 | **GitHub Releases** | Exactly 1 Pre-release: `v0.1.0-rc.1` (Zero stable releases published) | `gh release list` |
 | **Application Version** | `APP_NAME = "Polpo"`, `__version__ = "0.1.0"`, `VERSION_INFO = (0, 1, 0)` | `core/version.py:9-11`, `pyproject.toml:7` |
 
@@ -91,7 +93,7 @@ Verified from GitHub Actions run `40940519039` (triggered on push to `main` at c
 | :--- | :--- | :--- | :--- | :--- |
 | `quality-gates` | `ubuntu-24.04` (Python 3.12) | **PASSED** | 40s | Whitespace check, bytecode compilation across 5 packages, 88 AST architecture and contract invariant tests (164 subtests). |
 | `secret-scan` | `ubuntu-24.04` | **PASSED** | 12s | Gitleaks Action (`v3.0.0`, SHA `e0c47f4f...`), 0 leaks detected. |
-| `test-linux` | `ubuntu-24.04` (Python 3.12, offscreen Qt) | **PASSED** | 1m 35s | Full test suite passed (2212 passed, 6 skipped, 2 warnings, 201 subtests passed in 152.03s). |
+| `test-linux` | `ubuntu-24.04` (Python 3.12, offscreen Qt) | **PASSED** | 1m 35s | Full test suite passed (2,205 passed, 13 skipped [6 Windows Job Object + 7 optional host tooling], 2 warnings, 201 subtests passed; historical STAB-01 run 40940519039 recorded 152.03s in pytest step). |
 | `test-windows` | `windows-2025` (Python 3.12, offscreen Qt) | **PASSED** | 4m 42s | Full test suite passed with Windows Job Object and CREATE_NO_WINDOW verifications. |
 
 *(Historical reference: Previous run `40937604597` on commit `bb41c82` also passed all 4 checks: quality-gates 39s, secret-scan 7s, test-linux 2m 1s, test-windows 3m 29s).*
@@ -674,7 +676,7 @@ flowchart TD
   QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m interfaces.desktop.self_test
   ```
 - **Branch Suggestion:** `docs/stabilization-milestone-retro`
-- **PR / CI / Merge Record:** [PR #162](https://github.com/amirreza-a2a/Polpo/pull/162) merged into `main` at `714e78d07b22412f528c044b3695182151aede0e` (Implementation); [PR #163](https://github.com/amirreza-a2a/Polpo/pull/163) merged into `main` at `2b55de09c33dddbffe039b34d2ee35662daab4e7` (Closeout); followed by subsequent post-STAB-02 link/SHA reconciliation hardening [PR #164](https://github.com/amirreza-a2a/Polpo/pull/164) merged into `main` at `8a7670a3c68fe07248786074863e2182aef0cc1c`. All 4 required CI status checks passed on all PRs: `quality-gates`, `secret-scan`, `test-linux`, `test-windows`. Full test suite passed across Linux (2,212 passed, 6 skipped, 2 warnings, 201 subtests) and Windows CI (2,168 passed, 50 skipped).
+- **PR / CI / Merge Record:** [PR #162](https://github.com/amirreza-a2a/Polpo/pull/162) merged into `main` at `714e78d07b22412f528c044b3695182151aede0e` (Implementation); [PR #163](https://github.com/amirreza-a2a/Polpo/pull/163) merged into `main` at `2b55de09c33dddbffe039b34d2ee35662daab4e7` (Closeout); followed by subsequent post-STAB-02 link/SHA reconciliation hardening [PR #164](https://github.com/amirreza-a2a/Polpo/pull/164) merged into `main` at `8a7670a3c68fe07248786074863e2182aef0cc1c`, and final evidence-correction reconciliation [PR #165](https://github.com/amirreza-a2a/Polpo/pull/165) merged into `main` at `15d4cb09a731f6f7272eaa8704bf2b424d0260b2`. All 4 required CI status checks passed on all PRs: `quality-gates`, `secret-scan`, `test-linux`, `test-windows`. Full test suite passed across Linux (2,212 passed, 6 skipped, 2 warnings, 201 subtests) and Windows CI (2,168 passed, 50 skipped).
 - **Notes & Risks:** Must not advance release tag or channel. Mandatory release freeze preserved.
 
 ---
@@ -969,9 +971,10 @@ The following standing constraints apply to all stabilization operations:
 | **2026-10-29** | `CI-SCAN-COV` | Hardened workflow expression scanner to detect inline `run:` interpolations; added standalone scanner module (`tests/unit/workflow_expression_scanner.py`) and 6 contract unit tests. | [#159](https://github.com/amirreza-a2a/Polpo/pull/159) / `4dc3ccb` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [34s], `secret-scan` [11s], `test-linux` [1m55s], `test-windows` [9m59s]). Full test suite passed. |
 | **2026-10-29** | `STAB-01` | Audited cross-platform runtime reliability; added CREATE_NO_WINDOW on Windows in Pandoc extensions inspection and active probe; added `005_pipeline2_source_version.sql`, UnitOfWork access, canary credential isolation without SQLite leakage, artifact storage roundtripping, and direct execution entry point to `interfaces/desktop/self_test.py`; hardened `test_desktop_runtime_concurrency.py` with 10s wait loop and post-shutdown re-query eliminating Windows CI timing flakes; added regression tests across `test_pandoc_binary.py` and `test_desktop_self_test.py`. | [#160](https://github.com/amirreza-a2a/Polpo/pull/160) / `bb41c82` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [43s], `secret-scan` [11s], `test-linux` [1m38s], `test-windows` [4m20s]). Push CI run 40937604597 passed: `quality-gates` (39s), `secret-scan` (7s), `test-linux` (2m1s), `test-windows` (3m29s). Full test suite: 2,212 passed, 6 skipped, 2 warnings, 201 subtests passed in 123.55s. |
 | **2026-10-29** | `STAB-01-CLOSEOUT` | Reconciled roadmap for STAB-01 completion, recorded execution snapshot, and advanced baseline to `79e7940e1f4cdb2938ecb336c58eed22bd18b1fa`. | [#161](https://github.com/amirreza-a2a/Polpo/pull/161) / `79e7940` | Merged cleanly into `main` after all 4 required status checks passed. Push CI run 40940519039 passed all checks. |
-| **2026-10-30** | `STAB-02` | Completed final stabilization milestone verification and comprehensive retrospective (`docs/quality/stabilization-retrospective.md`); verified 100% passing test suite across Linux (2,212 passed, 6 skipped, 2 warnings, 201 subtests) and Windows Server 2025 CI (2,168 passed, 50 skipped); verified quality gates (88 AST invariants, 164 subtests); verified headless self-test (12/12 runtime/packaging invariants); verified release freeze and GitHub Actions Node 24 immutable pins; authored feature handoff guide. | [#162](https://github.com/amirreza-a2a/Polpo/pull/162) / `714e78d` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates`, `secret-scan`, `test-linux`, `test-windows`). Full test suite passed. |
+| **2026-10-30** | `STAB-02` | Completed final stabilization milestone verification and comprehensive retrospective (`docs/quality/stabilization-retrospective.md`); verified zero test failures with explicitly classified skips across Linux (2,212 passed, 6 skipped, 2 warnings, 201 subtests) and Windows Server 2025 CI (2,168 passed, 50 skipped, 0 failures); verified quality gates (88 AST invariants, 164 subtests); verified headless self-test (12/12 runtime/packaging invariants); verified release freeze and GitHub Actions Node 24 immutable pins; authored feature handoff guide. | [#162](https://github.com/amirreza-a2a/Polpo/pull/162) / `714e78d` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates`, `secret-scan`, `test-linux`, `test-windows`). Full test suite passed. |
 | **2026-10-30** | `STAB-02-CLOSEOUT` | Reconciled roadmap and retrospective with STAB-02 merge evidence, advanced milestone baseline to `2b55de09c33dddbffe039b34d2ee35662daab4e7`, and verified final closeout state. | [#163](https://github.com/amirreza-a2a/Polpo/pull/163) / `2b55de0` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates`, `secret-scan`, `test-linux`, `test-windows`). Milestone successfully concluded. |
 | **2026-10-30** | `POST-STAB-02` | Reconciled retrospective and roadmap relative Markdown links, corrected historical starting baseline SHA representation, and added retrospective to developer documentation contract test suite. | [#164](https://github.com/amirreza-a2a/Polpo/pull/164) / `8a7670a` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [31s], `secret-scan` [7s], `test-linux` [1m38s], `test-windows` [4m34s]). Full test suite passed. |
+| **2026-10-30** | `POST-STAB-02-CORR` | Reconciled retrospective Executive Summary metrics and durations across host-local (136.04s) and CI environments (152.03s historical), corrected Windows CI totals to 2,168 passed / 50 skipped, reconciled PR aggregate count to 42 PRs, and distinguished baseline lineage. | [#165](https://github.com/amirreza-a2a/Polpo/pull/165) / `15d4cb0` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [56s], `secret-scan` [7s], `test-linux` [1m34s], `test-windows` [3m17s]). Full test suite passed. |
 
 ---
 
