@@ -33,13 +33,13 @@ Across 12 major task initiatives encompassing 40 pull requests through STAB-02 c
    - **Local Linux Reference Host (Noble 24.04):** 2,212 passed, 6 skipped (Windows Job Object integration tests), 2 warnings, 201 subtests passed across 2,218 collected items in 136.04s (historical STAB-01 implementation PR #160 recorded 123.55s on a lighter suite).
    - **Linux CI Runner (`ubuntu-24.04`):**
      - **Exact PR #166 CI Execution (Workflow run [41100010840](https://github.com/amirreza-a2a/Polpo/actions/runs/41100010840), HEAD `93e552563abe14ee6801d3d70afdd3d3a996504c`):** 2,204 passed, 14 skipped (6 Windows Job Object + 8 optional host tooling / environmental condition tests), 0 failed, 2 warnings, 198 subtests passed across 2,218 collected items in 79.16s (total job duration 4m 38s; independently verified on PR #165 run [41096211959](https://github.com/amirreza-a2a/Polpo/actions/runs/41096211959) with identical counts).
-     - **Historical STAB-01 CI Run (push run `40940519039` on commit `79e7940e1f4cdb2938ecb336c58eed22bd18b1fa`):** 2,205 passed, 13 skipped, 201 subtests passed across 2,218 collected items in 152.03s.
+     - **Historical STAB-01 CI Run (push run [40940519039](https://github.com/amirreza-a2a/Polpo/actions/runs/40940519039) on commit `79e7940e1f4cdb2938ecb336c58eed22bd18b1fa`):** Confirmed in CI job logs as 2,204 passed, 14 skipped, 2 warnings, 198 subtests passed in 60.39s (total job duration ~1m 35s; an earlier unverified roadmap narrative note had cited 2,205 passed / 13 skipped / 201 subtests by conflating local host subtest metrics).
    - **Windows Server 2025 CI (`windows-2025`):**
      - **Exact PR #166 CI Execution (Workflow run [41100010840](https://github.com/amirreza-a2a/Polpo/actions/runs/41100010840), HEAD `93e552563abe14ee6801d3d70afdd3d3a996504c`):** 2,167 passed, 51 skipped (all 6 Windows Job Object tests pass; 36 Linux-only installer/updater + 7 POSIX-only + 8 optional tooling / environmental condition tests skip), 0 failed, 2 warnings, 198 subtests passed across 2,218 collected items in 205.55s (total job duration 5m 16s; independently verified on PR #165 run [41096211959](https://github.com/amirreza-a2a/Polpo/actions/runs/41096211959) with identical counts).
-     - **Historical Intermediate Baselines:** STAB-01 push CI run `40940519039` recorded 2,168 passed, 50 skipped, 201 subtests passed in ~4m 42s (earlier intermediate baseline STAB-00 reported 2,013 passed / 50 skipped prior to subsequent test suite additions).
+     - **Historical Intermediate Baselines:** STAB-01 push CI run [40940519039](https://github.com/amirreza-a2a/Polpo/actions/runs/40940519039) confirmed in CI job logs as 2,167 passed, 51 skipped, 2 warnings, 198 subtests passed in 208.12s (total job duration ~4m 42s; an earlier unverified roadmap narrative note had cited 2,168 passed / 50 skipped / 201 subtests by conflating local host subtest metrics, while earlier intermediate baseline STAB-00 reported 2,013 passed / 50 skipped prior to subsequent test suite additions).
 2. **Deterministic Quality Gates:**
    - **Local Reference Host Execution:** Diff hygiene, bytecode compilation across 5 packages, and 88 AST architecture and contract invariant tests (164 subtests) pass in 4.15s (local execution).
-   - **CI Quality-Gates Runner (`ubuntu-24.04`, Workflow run [41100010840](https://github.com/amirreza-a2a/Polpo/actions/runs/41100010840)):** 86 passed, 2 skipped (actionlint and real user DB host tooling tests), 161 subtests passed in 1m 0s (job conclusion: success).
+   - **CI Quality-Gates Runner (`ubuntu-24.04`, Workflow run [41100010840](https://github.com/amirreza-a2a/Polpo/actions/runs/41100010840)):** 86 passed, 2 skipped (actionlint validation tests across `release.yml` and `ci.yml`), 161 subtests passed in 1m 0s (job conclusion: success; 3 subtests cleanly skipped due to optional host actionlint binary absence in CI).
 3. **Headless Self-Test Coverage:** The desktop diagnostic self-test (`interfaces.desktop.self_test`) verifies 12 runtime and packaging invariants (Pandoc AST parsing, MathJax SVG rendering, SQLite bootstrap, UnitOfWork access, credential isolation, and QML compilation) in isolated headless environments.
 4. **Enforced Security and Release Safeguards:** All GitHub Actions workflows run on Node 24 pinned to immutable 40-character commit SHAs, release publication is strictly gated to authenticated pushes on `refs/tags/v*`, and the mandatory release freeze remains intact (`v0.1.0-rc.1` pre-release candidate).
 
@@ -215,8 +215,8 @@ Continuous validation across both Linux and Windows is mandatory for desktop sof
 
 A common failure mode in software maintenance is ignoring skipped tests until broken tests are accidentally skipped. Stabilization cataloged every single test skip across all environments:
 - **Local Linux Reference Host:** Exactly 6 tests skipped (Windows Job Object integration tests requiring native Win32 APIs).
-- **Linux CI Runner:** Exactly 14 tests skipped in PR #166 CI (6 Windows Job Object tests + 8 optional host tooling / environmental condition tests; historical STAB-01 run `40940519039` recorded 13 skipped).
-- **Windows CI Runner:** Exactly 51 tests skipped in PR #166 CI (all 6 Windows Job Object tests pass; 36 Linux-only installer/deps tests skip, 7 POSIX-only tests skip, and 8 optional host tooling / environmental condition tests skip; historical STAB-01 run `40940519039` recorded 50 skipped).
+- **Linux CI Runner:** Exactly 14 tests skipped in PR #166 CI (6 Windows Job Object tests + 8 optional host tooling / environmental condition tests; consistent with historical STAB-01 run [40940519039](https://github.com/amirreza-a2a/Polpo/actions/runs/40940519039) logs which also recorded 14 skipped; earlier roadmap narrative of 13 skipped was an unverified estimate).
+- **Windows CI Runner:** Exactly 51 tests skipped in PR #166 CI (all 6 Windows Job Object tests pass; 36 Linux-only installer/deps tests skip, 7 POSIX-only tests skip, and 8 optional host tooling / environmental condition tests skip; consistent with historical STAB-01 run [40940519039](https://github.com/amirreza-a2a/Polpo/actions/runs/40940519039) logs which also recorded 51 skipped; earlier roadmap narrative of 50 skipped was an unverified estimate).
 
 Zero unexpected skips exist. Every skip condition is backed by explicit environmental detection (`@pytest.mark.skipif`).
 
@@ -263,18 +263,18 @@ The stabilization milestone has addressed all identified functional, architectur
 
 ### Comprehensive Test Suite Execution
 
-*Evidence: Exact CI metrics verified from GitHub Actions workflow run [41100010840](https://github.com/amirreza-a2a/Polpo/actions/runs/41100010840) on PR #166 (HEAD: `93e552563abe14ee6801d3d70afdd3d3a996504c`), independently consistent with PR #165 run [41096211959](https://github.com/amirreza-a2a/Polpo/actions/runs/41096211959).*
+*Evidence: Exact CI metrics verified from GitHub Actions workflow run [41100010840](https://github.com/amirreza-a2a/Polpo/actions/runs/41100010840) on PR #166 (HEAD: `93e552563abe14ee6801d3d70afdd3d3a996504c`), independently consistent with PR #165 run [41096211959](https://github.com/amirreza-a2a/Polpo/actions/runs/41096211959) and historical STAB-01 run [40940519039](https://github.com/amirreza-a2a/Polpo/actions/runs/40940519039).*
 
-| Metric / Category | Local Linux Host (Noble 24.04) | Linux CI (`ubuntu-24.04`) [PR #166] | Windows CI (`windows-2025`) [PR #166] | Historical CI Run `40940519039` (STAB-01) |
-| :--- | :---: | :---: | :---: | :---: |
-| **Passed Tests** | **2,212** | **2,204** | **2,167** | Linux: 2,205 / Windows: 2,168 |
-| **Skipped Tests** | **6** | **14** | **51** | Linux: 13 / Windows: 50 |
-| **Failed Tests** | **0** | **0** | **0** | 0 failures |
-| **Warnings** | **2** | **2** | **2** | 2 warnings |
-| **Subtests Passed** | **201** | **198** | **198** | 201 subtests |
-| **Total Collected** | **2,218** | **2,218** | **2,218** | 2,218 collected items |
-| **Execution Duration** | **136.04s** | **79.16s** (job: 4m 38s) | **205.55s** (job: 5m 16s) | Linux: 152.03s / Windows: ~4m 42s |
-| **Outcome** | **PASS** | **PASS** | **PASS** | **PASS** |
+| Metric / Category | Local Linux Host (Noble 24.04) | Linux CI (`ubuntu-24.04`) [PR #166] | Windows CI (`windows-2025`) [PR #166] | Historical CI Run `40940519039` (STAB-01) | Historical Roadmap Estimate (Unverified) |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Passed Tests** | **2,212** | **2,204** | **2,167** | Linux: 2,204 / Windows: 2,167 | Linux: 2,205 / Windows: 2,168 |
+| **Skipped Tests** | **6** | **14** | **51** | Linux: 14 / Windows: 51 | Linux: 13 / Windows: 50 |
+| **Failed Tests** | **0** | **0** | **0** | 0 failures | 0 failures |
+| **Warnings** | **2** | **2** | **2** | 2 warnings | 2 warnings |
+| **Subtests Passed** | **201** | **198** | **198** | 198 subtests | 201 subtests (local metric) |
+| **Total Collected** | **2,218** | **2,218** | **2,218** | 2,218 collected items | 2,218 collected items |
+| **Execution Duration** | **136.04s** | **79.16s** (job: 4m 38s) | **205.55s** (job: 5m 16s) | Linux: 60.39s / Windows: 208.12s | Linux: 152.03s / Windows: ~4m 42s |
+| **Outcome** | **PASS** | **PASS** | **PASS** | **PASS** | **PASS** |
 
 ### Quality Gates & Static Verification
 
@@ -282,7 +282,7 @@ The stabilization milestone has addressed all identified functional, architectur
 | :--- | :--- | :---: | :---: | :--- |
 | **Whitespace Hygiene** | `git diff --check` | **PASS** | **PASS** | Zero trailing whitespace or merge conflict markers. |
 | **Bytecode Compilation** | `compileall` across 5 packages | **PASS** | **PASS** | Clean compilation across `core`, `application`, `infrastructure`, `interfaces`, `tests`. |
-| **Architecture Invariants** | `scripts/run_quality_gates.py` | **88 passed, 0 skipped, 164 subtests** (4.15s) | **86 passed, 2 skipped, 161 subtests** (1m 0s) | AST invariants; CI skips actionlint and local user DB tests cleanly. |
+| **Architecture Invariants** | `scripts/run_quality_gates.py` | **88 passed, 0 skipped, 164 subtests** (4.15s) | **86 passed, 2 skipped, 161 subtests** (1m 0s) | AST invariants; CI cleanly skips optional host actionlint validation across `release.yml` and `ci.yml` (3 subtests). |
 | **Workflow Linting** | `actionlint .github/workflows/*.yml` | **PASS** | **N/A** (tooling optional) | Zero workflow syntax or actionlint schema violations. |
 | **Secret Scanning** | Gitleaks v3.0.0 (`secret-scan`) | **PASS** | **PASS** (0 leaks) | 0 leaks detected across full git commit history. |
 | **Desktop Self-Test** | `python -m interfaces.desktop.self_test` | **PASS** | **PASS** | 12/12 runtime and packaging invariants verified in isolated environment. |
