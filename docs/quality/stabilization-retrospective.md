@@ -9,6 +9,7 @@
 **Historical STAB-02 Closeout Merge SHA:** `2b55de09c33dddbffe039b34d2ee35662daab4e7` (PR #163)<br/>
 **Subsequent Reconciliation Hardening Merge SHA:** `8a7670a3c68fe07248786074863e2182aef0cc1c` (PR #164)<br/>
 **Subsequent Evidence-Correction Merge SHA:** `15d4cb09a731f6f7272eaa8704bf2b424d0260b2` (PR #165)<br/>
+**Post-Completion Reconciliation Merge SHA (Current Handoff Baseline):** `f33836d5b1ffa622397f63c0c5e5eedf71cdc0f5` (PR #166)<br/>
 **Milestone:** `STAB-02` (Final Stabilization Milestone Closeout)<br/>
 **Status:** COMPLETE & AUTHORITATIVE<br/>
 
@@ -27,12 +28,18 @@ Prior to stabilization, the repository contained significant architectural drift
 - CI workflows relied on Node.js 20 actions facing platform deprecation, with unhardened inline expressions and potential release dry-run hazards.
 - Windows-specific runtime risks (subprocess console flashing, process group termination, and file-locking differences) lacked regression proof.
 
-Across 12 major task initiatives encompassing 40 pull requests through STAB-02 closeout (PRs #124–#163), 41 pull requests including subsequent post-STAB-02 reconciliation hardening (PRs #124–#164), and 42 pull requests including the final evidence-correction change (PRs #124–#165), the stabilization roadmap (`docs/quality/stabilization-roadmap.md`) systematically resolved these defects without introducing feature creep or breaking changes. Progressing from the STAB-01 closeout baseline (`79e7940e1f4cdb2938ecb336c58eed22bd18b1fa`) through the STAB-02 implementation merge (`714e78d07b22412f528c044b3695182151aede0e`, PR #162), the historical STAB-02 milestone closeout (`2b55de09c33dddbffe039b34d2ee35662daab4e7`, PR #163), subsequent reconciliation hardening (`8a7670a3c68fe07248786074863e2182aef0cc1c`, PR #164), and final evidence correction (`15d4cb09a731f6f7272eaa8704bf2b424d0260b2`, PR #165), the codebase achieves:
+Across 12 major task initiatives encompassing 40 pull requests through STAB-02 closeout (PRs #124–#163), 41 pull requests including subsequent post-STAB-02 reconciliation hardening (PRs #124–#164), and 42 pull requests encompassing all stabilization tasks and evidence corrections (PRs #124–#165), with PR #166 serving as an additional post-completion reconciliation ([HEAD `93e552563abe14ee6801d3d70afdd3d3a996504c`](https://github.com/amirreza-a2a/Polpo/commit/93e552563abe14ee6801d3d70afdd3d3a996504c), workflow run [41100010840](https://github.com/amirreza-a2a/Polpo/actions/runs/41100010840), merged at `f33836d5b1ffa622397f63c0c5e5eedf71cdc0f5`), the stabilization roadmap (`docs/quality/stabilization-roadmap.md`) systematically resolved these defects without introducing feature creep or breaking changes. Progressing from the STAB-01 closeout baseline (`79e7940e1f4cdb2938ecb336c58eed22bd18b1fa`) through the STAB-02 implementation merge (`714e78d07b22412f528c044b3695182151aede0e`, PR #162), the historical STAB-02 milestone closeout (`2b55de09c33dddbffe039b34d2ee35662daab4e7`, PR #163), subsequent reconciliation hardening (`8a7670a3c68fe07248786074863e2182aef0cc1c`, PR #164), final evidence correction (`15d4cb09a731f6f7272eaa8704bf2b424d0260b2`, PR #165), and post-completion reconciliation (`f33836d5b1ffa622397f63c0c5e5eedf71cdc0f5`, PR #166), the codebase achieves:
 1. **Zero Test Failures with Explicitly Classified Skips:** All executed tests passed with zero failures and fully classified skips across reference environments:
    - **Local Linux Reference Host (Noble 24.04):** 2,212 passed, 6 skipped (Windows Job Object integration tests), 2 warnings, 201 subtests passed across 2,218 collected items in 136.04s (historical STAB-01 implementation PR #160 recorded 123.55s on a lighter suite).
-   - **Linux CI Runner (`ubuntu-24.04`):** 2,205 passed, 13 skipped (6 Windows Job Object + 7 optional host tooling tests), 2 warnings, 201 subtests passed across 2,218 collected items in ~1m 35s (historical STAB-01 push CI run `40940519039` recorded 152.03s in its test execution step).
-   - **Windows Server 2025 CI (`windows-2025`):** 2,168 passed, 50 skipped (all 6 Windows Job Object tests pass; 36 Linux-only installer/updater + 7 POSIX-only + 7 optional tooling tests skip), 0 failures, 2 warnings, 201 subtests passed across 2,218 collected items in ~4m 42s. (Earlier intermediate baseline STAB-00 reported 2,013 passed / 50 skipped prior to subsequent test suite additions).
-2. **Deterministic Quality Gates:** Diff hygiene, bytecode compilation across 5 packages, and 88 AST architecture and contract invariant tests (164 subtests) pass in ~4 seconds.
+   - **Linux CI Runner (`ubuntu-24.04`):**
+     - **Exact PR #166 CI Execution (Workflow run [41100010840](https://github.com/amirreza-a2a/Polpo/actions/runs/41100010840), HEAD `93e552563abe14ee6801d3d70afdd3d3a996504c`):** 2,204 passed, 14 skipped (6 Windows Job Object + 8 optional host tooling / environmental condition tests), 0 failed, 2 warnings, 198 subtests passed across 2,218 collected items in 79.16s (total job duration 4m 38s; independently verified on PR #165 run [41096211959](https://github.com/amirreza-a2a/Polpo/actions/runs/41096211959) with identical counts).
+     - **Historical STAB-01 CI Run (push run `40940519039` on commit `79e7940e1f4cdb2938ecb336c58eed22bd18b1fa`):** 2,205 passed, 13 skipped, 201 subtests passed across 2,218 collected items in 152.03s.
+   - **Windows Server 2025 CI (`windows-2025`):**
+     - **Exact PR #166 CI Execution (Workflow run [41100010840](https://github.com/amirreza-a2a/Polpo/actions/runs/41100010840), HEAD `93e552563abe14ee6801d3d70afdd3d3a996504c`):** 2,167 passed, 51 skipped (all 6 Windows Job Object tests pass; 36 Linux-only installer/updater + 7 POSIX-only + 8 optional tooling / environmental condition tests skip), 0 failed, 2 warnings, 198 subtests passed across 2,218 collected items in 205.55s (total job duration 5m 16s; independently verified on PR #165 run [41096211959](https://github.com/amirreza-a2a/Polpo/actions/runs/41096211959) with identical counts).
+     - **Historical Intermediate Baselines:** STAB-01 push CI run `40940519039` recorded 2,168 passed, 50 skipped, 201 subtests passed in ~4m 42s (earlier intermediate baseline STAB-00 reported 2,013 passed / 50 skipped prior to subsequent test suite additions).
+2. **Deterministic Quality Gates:**
+   - **Local Reference Host Execution:** Diff hygiene, bytecode compilation across 5 packages, and 88 AST architecture and contract invariant tests (164 subtests) pass in 4.15s (local execution).
+   - **CI Quality-Gates Runner (`ubuntu-24.04`, Workflow run [41100010840](https://github.com/amirreza-a2a/Polpo/actions/runs/41100010840)):** 86 passed, 2 skipped (actionlint and real user DB host tooling tests), 161 subtests passed in 1m 0s (job conclusion: success).
 3. **Headless Self-Test Coverage:** The desktop diagnostic self-test (`interfaces.desktop.self_test`) verifies 12 runtime and packaging invariants (Pandoc AST parsing, MathJax SVG rendering, SQLite bootstrap, UnitOfWork access, credential isolation, and QML compilation) in isolated headless environments.
 4. **Enforced Security and Release Safeguards:** All GitHub Actions workflows run on Node 24 pinned to immutable 40-character commit SHAs, release publication is strictly gated to authenticated pushes on `refs/tags/v*`, and the mandatory release freeze remains intact (`v0.1.0-rc.1` pre-release candidate).
 
@@ -81,7 +88,7 @@ The stabilization roadmap progressed through six distinct architectural phases:
 | **FA-01** | [PR #150](https://github.com/amirreza-a2a/Polpo/pull/150) | `22dba4135840f766c093218f548e8451d67dfc1c` | [PR #151](https://github.com/amirreza-a2a/Polpo/pull/151) (`8642432a...`), [PR #152](https://github.com/amirreza-a2a/Polpo/pull/152) (`39c1157f...`), [PR #153](https://github.com/amirreza-a2a/Polpo/pull/153) (`2aca2e8e...`) | Translated Persian technical comments and docstrings across 20 source files to English; preserved Persian prompt templates and test strings; verified 100% AST invariance across all modified Python files. |
 | **CI-01** | [PR #154](https://github.com/amirreza-a2a/Polpo/pull/154) | `6f1c9efa6ab5d14b3b2f2de0d4225eb447aa00f2` | [PR #155](https://github.com/amirreza-a2a/Polpo/pull/155) (`94253289...`), [PR #156](https://github.com/amirreza-a2a/Polpo/pull/156) (`bb83f41e...`), [PR #157](https://github.com/amirreza-a2a/Polpo/pull/157) (`ab4ea4f9...`), [PR #158](https://github.com/amirreza-a2a/Polpo/pull/158) (`dd081b99...`), [PR #159](https://github.com/amirreza-a2a/Polpo/pull/159) (`4dc3ccb3...`) | Migrated GitHub Actions to Node 24 pinned to 40-char SHAs; validated release gating; eliminated unsafe expression interpolation in `run:` blocks; added standalone workflow expression scanner and contract tests. |
 | **STAB-01** | [PR #160](https://github.com/amirreza-a2a/Polpo/pull/160) | `bb41c826ee34dbde9dcb748ddfd2896329faf669` | [PR #161](https://github.com/amirreza-a2a/Polpo/pull/161) (`79e7940e...`) | Cross-platform audit: Windows `CREATE_NO_WINDOW` subprocess suppression in Pandoc; self-test Migration 005 and UnitOfWork coverage; hardened concurrency wait loops; resolved timing flakes. |
-| **STAB-02** | [PR #162](https://github.com/amirreza-a2a/Polpo/pull/162) | `714e78d07b22412f528c044b3695182151aede0e` | [PR #163](https://github.com/amirreza-a2a/Polpo/pull/163) (`2b55de09...`), [PR #164](https://github.com/amirreza-a2a/Polpo/pull/164) (`8a7670a3...`), [PR #165](https://github.com/amirreza-a2a/Polpo/pull/165) (`15d4cb09...`) | Full verification pass, retrospective authoring, feature-ready handoff baseline, subsequent documentation link/SHA reconciliation hardening, and final evidence-correction reconciliation. |
+| **STAB-02** | [PR #162](https://github.com/amirreza-a2a/Polpo/pull/162) | `714e78d07b22412f528c044b3695182151aede0e` | [PR #163](https://github.com/amirreza-a2a/Polpo/pull/163) (`2b55de09...`), [PR #164](https://github.com/amirreza-a2a/Polpo/pull/164) (`8a7670a3...`), [PR #165](https://github.com/amirreza-a2a/Polpo/pull/165) (`15d4cb09...`), [PR #166](https://github.com/amirreza-a2a/Polpo/pull/166) (`f33836d5...`) | Full verification pass, retrospective authoring, feature-ready handoff baseline, subsequent documentation link/SHA reconciliation hardening, final evidence-correction reconciliation (PR #165), and post-completion reconciliation (PR #166). |
 
 ---
 
@@ -192,7 +199,7 @@ Rather than relying solely on post-hoc code review, Polpo enforces architectural
 - Persian comment hygiene (`AGENTS.md` Rule 20 English requirement).
 - Workflow expression safety (no context interpolation in bash blocks).
 
-Running these 88 invariant tests (164 subtests) in ~4 seconds provides instant feedback before running the heavier 2.5-minute full test suite.
+Running these 88 invariant tests (164 subtests locally, 86 passed / 2 skipped / 161 subtests in CI) in ~4 seconds locally (1m in CI) provides instant feedback before running the heavier 2.5-minute full test suite.
 
 ### 6.2 The Value of Native Windows CI
 
@@ -208,8 +215,8 @@ Continuous validation across both Linux and Windows is mandatory for desktop sof
 
 A common failure mode in software maintenance is ignoring skipped tests until broken tests are accidentally skipped. Stabilization cataloged every single test skip across all environments:
 - **Local Linux Reference Host:** Exactly 6 tests skipped (Windows Job Object integration tests requiring native Win32 APIs).
-- **Linux CI Runner:** Exactly 13 tests skipped (6 Windows Job Object tests + 7 optional host tooling tests: Quarto, XeLaTeX, system pandoc, actionlint, user DB).
-- **Windows CI Runner:** Exactly 50 tests skipped (all 6 Windows Job Object tests pass; 36 Linux-only installer/deps tests skip, 7 POSIX-only tests skip, and 7 optional tooling tests skip).
+- **Linux CI Runner:** Exactly 14 tests skipped in PR #166 CI (6 Windows Job Object tests + 8 optional host tooling / environmental condition tests; historical STAB-01 run `40940519039` recorded 13 skipped).
+- **Windows CI Runner:** Exactly 51 tests skipped in PR #166 CI (all 6 Windows Job Object tests pass; 36 Linux-only installer/deps tests skip, 7 POSIX-only tests skip, and 8 optional host tooling / environmental condition tests skip; historical STAB-01 run `40940519039` recorded 50 skipped).
 
 Zero unexpected skips exist. Every skip condition is backed by explicit environmental detection (`@pytest.mark.skipif`).
 
@@ -256,25 +263,29 @@ The stabilization milestone has addressed all identified functional, architectur
 
 ### Comprehensive Test Suite Execution
 
-| Test Category | Local Linux (Noble 24.04) | Linux CI (`ubuntu-24.04`) | Windows CI (`windows-2025`) | Notes / Status |
-| :--- | :---: | :---: | :---: | :--- |
-| **Unit Tests** | **2,103 passed**, 0 skipped | **2,099 passed**, 4 skipped | **2,056 passed**, 47 skipped | Core domain, services, infrastructure, and presentation logic. |
-| **Characterization Tests** | **41 passed**, 0 skipped | **41 passed**, 0 skipped | **41 passed**, 0 skipped | Legacy and theme switching characterization suites. |
-| **Integration Tests** | **68 passed**, 6 skipped | **65 passed**, 9 skipped | **71 passed**, 3 skipped | Multi-component pipelines, process trees, and persistence. |
-| **Total Test Items** | **2,212 passed / 2,218 total** | **2,205 passed / 2,218 total** | **2,168 passed / 2,218 total** | **Zero test failures across all platforms.** |
-| **Subtest Total** | **201 subtests passed** | **201 subtests passed** | **201 subtests passed** | Parameterized AST architecture and contract checks. |
-| **Execution Duration** | **136.04s** | **~1m 35s** | **~4m 42s** | Fast execution with worker-local SQLite and memory caching. |
+*Evidence: Exact CI metrics verified from GitHub Actions workflow run [41100010840](https://github.com/amirreza-a2a/Polpo/actions/runs/41100010840) on PR #166 (HEAD: `93e552563abe14ee6801d3d70afdd3d3a996504c`), independently consistent with PR #165 run [41096211959](https://github.com/amirreza-a2a/Polpo/actions/runs/41096211959).*
+
+| Metric / Category | Local Linux Host (Noble 24.04) | Linux CI (`ubuntu-24.04`) [PR #166] | Windows CI (`windows-2025`) [PR #166] | Historical CI Run `40940519039` (STAB-01) |
+| :--- | :---: | :---: | :---: | :---: |
+| **Passed Tests** | **2,212** | **2,204** | **2,167** | Linux: 2,205 / Windows: 2,168 |
+| **Skipped Tests** | **6** | **14** | **51** | Linux: 13 / Windows: 50 |
+| **Failed Tests** | **0** | **0** | **0** | 0 failures |
+| **Warnings** | **2** | **2** | **2** | 2 warnings |
+| **Subtests Passed** | **201** | **198** | **198** | 201 subtests |
+| **Total Collected** | **2,218** | **2,218** | **2,218** | 2,218 collected items |
+| **Execution Duration** | **136.04s** | **79.16s** (job: 4m 38s) | **205.55s** (job: 5m 16s) | Linux: 152.03s / Windows: ~4m 42s |
+| **Outcome** | **PASS** | **PASS** | **PASS** | **PASS** |
 
 ### Quality Gates & Static Verification
 
-| Gate Component | Command / Tool | Result | Scope / Notes |
-| :--- | :--- | :---: | :--- |
-| **Whitespace Hygiene** | `git diff --check` | **PASS** | Zero trailing whitespace or merge conflict markers. |
-| **Bytecode Compilation** | `compileall` across 5 packages | **PASS** | Clean compilation across `core`, `application`, `infrastructure`, `interfaces`, `tests`. |
-| **Architecture Invariants** | `scripts/run_quality_gates.py` | **PASS** | 88 AST invariant tests (164 subtests) passed in 4.15s. |
-| **Workflow Linting** | `actionlint .github/workflows/*.yml` | **PASS** | Zero workflow syntax or actionlint schema violations. |
-| **Secret Scanning** | Gitleaks v3.0.0 (`secret-scan`) | **PASS** | 0 leaks detected across full git commit history. |
-| **Desktop Self-Test** | `python -m interfaces.desktop.self_test` | **PASS** | 12/12 runtime and packaging invariants verified in isolated environment. |
+| Gate Component | Command / Tool | Local Host Result | CI Runner Result (Run 41100010840) | Scope / Notes |
+| :--- | :--- | :---: | :---: | :--- |
+| **Whitespace Hygiene** | `git diff --check` | **PASS** | **PASS** | Zero trailing whitespace or merge conflict markers. |
+| **Bytecode Compilation** | `compileall` across 5 packages | **PASS** | **PASS** | Clean compilation across `core`, `application`, `infrastructure`, `interfaces`, `tests`. |
+| **Architecture Invariants** | `scripts/run_quality_gates.py` | **88 passed, 0 skipped, 164 subtests** (4.15s) | **86 passed, 2 skipped, 161 subtests** (1m 0s) | AST invariants; CI skips actionlint and local user DB tests cleanly. |
+| **Workflow Linting** | `actionlint .github/workflows/*.yml` | **PASS** | **N/A** (tooling optional) | Zero workflow syntax or actionlint schema violations. |
+| **Secret Scanning** | Gitleaks v3.0.0 (`secret-scan`) | **PASS** | **PASS** (0 leaks) | 0 leaks detected across full git commit history. |
+| **Desktop Self-Test** | `python -m interfaces.desktop.self_test` | **PASS** | **PASS** | 12/12 runtime and packaging invariants verified in isolated environment. |
 
 ---
 
@@ -289,6 +300,7 @@ With the stabilization milestone successfully closed, Polpo is ready to transiti
 - **Historical STAB-02 Closeout Baseline:** `2b55de09c33dddbffe039b34d2ee35662daab4e7` (milestone closeout commit on `main` at PR #163, following PR #162 at `714e78d07b22412f528c044b3695182151aede0e`).
 - **Subsequent Reconciliation Hardening Baseline:** `8a7670a3c68fe07248786074863e2182aef0cc1c` (post-STAB-02 documentation link & SHA hardening at PR #164).
 - **Subsequent Evidence-Correction Baseline:** `15d4cb09a731f6f7272eaa8704bf2b424d0260b2` (post-STAB-02 retrospective metric, baseline lineage, and PR count evidence correction at PR #165).
+- **Post-Completion Reconciliation Baseline (Authoritative External Handoff):** `f33836d5b1ffa622397f63c0c5e5eedf71cdc0f5` (commit on `main` at PR #166, HEAD `93e552563abe14ee6801d3d70afdd3d3a996504c`, workflow run [41100010840](https://github.com/amirreza-a2a/Polpo/actions/runs/41100010840); verified starting baseline for future feature development).
 - **Branching Directive:** Developers must always fetch the latest `origin/main` (`git checkout main && git pull origin main`) before branching rather than branching from an arbitrary historical snapshot SHA.
 - **Core Directives:**
   - `AGENTS.md`: Mandatory standing rules governing clean architecture, local-first execution, and security.
