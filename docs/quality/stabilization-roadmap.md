@@ -49,19 +49,21 @@ This document serves as the **single source of truth** for stabilization. Future
 *STAB-01 Verified Execution Snapshot: 2026-10-29 22:40 UTC+03:30 (Commit `bb41c82`, PR #160)*<br/>
 *STAB-01 Verified Closeout Snapshot: 2026-10-29 22:59 UTC+03:30 (Commit `79e7940`, PR #161)*<br/>
 *STAB-02 Historical Implementation Snapshot: 2026-10-30 16:51 UTC+03:30 (Commit `714e78d`, PR #162)*<br/>
-*STAB-02 Verified Closeout Snapshot: 2026-10-30 17:23 UTC+03:30 (Commit `2b55de0`, PR #163)*
+*STAB-02 Verified Closeout Snapshot: 2026-10-30 17:23 UTC+03:30 (Commit `2b55de0`, PR #163)*<br/>
+*Subsequent Documentation Link & SHA Reconciliation Snapshot: 2026-10-30 18:35 UTC+03:30 (Commit `8a7670a`, PR #164)*
 
-### 2.1 Git and Working Tree State
+### 2.1 Git and Working Tree State (Historical Milestone Snapshot & Baseline Lineage)
 
 | Property | Verified Value | Evidence Source |
 | :--- | :--- | :--- |
 | **Active Baseline Branch** | `main` | `git status` |
-| **HEAD Commit SHA (main)** | `2b55de09c33dddbffe039b34d2ee35662daab4e7` | `git rev-parse HEAD` |
-| **Commit Message** | `docs(quality): reconcile roadmap and retrospective with STAB-02 merge evidence (#162) (#163)` | `git log -1` |
-| **Remote Synchronization** | Up to date with `origin/main` | `git status -sb` |
+| **Historical STAB-02 Closeout SHA** | `2b55de09c33dddbffe039b34d2ee35662daab4e7` (Milestone closeout snapshot at PR #163) | Historical milestone closeout record |
+| **Subsequent Reconciliation SHA** | `8a7670a3c68fe07248786074863e2182aef0cc1c` (Post-STAB-02 documentation hardening at PR #164) | `git rev-parse HEAD` at PR #164 merge |
+| **Commit Message (PR #164)** | `docs(quality): reconcile roadmap and retrospective relative links and milestone SHA (#164)` | `git log -1` |
+| **Remote Synchronization** | Up to date with `origin/main` (future developers must fetch latest `origin/main` before branching) | `git status -sb` |
 | **Working Tree Status** | Clean (no modified, untracked, or staged files) | `git status --porcelain` |
 | **Latest Git Tag** | `v0.1.0-rc.1` | `git tag -l` |
-| **Git Describe** | `v0.1.0-rc.1-45-g2b55de0` | `git describe --tags --always` |
+| **Git Describe (PR #164)** | `v0.1.0-rc.1-46-g8a7670a` | `git describe --tags --always` |
 | **GitHub Releases** | Exactly 1 Pre-release: `v0.1.0-rc.1` (Zero stable releases published) | `gh release list` |
 | **Application Version** | `APP_NAME = "Polpo"`, `__version__ = "0.1.0"`, `VERSION_INFO = (0, 1, 0)` | `core/version.py:9-11`, `pyproject.toml:7` |
 
@@ -672,7 +674,7 @@ flowchart TD
   QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ./.venv/bin/python -m interfaces.desktop.self_test
   ```
 - **Branch Suggestion:** `docs/stabilization-milestone-retro`
-- **PR / CI / Merge Record:** [PR #162](https://github.com/amirreza-a2a/Polpo/pull/162) merged into `main` at `714e78d07b22412f528c044b3695182151aede0e` (Implementation); [PR #163](https://github.com/amirreza-a2a/Polpo/pull/163) merged into `main` at `2b55de09c33dddbffe039b34d2ee35662daab4e7` (Closeout). All 4 required CI status checks passed on both PRs: `quality-gates`, `secret-scan`, `test-linux`, `test-windows`. Full test suite passed across Linux (2,212 passed, 6 skipped, 2 warnings, 201 subtests) and Windows CI (2,168 passed, 50 skipped).
+- **PR / CI / Merge Record:** [PR #162](https://github.com/amirreza-a2a/Polpo/pull/162) merged into `main` at `714e78d07b22412f528c044b3695182151aede0e` (Implementation); [PR #163](https://github.com/amirreza-a2a/Polpo/pull/163) merged into `main` at `2b55de09c33dddbffe039b34d2ee35662daab4e7` (Closeout); followed by subsequent post-STAB-02 link/SHA reconciliation hardening [PR #164](https://github.com/amirreza-a2a/Polpo/pull/164) merged into `main` at `8a7670a3c68fe07248786074863e2182aef0cc1c`. All 4 required CI status checks passed on all PRs: `quality-gates`, `secret-scan`, `test-linux`, `test-windows`. Full test suite passed across Linux (2,212 passed, 6 skipped, 2 warnings, 201 subtests) and Windows CI (2,168 passed, 50 skipped).
 - **Notes & Risks:** Must not advance release tag or channel. Mandatory release freeze preserved.
 
 ---
@@ -969,6 +971,7 @@ The following standing constraints apply to all stabilization operations:
 | **2026-10-29** | `STAB-01-CLOSEOUT` | Reconciled roadmap for STAB-01 completion, recorded execution snapshot, and advanced baseline to `79e7940e1f4cdb2938ecb336c58eed22bd18b1fa`. | [#161](https://github.com/amirreza-a2a/Polpo/pull/161) / `79e7940` | Merged cleanly into `main` after all 4 required status checks passed. Push CI run 40940519039 passed all checks. |
 | **2026-10-30** | `STAB-02` | Completed final stabilization milestone verification and comprehensive retrospective (`docs/quality/stabilization-retrospective.md`); verified 100% passing test suite across Linux (2,212 passed, 6 skipped, 2 warnings, 201 subtests) and Windows Server 2025 CI (2,168 passed, 50 skipped); verified quality gates (88 AST invariants, 164 subtests); verified headless self-test (12/12 runtime/packaging invariants); verified release freeze and GitHub Actions Node 24 immutable pins; authored feature handoff guide. | [#162](https://github.com/amirreza-a2a/Polpo/pull/162) / `714e78d` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates`, `secret-scan`, `test-linux`, `test-windows`). Full test suite passed. |
 | **2026-10-30** | `STAB-02-CLOSEOUT` | Reconciled roadmap and retrospective with STAB-02 merge evidence, advanced milestone baseline to `2b55de09c33dddbffe039b34d2ee35662daab4e7`, and verified final closeout state. | [#163](https://github.com/amirreza-a2a/Polpo/pull/163) / `2b55de0` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates`, `secret-scan`, `test-linux`, `test-windows`). Milestone successfully concluded. |
+| **2026-10-30** | `POST-STAB-02` | Reconciled retrospective and roadmap relative Markdown links, corrected historical starting baseline SHA representation, and added retrospective to developer documentation contract test suite. | [#164](https://github.com/amirreza-a2a/Polpo/pull/164) / `8a7670a` | Merged cleanly into `main` after all 4 required status checks passed (`quality-gates` [31s], `secret-scan` [7s], `test-linux` [1m38s], `test-windows` [4m34s]). Full test suite passed. |
 
 ---
 
@@ -982,7 +985,8 @@ All 12 roadmap initiatives (`STAB-00` through `STAB-02`) have been implemented, 
 
 Future engineering sessions should no longer work under stabilization bug-fix constraints, but should transition to active product and feature initiatives:
 
-1. **Authoritative Retrospective:** Read [`docs/quality/stabilization-retrospective.md`](stabilization-retrospective.md) for architectural lessons, cross-platform contracts, security invariants, and remaining non-blocking limitations.
-2. **Consult Core Directives:** Adhere strictly to `AGENTS.md` (standing rules), `CONTEXT.md` (ubiquitous language), and `docs/agents/skills.md` (agent skill selection and sequencing).
-3. **Preserve Architectural Invariants:** Maintain clean inward dependency flow, worker-local SQLite connections under UnitOfWork, atomic job claims (`BEGIN IMMEDIATE`), `CredentialRef` secret isolation, and the mandatory release freeze until official publication authorization.
-4. **Follow CI Gating:** Every feature change must be verified locally (`scripts/run_quality_gates.py`, `interfaces.desktop.self_test`, and `pytest tests/`) and must pass all four required status checks on GitHub (`quality-gates`, `secret-scan`, `test-linux`, `test-windows`).
+1. **Branch from Latest Main:** Before creating any new feature branch, developers must fetch the latest remote `origin/main` (`git checkout main && git pull origin main`). Do not hardcode or branch from historical closeout snapshot SHAs (`2b55de0` or `8a7670a`).
+2. **Authoritative Retrospective:** Read [`docs/quality/stabilization-retrospective.md`](stabilization-retrospective.md) for architectural lessons, cross-platform contracts, security invariants, and remaining non-blocking limitations.
+3. **Consult Core Directives:** Adhere strictly to `AGENTS.md` (standing rules), `CONTEXT.md` (ubiquitous language), and `docs/agents/skills.md` (agent skill selection and sequencing).
+4. **Preserve Architectural Invariants:** Maintain clean inward dependency flow, worker-local SQLite connections under UnitOfWork, atomic job claims (`BEGIN IMMEDIATE`), `CredentialRef` secret isolation, and the mandatory release freeze until official publication authorization.
+5. **Follow CI Gating:** Every feature change must be verified locally (`scripts/run_quality_gates.py`, `interfaces.desktop.self_test`, and `pytest tests/`) and must pass all four required status checks on GitHub (`quality-gates`, `secret-scan`, `test-linux`, `test-windows`).
