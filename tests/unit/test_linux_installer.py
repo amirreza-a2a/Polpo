@@ -294,11 +294,11 @@ def test_stable_channel_absence_reports_actionable_error(tmp_path: Path):
 
     fake_env = {"PATH": f"{mock_bin}:{os.environ.get('PATH', '')}"}
     res = run_installer(
-        ["--channel", "stable", "--repo", "amirreza-a2a/Polpo-nonexistent-9999"],
+        ["--channel", "stable"],
         env=fake_env,
     )
     assert res.returncode == 1
-    assert "No published stable release was found" in res.stderr
+    assert "No published stable release was found for amirreza-a2a/Polpo" in res.stderr
     assert "--channel preview" in res.stdout or "--channel preview" in res.stderr
 
 
