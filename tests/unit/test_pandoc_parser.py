@@ -25,6 +25,7 @@ from core.markdown.ast import (
     MarkdownDocument,
     MathBlock,
     ParagraphBlock,
+    RawBlock,
     TableFallbackBlock,
     ThematicBreakBlock,
 )
@@ -430,3 +431,50 @@ def test_transform_list_item_unicode_checkbox_markers():
     assert item_checked2.is_task is True
     assert item_checked2.task_checked is True
     assert item_checked2.inlines[0].text == "Finished"
+
+
+def test_parse_raw_latex_block_canonical():
+    parser = PandocParser()
+    md = (
+        "# Heading\n\n"
+        "```{=latex}\n"
+        "\\begin{tikzpicture}\n"
+        "    \\draw[thick] (0,0) -- (2,1);\n"
+        "\\end{tikzpicture}\n"
+        "```\n\n"
+        "Trailing paragraph."
+    )
+    doc = parser.parse(md)
+    assert len(doc.blocks) == 3
+    assert isinstance(doc.blocks[0], HeadingBlock)
+    raw = doc.blocks[1]
+    assert isinstance(raw, RawBlock)
+    assert raw.format == "latex"
+    assert "\\begin{tikzpicture}" in raw.content
+    assert "\\draw[thick] (0,0) -- (2,1);" in raw.content
+    assert "\\end{tikzpicture}" in raw.content
+    assert raw.source_start_line is not None
+    assert isinstance(doc.blocks[2], ParagraphBlock)
+
+
+def test_raw_block_preserves_regular_code_blocks():
+    parser = PandocParser()
+    md = (
+        "```latex\n"
+        "\\begin{tikzpicture}\n"
+        "    \\draw (0,0) -- (1,1);\n"
+        "\\end{tikzpicture}\n"
+        "```\n\n"
+        "```python\n"
+        "print('hello')\n"
+        "```"
+    )
+    doc = parser.parse(md)
+    assert len(doc.blocks) == 2
+    assert isinstance(doc.blocks[0], CodeBlock)
+    assert doc.blocks[0].language == "latex"
+    assert "\\begin{tikzpicture}" in doc.blocks[0].content
+
+    assert isinstance(doc.blocks[1], CodeBlock)
+    assert doc.blocks[1].language == "python"
+    assert "print('hello')" in doc.blocks[1].content

@@ -25,6 +25,7 @@ from core.markdown.ast import (
     MarkdownDocument,
     MathBlock,
     ParagraphBlock,
+    RawBlock,
     TableFallbackBlock,
     ThematicBreakBlock,
 )
@@ -388,7 +389,8 @@ class PandocParser(IMarkdownParser):
 
         orig_sl, orig_sc, orig_el, orig_ec = self._map_positions(node, pos_mapper)
         if inherited_pos is not None and (
-            orig_sl is None or t in ("Para", "BulletList", "OrderedList", "BlockQuote", "HorizontalRule")
+            orig_sl is None
+            or t in ("Para", "BulletList", "OrderedList", "BlockQuote", "HorizontalRule", "RawBlock")
         ):
             orig_sl, orig_sc, orig_el, orig_ec = inherited_pos
 
@@ -601,5 +603,19 @@ class PandocParser(IMarkdownParser):
                 )
             ]
 
-        # Ignore unhandled blocks (e.g. RawBlock, Null)
+        elif t == "RawBlock":
+            raw_format = c[0] if isinstance(c, list) and len(c) > 0 else ""
+            raw_content = c[1] if isinstance(c, list) and len(c) > 1 else ""
+            return [
+                RawBlock(
+                    format=raw_format,
+                    content=raw_content,
+                    source_start_line=orig_sl,
+                    source_end_line=orig_el,
+                    source_start_col=orig_sc,
+                    source_end_col=orig_ec,
+                )
+            ]
+
+        # Ignore unhandled blocks (e.g. Null)
         return []

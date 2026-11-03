@@ -20,6 +20,7 @@ class BlockType(str, Enum):
     THEMATIC_BREAK = "thematic_break"
     TABLE_FALLBACK = "table_fallback"
     MATH_BLOCK = "math_block"
+    RAW_BLOCK = "raw_block"
 
 
 class InlineType(str, Enum):
@@ -201,6 +202,14 @@ class MathBlock(MarkdownBlock):
     """Standalone display mathematical equation ($$...$$)."""
     content: str
     block_type: BlockType = field(default=BlockType.MATH_BLOCK, init=False)
+
+
+@dataclass(frozen=True)
+class RawBlock(MarkdownBlock):
+    """Raw format block node (e.g. ```{=latex} ... ``` or Pandoc RawBlock)."""
+    format: str
+    content: str
+    block_type: BlockType = field(default=BlockType.RAW_BLOCK, init=False)
 
 
 def _freeze_metadata_value(val: Any) -> Any:
