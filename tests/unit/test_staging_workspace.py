@@ -127,8 +127,10 @@ def test_staging_copies_preamble_template(tmp_path: Path):
         assert "\\babelprovide[import]{english}" in preamble_text
         assert "\\babelfont{rm}{FreeSerif}" in preamble_text
         assert "\\babelfont{sf}{FreeSerif}" in preamble_text
-        assert "\\AtBeginEnvironment{tikzpicture}{\\begin{otherlanguage*}{english}}" in preamble_text
-        assert "\\AtEndEnvironment{tikzpicture}{\\end{otherlanguage*}}" in preamble_text
+        assert "\\usepackage{circuitikz}" in preamble_text
+        assert "\\usepackage{tikz-cd}" in preamble_text
+        assert "\\AtBeginEnvironment{tikzpicture}{\\selectlanguage{english}}" in preamble_text
+        assert "\\AtEndEnvironment{tikzpicture}{\\selectlanguage{persian}}" in preamble_text
         assert "\\providecommand{\\style}[2]{#2}" in preamble_text
         assert "\\newcommand{\\persiantext}[1]" in preamble_text
         assert "\\RenewDocumentCommand{\\includegraphics}" in preamble_text
