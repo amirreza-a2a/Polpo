@@ -65,11 +65,12 @@ How must PDF export be integrated into Polpo Desktop to guarantee:
 - **Security Boundary:** Raw LaTeX is expressive input. The export pipeline must enforce `--no-shell-escape`, but this does not constitute complete sandboxing. The residual security boundaries must be explicitly maintained.
 
 ### D03 — Decision C: TikZ Preview Scope
-- **Decision:** **PDF-Export-Only in the Initial Implementation.**
-- **Export-Only Compilation:** TikZ diagrams are compiled exclusively during explicit PDF export operations. The live editor preview never invokes XeLaTeX, TikZ compilation, or external rendering subprocesses in response to editor changes.
+- **Status:** **SUPERSEDED** by [ADR-005](2026-11-03-adr-005-unified-quarto-diagram-preview-and-authoring.md) (2026-11-03). Native TikZ/PGFPlots in-app preview is now fully supported via background compilation to vector SVG.
+- **Historical Decision:** **PDF-Export-Only in the Initial Implementation.**
+- **Export-Only Compilation:** TikZ diagrams were compiled exclusively during explicit PDF export operations. The live editor preview never invoked XeLaTeX, TikZ compilation, or external rendering subprocesses in response to editor changes.
 - **Editor & Preview Presentation:**
   * In the **Source Editor (`MarkdownEditorPane`)**, TikZ content remains standard plain text with LaTeX syntax highlighting.
-  * In the **Rendered Preview (`MarkdownView`)**, the raw LaTeX block is presented as a clearly distinguishable, styled code/LaTeX container or lightweight explanatory placeholder, utilizing existing preview infrastructure.
+  * In the **Rendered Preview (`MarkdownView`)**, the raw LaTeX block was presented as a clearly distinguishable, styled code/LaTeX container or lightweight explanatory placeholder, utilizing existing preview infrastructure.
 - **No Interactive Preview Subsystem:** Polpo will not introduce a local compilation bridge, `dvisvgm` pipeline, background rendering daemon, or separate TikZ preview cache in this workstream.
 - **Responsiveness Invariant:** Preserves 60 FPS typing responsiveness and application stability ([`CONTEXT.md`](../../CONTEXT.md) Section 2.9). Incomplete or syntactically invalid TikZ code during interactive typing cannot crash background worker processes or trip circuit breakers. Interactive previewing remains a decoupled future candidate.
 
