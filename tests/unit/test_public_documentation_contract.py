@@ -29,7 +29,11 @@ class TestPublicDocumentationContract(unittest.TestCase):
         cls.changelog_text = cls.changelog_path.read_text(encoding="utf-8")
 
     def test_release_availability_and_freeze_status(self):
-        """Public documents must state pre-release candidate status (v0.1.0-rc.1) and active release freeze."""
+        """Public documents must state pre-release candidate status (v0.1.0-rc.2) and active release freeze."""
+        # Derive latest pre-release candidate from CHANGELOG.md (e.g. "v0.1.0-rc.2")
+        match = re.search(r"##\s+\[(\d+\.\d+\.\d+-rc\.\d+)\]", self.changelog_text)
+        expected_rc = f"v{match.group(1)}" if match else "v0.1.0-rc.2"
+
         for doc_name, text in [
             ("README.md", self.readme_text),
             ("docs/linux-installation.md", self.linux_install_text),
@@ -37,7 +41,7 @@ class TestPublicDocumentationContract(unittest.TestCase):
         ]:
             with self.subTest(document=doc_name):
                 # Must reference the current pre-release candidate
-                self.assertIn("v0.1.0-rc.1", text, f"{doc_name} must mention v0.1.0-rc.1 pre-release candidate")
+                self.assertIn(expected_rc, text, f"{doc_name} must mention {expected_rc} pre-release candidate")
                 # Must acknowledge pre-release status or release freeze
                 self.assertTrue(
                     ("pre-release" in text.lower() or "candidate" in text.lower()) and "freeze" in text.lower(),

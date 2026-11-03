@@ -9,11 +9,11 @@ This document defines the universal Linux installation, update, dependency resol
 Polpo provides a single-command user-space installer that runs entirely without root permissions (`sudo` is never required for application installation).
 
 > [!NOTE]
-> **Active Release Freeze & Candidate Availability:** Official stable releases are not yet published, and an active release freeze is enforced by the maintainers. Only pre-release candidates (such as `v0.1.0-rc.1`) are currently available on GitHub Releases. Because the installer defaults to `--channel stable`, installing without flags queries GitHub for the latest stable release and reports that no published stable release was found. To install and evaluate the pre-release candidate, pass `--channel preview` or install directly from a downloaded archive with `--archive <path>`.
+> **Active Release Freeze & Candidate Availability:** Official stable releases are not yet published, and an active release freeze is enforced by the maintainers. Only pre-release candidates (such as `v0.1.0-rc.2`) are currently available on GitHub Releases. Because the installer defaults to `--channel stable`, installing without flags queries GitHub for the latest stable release and reports that no published stable release was found. To install and evaluate the pre-release candidate, pass `--channel preview` or install directly from a downloaded archive with `--archive <path>`.
 
 ### Preview Channel (Pre-Release Candidates)
 
-To install the latest pre-release candidate build (such as `v0.1.0-rc.1`):
+To install the latest pre-release candidate build (such as `v0.1.0-rc.2`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/amirreza-a2a/Polpo/main/install.sh | bash -s -- --channel preview
@@ -209,7 +209,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 During the active release freeze, official stable releases have not yet been published. Running `polpo-update` without arguments queries the stable channel, reports that no published stable release was found, and guides you to the preview channel.
 
-To check for and upgrade to pre-release candidate builds (such as `v0.1.0-rc.1`):
+To check for and upgrade to pre-release candidate builds (such as `v0.1.0-rc.2`):
 
 ```bash
 polpo-update --channel preview

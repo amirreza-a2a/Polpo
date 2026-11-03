@@ -3,6 +3,7 @@
 # ============================================================
 
 import io
+from pathlib import Path
 import sys
 import unittest
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -43,7 +44,7 @@ class TestCoreAIIndependence(unittest.TestCase):
         forbidden_modules = {"PIL", "google", "openai", "telegram", "fastapi", "pymysql", "fitz"}
 
         for mod in (core_ai_types, core_ai_exceptions):
-            module_source = open(mod.__file__, "r", encoding="utf-8").read()
+            module_source = Path(mod.__file__).read_text(encoding="utf-8")
             for forbidden in forbidden_modules:
                 self.assertNotIn(
                     f"import {forbidden}",

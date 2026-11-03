@@ -215,7 +215,7 @@ The `--self-test` flag exercises:
 ## 7. Release Pipeline and Provenance (`.github/workflows/release.yml`)
 
 > [!NOTE]
-> **Active Release Freeze & Candidate Status:** The project maintainer strictly enforces an active release freeze. Pre-release candidate `v0.1.0-rc.1` is currently published on GitHub Releases for preview testing, but no official stable release has been published yet. Creating, moving, drafting, or publishing new tags or release assets is frozen pending authorization.
+> **Active Release Freeze & Candidate Status:** The project maintainer strictly enforces an active release freeze. Pre-release candidate `v0.1.0-rc.2` is currently published on GitHub Releases for preview testing, but no official stable release has been published yet. Creating, moving, drafting, or publishing new tags or release assets is frozen pending authorization.
 
 Official releases and pre-release validation runs are orchestrated through a 4-job GitHub Actions workflow:
 

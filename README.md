@@ -123,7 +123,7 @@ Infrastructure adapters implement application ports. The core domain and applica
 Polpo provides an automated, secure user-space installer and update manager for Linux (`x86_64`, `glibc >= 2.35`). Root privileges (`sudo`) are **never required** to install, update, or run the application.
 
 > [!NOTE]
-> **Active Release Freeze & Candidate Availability:** Official stable releases are not yet published, and an active release freeze is enforced by the maintainers. Only pre-release candidates (such as `v0.1.0-rc.1`) are currently available on GitHub Releases. Because `install.sh` defaults to the stable channel, installing without flags queries GitHub for the latest stable release and reports that no published stable release was found (HTTP 404). To install and evaluate the pre-release candidate, pass `--channel preview` or install directly from a downloaded archive with `--archive <path>`.
+> **Active Release Freeze & Candidate Availability:** Official stable releases are not yet published, and an active release freeze is enforced by the maintainers. Only pre-release candidates (such as `v0.1.0-rc.2`) are currently available on GitHub Releases. Because `install.sh` defaults to the stable channel, installing without flags queries GitHub for the latest stable release and reports that no published stable release was found (HTTP 404). To install and evaluate the pre-release candidate, pass `--channel preview` or install directly from a downloaded archive with `--archive <path>`.
 
 ### Pre-Release Candidate Install
 
@@ -459,7 +459,7 @@ Never include API keys, access tokens, private documents, or other secrets in bu
 Polpo provides standalone, hermetic desktop distributions built with PyInstaller, containing all required runtime dependencies (statically linked Pandoc 3.1.11, headless Node.js 22.23.2 MathJax daemon with `mathjax-full@3.2.2`, schema migrations `001` through `005`, and curated prompt templates). End users do not need to install Python, Pandoc, or Node.js separately.
 
 > [!NOTE]
-> **Active Release Freeze & Candidate Status:** The repository maintainer enforces an active release freeze. Pre-release candidate `v0.1.0-rc.1` is currently published on GitHub Releases for preview evaluation, but no official stable release has been published yet. Creating, moving, drafting, or publishing new tags or release assets is frozen pending explicit authorization.
+> **Active Release Freeze & Candidate Status:** The repository maintainer enforces an active release freeze. Pre-release candidate `v0.1.0-rc.2` is currently published on GitHub Releases for preview evaluation, but no official stable release has been published yet. Creating, moving, drafting, or publishing new tags or release assets is frozen pending explicit authorization.
 
 ### 11.1 Supported Platform Tiers
 
