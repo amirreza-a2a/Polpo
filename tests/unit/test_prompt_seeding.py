@@ -358,5 +358,90 @@ class TestPromptSeeding(unittest.TestCase):
             container.shutdown()
 
 
+    def test_reconcile_stock_prompts_updates_historical_stock_records(self):
+        """Unmodified historical stock prompt records are safely reconciled to current Quarto versions."""
+        # Simulated historical stock text from v0.1.0-rc.1 / rc.2
+        historical_tikz_text = (
+            "شما یک موتور تخصصی تبدیل دست‌نوشته‌های دانشگاهی به Markdown، LaTeX و TikZ هستید.\n"
+            "## سازگاری با TikZJax\n"
+            "تمام کدهای گرافیکی باید با TikZJax و Obsidian سازگار باشند.\n"
+        )
+        # We can simulate historical text matching the known hash or patch HISTORICAL_STOCK_PROMPT_HASHES
+        import hashlib
+        hist_hash = hashlib.sha256(historical_tikz_text.encode("utf-8")).hexdigest()
+        from application.services.prompt_seeding_service import HISTORICAL_STOCK_PROMPT_HASHES
+
+        with patch.dict(HISTORICAL_STOCK_PROMPT_HASHES, {"Persian STEM with TikZ": {hist_hash}}):
+            with self.uow_factory.create() as uow:
+                hist_p = Prompt(
+                    id=None,
+                    name="Persian STEM with TikZ",
+                    text=historical_tikz_text,
+                    prompt_type=PromptType.PIPELINE_1,
+                    is_default=False,
+                )
+                saved_hist = uow.prompts.save(hist_p)
+                custom_p = Prompt(
+                    id=None,
+                    name="My Custom Circuit Prompt",
+                    text="User custom extraction guidelines",
+                    prompt_type=PromptType.PIPELINE_1,
+                    is_default=True,
+                )
+                saved_custom = uow.prompts.save(custom_p)
+                uow.commit()
+
+            orig_hist_id = saved_hist.id
+            orig_custom_id = saved_custom.id
+
+            # Run reconciliation
+            updated = self.seeder.reconcile_stock_prompts()
+            self.assertEqual(len(updated), 1)
+            self.assertEqual(updated[0].id, orig_hist_id)
+            self.assertEqual(updated[0].name, "Persian STEM with TikZ")
+
+            with self.uow_factory.create() as uow:
+                reconciled = uow.prompts.get_by_id(orig_hist_id)
+                self.assertIn("```{=latex}", reconciled.text)
+                self.assertNotIn("## سازگاری با TikZJax", reconciled.text)
+                self.assertIn("سازگاری با استاندارد Quarto و Pandoc", reconciled.text)
+
+                custom = uow.prompts.get_by_id(orig_custom_id)
+                self.assertEqual(custom.text, "User custom extraction guidelines")
+
+    def test_reconcile_stock_prompts_preserves_customized_stock_prompts(self):
+        """If a user edited a stock prompt, reconciliation leaves the user customization completely intact."""
+        from application.services.prompt_seeding_service import HISTORICAL_STOCK_PROMPT_HASHES
+
+        with self.uow_factory.create() as uow:
+            customized_stock = Prompt(
+                id=None,
+                name="Persian STEM with TikZ",
+                text="User edited content for TikZ prompt that does not match historical hash",
+                prompt_type=PromptType.PIPELINE_1,
+                is_default=False,
+            )
+            saved = uow.prompts.save(customized_stock)
+            uow.commit()
+
+        updated = self.seeder.reconcile_stock_prompts()
+        self.assertEqual(len(updated), 0)
+
+        with self.uow_factory.create() as uow:
+            rechecked = uow.prompts.get_by_id(saved.id)
+            self.assertEqual(rechecked.text, "User edited content for TikZ prompt that does not match historical hash")
+
+    def test_reconcile_stock_prompts_is_idempotent(self):
+        """Calling reconcile_stock_prompts repeatedly after clean seeding is a fast no-op."""
+        self.seeder.seed_default_prompts()
+
+        # Immediately calling reconcile returns empty list
+        updated_1 = self.seeder.reconcile_stock_prompts()
+        self.assertEqual(len(updated_1), 0)
+
+        updated_2 = self.seeder.reconcile_stock_prompts()
+        self.assertEqual(len(updated_2), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

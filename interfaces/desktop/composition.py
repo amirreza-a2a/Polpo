@@ -313,6 +313,7 @@ class DesktopAppContainer:
         try:
             self.migration_runner.run_migrations()
             self.prompt_seeding_service.seed_default_prompts()
+            self.prompt_seeding_service.reconcile_stock_prompts()
             self.document_publication_service.backfill_legacy_document_versions()
             self.document_publication_service.reconcile_startup_intents()
             self.job_recovery_service.reconcile_stale_jobs()
