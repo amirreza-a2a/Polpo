@@ -275,12 +275,30 @@ def test_missing_binary_in_archive_rejected(tmp_path: Path):
     assert not install_dir.exists()
 
 
-def test_stable_channel_absence_reports_actionable_error():
+def test_stable_channel_absence_reports_actionable_error(tmp_path: Path):
     """Default stable channel reports actionable guidance if no stable release exists."""
-    # Use non-existent repo or mock endpoint
-    res = run_installer(["--channel", "stable", "--repo", "amirreza-a2a/Polpo-nonexistent-9999"])
+    mock_bin = tmp_path / "bin"
+    mock_bin.mkdir()
+    curl_mock = mock_bin / "curl"
+    curl_mock.write_text(
+        '#!/bin/sh\n'
+        'for arg in "$@"; do\n'
+        '    if [ "$arg" = "%{http_code}" ]; then\n'
+        '        printf "404"\n'
+        '        exit 0\n'
+        '    fi\n'
+        'done\n'
+        'exit 22\n'
+    )
+    curl_mock.chmod(0o755)
+
+    fake_env = {"PATH": f"{mock_bin}:{os.environ.get('PATH', '')}"}
+    res = run_installer(
+        ["--channel", "stable"],
+        env=fake_env,
+    )
     assert res.returncode == 1
-    assert "No published stable release was found" in res.stderr
+    assert "No published stable release was found for amirreza-a2a/Polpo" in res.stderr
     assert "--channel preview" in res.stdout or "--channel preview" in res.stderr
 
 

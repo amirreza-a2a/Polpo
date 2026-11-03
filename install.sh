@@ -61,7 +61,7 @@ Usage:
 
 Options:
   --channel <stable|preview>  Release channel (default: stable)
-  -v, --version <version>     Install a specific release version (e.g. 0.1.0 or v0.1.0-rc.1)
+  -v, --version <version>     Install a specific release version (e.g. 0.1.0 or v0.1.0-rc.2)
   --archive <file.tar.gz>     Install from a local distribution archive (offline mode)
   --dir <path>                Installation target directory (default: ~/.local/opt/polpo)
   --bin-dir <path>            Binary symlink directory (default: ~/.local/bin)

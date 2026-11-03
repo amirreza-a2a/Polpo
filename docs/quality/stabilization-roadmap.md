@@ -64,9 +64,9 @@ This document serves as the **single source of truth** for stabilization. Future
 | **Commit Message (PR #165)** | `docs(quality): reconcile stabilization retrospective metrics, baseline lineage, and PR count (#165)` | `git log -1` |
 | **Remote Synchronization** | Up to date with `origin/main` (future developers must fetch latest `origin/main` before branching) | `git status -sb` |
 | **Working Tree Status** | Clean (no modified, untracked, or staged files) | `git status --porcelain` |
-| **Latest Git Tag** | `v0.1.0-rc.1` | `git tag -l` |
-| **Git Describe (PR #165)** | `v0.1.0-rc.1-47-g15d4cb0` | `git describe --tags --always` |
-| **GitHub Releases** | Exactly 1 Pre-release: `v0.1.0-rc.1` (Zero stable releases published) | `gh release list` |
+| **Latest Git Tag** | `v0.1.0-rc.2` | `git tag -l` |
+| **Git Describe** | `v0.1.0-rc.2` | `git describe --tags --always` |
+| **GitHub Releases** | Pre-release candidate: `v0.1.0-rc.2` (Zero stable releases published) | `gh release list` |
 | **Application Version** | `APP_NAME = "Polpo"`, `__version__ = "0.1.0"`, `VERSION_INFO = (0, 1, 0)` | `core/version.py:9-11`, `pyproject.toml:7` |
 
 ### 2.2 Branch Protection & Merge-Gating Invariants

@@ -29,7 +29,12 @@ class TestPublicDocumentationContract(unittest.TestCase):
         cls.changelog_text = cls.changelog_path.read_text(encoding="utf-8")
 
     def test_release_availability_and_freeze_status(self):
-        """Public documents must state pre-release candidate status (v0.1.0-rc.1) and active release freeze."""
+        """Public documents must state pre-release candidate status and active release freeze."""
+        # Derive latest pre-release candidate from CHANGELOG.md (e.g. "v0.1.0-rc.2")
+        match = re.search(r"##\s+\[(\d+\.\d+\.\d+-rc\.\d+)\]", self.changelog_text)
+        self.assertIsNotNone(match, "CHANGELOG.md must define an active pre-release candidate header (e.g. '## [0.1.0-rc.2]')")
+        expected_rc = f"v{match.group(1)}"
+
         for doc_name, text in [
             ("README.md", self.readme_text),
             ("docs/linux-installation.md", self.linux_install_text),
@@ -37,7 +42,7 @@ class TestPublicDocumentationContract(unittest.TestCase):
         ]:
             with self.subTest(document=doc_name):
                 # Must reference the current pre-release candidate
-                self.assertIn("v0.1.0-rc.1", text, f"{doc_name} must mention v0.1.0-rc.1 pre-release candidate")
+                self.assertIn(expected_rc, text, f"{doc_name} must mention {expected_rc} pre-release candidate")
                 # Must acknowledge pre-release status or release freeze
                 self.assertTrue(
                     ("pre-release" in text.lower() or "candidate" in text.lower()) and "freeze" in text.lower(),
@@ -167,6 +172,12 @@ class TestPublicDocumentationContract(unittest.TestCase):
         # Desktop CLI flags cited in README or linux-installation.md
         for flag in ["--self-test", "--version"]:
             self.assertIn(flag, app_code, f"app.py must support documented flag '{flag}'")
+
+        # Installer help text must cite current release candidate example
+        match = re.search(r"##\s+\[(\d+\.\d+\.\d+-rc\.\d+)\]", self.changelog_text)
+        self.assertIsNotNone(match, "CHANGELOG.md must define an active pre-release candidate header")
+        expected_rc = f"v{match.group(1)}"
+        self.assertIn(expected_rc, installer_help, f"install.sh must cite current candidate {expected_rc} in help text")
 
 
 if __name__ == "__main__":
