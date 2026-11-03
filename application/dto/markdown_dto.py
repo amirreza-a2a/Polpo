@@ -91,6 +91,11 @@ class MarkdownNodeDTO:
     has_error: bool = False
     error_category: str = ""
     error_message: str = ""
+    diagram_source: str = ""
+    diagram_hash: Optional[str] = None
+    diagram_status: str = ""
+    diagram_width: float = 0.0
+    diagram_height: float = 0.0
 
 
 

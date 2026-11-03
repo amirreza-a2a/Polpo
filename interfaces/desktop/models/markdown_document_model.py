@@ -150,6 +150,13 @@ class MarkdownDocumentModel(QAbstractListModel):
     MathHasErrorRole = Qt.ItemDataRole.UserRole + 28
     MathErrorCategoryRole = Qt.ItemDataRole.UserRole + 29
     MathErrorMessageRole = Qt.ItemDataRole.UserRole + 30
+    DiagramSourceRole = Qt.ItemDataRole.UserRole + 31
+    DiagramHashRole = Qt.ItemDataRole.UserRole + 32
+    DiagramStatusRole = Qt.ItemDataRole.UserRole + 33
+    DiagramWidthRole = Qt.ItemDataRole.UserRole + 34
+    DiagramHeightRole = Qt.ItemDataRole.UserRole + 35
+    DiagramHasErrorRole = Qt.ItemDataRole.UserRole + 36
+    DiagramErrorMessageRole = Qt.ItemDataRole.UserRole + 37
 
     def __init__(
         self,
@@ -225,6 +232,13 @@ class MarkdownDocumentModel(QAbstractListModel):
             self.MathHasErrorRole: b"mathHasError",
             self.MathErrorCategoryRole: b"mathErrorCategory",
             self.MathErrorMessageRole: b"mathErrorMessage",
+            self.DiagramSourceRole: b"diagramSource",
+            self.DiagramHashRole: b"diagramHash",
+            self.DiagramStatusRole: b"diagramStatus",
+            self.DiagramWidthRole: b"diagramWidth",
+            self.DiagramHeightRole: b"diagramHeight",
+            self.DiagramHasErrorRole: b"diagramHasError",
+            self.DiagramErrorMessageRole: b"diagramErrorMessage",
         }
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
@@ -297,6 +311,20 @@ class MarkdownDocumentModel(QAbstractListModel):
             return str(item.get("mathErrorCategory", "") or "")
         elif role == self.MathErrorMessageRole:
             return str(item.get("mathErrorMessage", "") or "")
+        elif role == self.DiagramSourceRole:
+            return item.get("diagramSource", "")
+        elif role == self.DiagramHashRole:
+            return item.get("diagramHash", "")
+        elif role == self.DiagramStatusRole:
+            return item.get("diagramStatus", "")
+        elif role == self.DiagramWidthRole:
+            return float(item.get("diagramWidth", 0.0) or 0.0)
+        elif role == self.DiagramHeightRole:
+            return float(item.get("diagramHeight", 0.0) or 0.0)
+        elif role == self.DiagramHasErrorRole:
+            return bool(item.get("diagramHasError", False))
+        elif role == self.DiagramErrorMessageRole:
+            return str(item.get("diagramErrorMessage", "") or "")
         return None
 
     def _update_doc_hash_to_tex(self, document_dto: Optional[MarkdownDocumentDTO]) -> None:
@@ -469,6 +497,13 @@ class MarkdownDocumentModel(QAbstractListModel):
             "mathHasError": bool(getattr(node, "has_error", False)),
             "mathErrorCategory": str(getattr(node, "error_category", "") or ""),
             "mathErrorMessage": str(getattr(node, "error_message", "") or ""),
+            "diagramSource": getattr(node, "diagram_source", "") or "",
+            "diagramHash": getattr(node, "diagram_hash", "") or "",
+            "diagramStatus": getattr(node, "diagram_status", "") or "",
+            "diagramWidth": float(getattr(node, "diagram_width", 0.0) or 0.0),
+            "diagramHeight": float(getattr(node, "diagram_height", 0.0) or 0.0),
+            "diagramHasError": bool(getattr(node, "has_error", False)) if getattr(node, "node_type", "") == "diagram" else False,
+            "diagramErrorMessage": str(getattr(node, "error_message", "") or "") if getattr(node, "node_type", "") == "diagram" else "",
         }
 
 
