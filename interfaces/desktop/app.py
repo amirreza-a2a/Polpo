@@ -43,6 +43,7 @@ from interfaces.desktop.models import (
 )
 from interfaces.desktop.coordinators.review_workspace_sync_coordinator import ReviewWorkspaceSyncCoordinator
 from interfaces.desktop.providers.math_image_provider import MathImageProvider
+from interfaces.desktop.providers.diagram_image_provider import DiagramImageProvider
 from application.services.markdown_merge_service import MarkdownMergeService
 from core.markdown.visual_token_mutator import find_canonical_token_spans
 
@@ -378,6 +379,10 @@ def create_app(
     math_image_provider = MathImageProvider(container.math_svg_cache)
     engine.addImageProvider("math", math_image_provider)
     container.math_image_provider = math_image_provider
+
+    diagram_image_provider = DiagramImageProvider(container.diagram_svg_cache)
+    engine.addImageProvider("diagram", diagram_image_provider)
+    container.diagram_image_provider = diagram_image_provider
 
     ctx = engine.rootContext()
     ctx.setContextProperty("theme", theme_controller)

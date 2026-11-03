@@ -32,6 +32,12 @@ from application.ports.math_renderer import (
     MathSyntaxError,
     MathWorkerCrashedError,
 )
+from application.ports.diagram_renderer import (
+    DiagramRenderError,
+    DiagramRenderRequest,
+    DiagramRenderResult,
+    IDiagramRenderer,
+)
 from application.ports.storage import IArtifactStorage
 from application.ports.unit_of_work import IUnitOfWorkFactory
 from core.entities.artifact import ArtifactHandle, ArtifactType, StorageBackendType
@@ -48,9 +54,11 @@ from core.markdown.ast import (
     MarkdownBlock,
     MathBlock,
     ParagraphBlock,
+    RawBlock,
     TableFallbackBlock,
     ThematicBreakBlock,
 )
+from core.markdown.diagram_extractor import contains_diagram, extract_diagrams
 from core.markdown.resolver import resolve_image_regions
 
 _MATH_ERROR_SPAN_STYLE = (
@@ -137,11 +145,13 @@ class MarkdownViewerService:
         uow_factory: IUnitOfWorkFactory,
         storage: IArtifactStorage,
         math_renderer: Optional[IMathRenderer] = None,
+        diagram_renderer: Optional[IDiagramRenderer] = None,
     ):
         self.parser = parser
         self.uow_factory = uow_factory
         self.storage = storage
         self.math_renderer = math_renderer
+        self.diagram_renderer = diagram_renderer
 
     def load_document(self, job_id: int) -> MarkdownDocumentDTO:
         """
@@ -281,6 +291,18 @@ class MarkdownViewerService:
                     for outcome in math_outcomes.values()
                 )
 
+        diagram_outcomes: Dict[str, Union[DiagramRenderResult, DiagramRenderError]] = {}
+        if self.diagram_renderer is not None:
+            diagram_requests = self._collect_diagram_requests(resolved_doc.blocks)
+            if diagram_requests:
+                try:
+                    raw_diag_outcomes = self.diagram_renderer.render_batch(diagram_requests)
+                    if isinstance(raw_diag_outcomes, Mapping):
+                        diagram_outcomes = dict(raw_diag_outcomes)
+                except Exception as exc:
+                    for req in diagram_requests:
+                        diagram_outcomes[req.compute_hash()] = DiagramRenderError("batch_failed", str(exc))
+
         regions_by_id = {
             r.region_id: r
             for r in active_regions
@@ -299,6 +321,7 @@ class MarkdownViewerService:
                 regions_by_id=regions_by_id,
                 base_dir=base_dir,
                 math_outcomes=math_outcomes,
+                diagram_outcomes=diagram_outcomes,
             )
             nodes.append(node_dto)
 
@@ -408,6 +431,111 @@ class MarkdownViewerService:
         scan_blocks(blocks)
         return requests
 
+    def _collect_diagram_requests(self, blocks: Sequence[MarkdownBlock]) -> List[DiagramRenderRequest]:
+        """Traverse the AST to collect all unique DiagramRenderRequest instances for complete diagrams."""
+        requests: List[DiagramRenderRequest] = []
+        seen_hashes: set[str] = set()
+
+        def add_diag_source(source: str) -> None:
+            req = DiagramRenderRequest(source=source)
+            h = req.compute_hash()
+            if h not in seen_hashes:
+                seen_hashes.add(h)
+                requests.append(req)
+
+        def scan_blocks(blk_seq: Sequence[MarkdownBlock]) -> None:
+            for blk in blk_seq:
+                if isinstance(blk, RawBlock):
+                    if contains_diagram(blk.content):
+                        for diag in extract_diagrams(blk.content):
+                            if diag.is_complete:
+                                add_diag_source(diag.source)
+                elif isinstance(blk, CodeBlock):
+                    if blk.language.lower() in ("tikz", "pgfplots", "circuitikz") or contains_diagram(blk.content):
+                        for diag in extract_diagrams(blk.content):
+                            if diag.is_complete:
+                                add_diag_source(diag.source)
+                elif isinstance(blk, BlockquoteBlock):
+                    scan_blocks(blk.blocks)
+
+        scan_blocks(blocks)
+        return requests
+
+    def _project_diagram(
+        self,
+        block: MarkdownBlock,
+        content: str,
+        raw_markdown: str,
+        seen_counts: Dict[Tuple[str, ...], int],
+        diagram_outcomes: Optional[Mapping[str, Union[DiagramRenderResult, DiagramRenderError]]] = None,
+    ) -> MarkdownNodeDTO:
+        extracted = extract_diagrams(content)
+        if not extracted:
+            diag_source = content
+            is_complete = True
+            error_msg: Optional[str] = None
+        else:
+            diag = extracted[0]
+            diag_source = diag.source
+            is_complete = diag.is_complete
+            error_msg = diag.error
+
+        req = DiagramRenderRequest(source=diag_source)
+        diag_hash = req.compute_hash()
+        key = ("diagram", diag_hash[:12])
+        seen_counts[key] += 1
+        node_id = f"diagram_{diag_hash[:12]}_{seen_counts[key]}"
+
+        has_error = False
+        error_category = ""
+        error_message = ""
+        diagram_status = "pending"
+        width = 0.0
+        height = 0.0
+
+        if not is_complete:
+            has_error = True
+            error_category = "syntax"
+            error_message = error_msg or "Incomplete diagram syntax."
+            diagram_status = "error"
+        else:
+            outcome = diagram_outcomes.get(diag_hash) if diagram_outcomes else None
+            if outcome is None and self.diagram_renderer is not None:
+                cache = getattr(self.diagram_renderer, "cache", None)
+                if cache is not None:
+                    outcome = cache.get(diag_hash)
+
+            if isinstance(outcome, DiagramRenderResult):
+                diagram_status = outcome.status
+                width = outcome.width
+                height = outcome.height
+            elif isinstance(outcome, DiagramRenderError):
+                has_error = True
+                error_category = outcome.code
+                error_message = outcome.message
+                diagram_status = "error"
+            elif self.diagram_renderer is None:
+                diagram_status = "unavailable"
+
+        return MarkdownNodeDTO(
+            node_id=node_id,
+            node_type="diagram",
+            content=diag_source,
+            raw_markdown=raw_markdown,
+            diagram_source=diag_source,
+            diagram_hash=diag_hash,
+            diagram_status=diagram_status,
+            diagram_width=width,
+            diagram_height=height,
+            has_error=has_error,
+            error_category=error_category,
+            error_message=error_message,
+            source_start_line=block.source_start_line,
+            source_end_line=block.source_end_line,
+            source_start_col=block.source_start_col,
+            source_end_col=block.source_end_col,
+        )
+
     def _project_block(
         self,
         block: MarkdownBlock,
@@ -416,6 +544,7 @@ class MarkdownViewerService:
         regions_by_id: Mapping[str, VisualRegion],
         base_dir: Optional[str] = None,
         math_outcomes: Optional[Mapping[str, Union[MathRenderResult, MathRenderError]]] = None,
+        diagram_outcomes: Optional[Mapping[str, Union[DiagramRenderResult, DiagramRenderError]]] = None,
     ) -> MarkdownNodeDTO:
         """
         Projects a canonical AST block into an immutable presentation MarkdownNodeDTO.
@@ -523,6 +652,15 @@ class MarkdownViewerService:
             )
 
         elif isinstance(block, CodeBlock):
+            if block.language.lower() in ("tikz", "pgfplots", "circuitikz") or contains_diagram(block.content):
+                return self._project_diagram(
+                    block=block,
+                    content=block.content,
+                    raw_markdown=f"```{block.language}\n{block.content}\n```",
+                    seen_counts=seen_counts,
+                    diagram_outcomes=diagram_outcomes,
+                )
+
             code_hash = hashlib.sha256(block.content.encode("utf-8")).hexdigest()[:12]
             key = ("code", block.language, code_hash)
             seen_counts[key] += 1
@@ -834,6 +972,32 @@ class MarkdownViewerService:
                 has_error=has_error,
                 error_category=error_category,
                 error_message=error_message,
+                source_start_line=block.source_start_line,
+                source_end_line=block.source_end_line,
+                source_start_col=block.source_start_col,
+                source_end_col=block.source_end_col,
+            )
+
+        elif isinstance(block, RawBlock):
+            if contains_diagram(block.content):
+                return self._project_diagram(
+                    block=block,
+                    content=block.content,
+                    raw_markdown=f"```{block.format}\n{block.content}\n```",
+                    seen_counts=seen_counts,
+                    diagram_outcomes=diagram_outcomes,
+                )
+
+            raw_hash = hashlib.sha256(block.content.encode("utf-8")).hexdigest()[:12]
+            key = ("raw", block.format, raw_hash)
+            seen_counts[key] += 1
+            node_id = f"raw_{block.format}_{raw_hash}_{seen_counts[key]}"
+            return MarkdownNodeDTO(
+                node_id=node_id,
+                node_type="raw_block",
+                language=block.format,
+                content=block.content,
+                raw_markdown=f"```{block.format}\n{block.content}\n```",
                 source_start_line=block.source_start_line,
                 source_end_line=block.source_end_line,
                 source_start_col=block.source_start_col,

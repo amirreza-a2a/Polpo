@@ -69,6 +69,8 @@ Item {
                 if (t === "thematic_break") return breakComponent
                 if (t === "table_fallback") return tableFallbackComponent
                 if (t === "math_block") return mathBlockComponent
+                if (t === "diagram") return diagramComponent
+                if (t === "raw_block") return rawBlockComponent
                 return paragraphComponent
             }
         }
@@ -403,6 +405,106 @@ Item {
                     controller: delegateRoot.controller
                     scaleFactor: delegateRoot.scaleFactor
                 }
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Diagram Component (TikZ / PGFPlots / CircuitTikZ)
+    // -----------------------------------------------------------------------
+    Component {
+        id: diagramComponent
+        Item {
+            id: diagramRoot
+            width: parent.width
+            implicitHeight: (diagramLoader.item ? diagramLoader.item.implicitHeight : 0) + 16
+
+            Loader {
+                id: diagramLoader
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width
+                sourceComponent: model.diagramHasError ? diagramErrorComponent : diagramSuccessComponent
+            }
+
+            Component {
+                id: diagramSuccessComponent
+                Item {
+                    width: parent.width
+                    implicitHeight: diagramImg.implicitHeight
+
+                    Image {
+                        id: diagramImg
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        source: model.diagramHash ? ("image://diagram/" + ((typeof theme !== "undefined" && theme && theme.resolvedTheme) ? theme.resolvedTheme : "dark") + "/" + model.diagramHash) : ""
+                        fillMode: Image.PreserveAspectFit
+                        sourceSize.width: Math.min(implicitWidth * delegateRoot.scaleFactor, parent ? parent.width - 40 : 760)
+                        asynchronous: true
+                        cache: true
+                    }
+                }
+            }
+
+            Component {
+                id: diagramErrorComponent
+                Rectangle {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: Math.min(parent ? parent.width - 40 : 680, 680)
+                    implicitHeight: errorCol.implicitHeight + 20
+                    color: (typeof theme !== "undefined" && theme) ? theme.errorBackground : "transparent"
+                    radius: 6
+                    border.color: (typeof theme !== "undefined" && theme) ? theme.errorBorder : "transparent"
+                    border.width: 1
+
+                    Column {
+                        id: errorCol
+                        anchors.fill: parent
+                        anchors.margins: 10
+                        spacing: 6
+
+                        Text {
+                            text: "⚠️ LaTeX Diagram Syntax Error"
+                            color: (typeof theme !== "undefined" && theme) ? theme.error : "transparent"
+                            font.bold: true
+                            font.pixelSize: Math.round(13 * delegateRoot.scaleFactor)
+                        }
+
+                        Text {
+                            width: parent.width
+                            text: model.diagramErrorMessage || "Compilation error"
+                            color: (typeof theme !== "undefined" && theme) ? theme.errorText : "transparent"
+                            font.family: "Monospace"
+                            font.pixelSize: Math.round(11 * delegateRoot.scaleFactor)
+                            wrapMode: Text.Wrap
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Raw Block Component
+    // -----------------------------------------------------------------------
+    Component {
+        id: rawBlockComponent
+        Rectangle {
+            width: parent.width
+            implicitHeight: rawText.implicitHeight + 16
+            color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "transparent"
+            radius: 4
+            border.color: (typeof theme !== "undefined" && theme) ? theme.borderSubtle : "transparent"
+            border.width: 1
+
+            Text {
+                id: rawText
+                anchors.fill: parent
+                anchors.margins: 8
+                text: model.content || ""
+                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
+                font.family: "Monospace"
+                font.pixelSize: Math.round(12 * delegateRoot.scaleFactor)
+                wrapMode: Text.Wrap
             }
         }
     }

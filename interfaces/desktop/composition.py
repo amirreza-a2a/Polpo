@@ -52,6 +52,7 @@ from infrastructure.pdf.quarto_adapter import QuartoPdfAdapter
 from infrastructure.pdf.atomic_publisher import AtomicPdfPublisher
 from infrastructure.markdown.pandoc_parser import PandocParser
 from infrastructure.math import MathSvgCache, MathJaxProcessSupervisor, MathJaxClient
+from infrastructure.diagram import DiagramSvgCache, StandaloneTeXDiagramRenderer
 from infrastructure.paths import (
     get_user_data_dir,
     get_runtime_resource_path,
@@ -198,12 +199,16 @@ class DesktopAppContainer:
             supervisor=self.mathjax_supervisor, cache=self.math_svg_cache
         )
 
+        self.diagram_svg_cache = DiagramSvgCache(capacity=500)
+        self.diagram_renderer = StandaloneTeXDiagramRenderer(cache=self.diagram_svg_cache)
+
         self.markdown_parser = PandocParser()
         self.markdown_viewer_service = MarkdownViewerService(
             parser=self.markdown_parser,
             uow_factory=self.uow_factory,
             storage=self.storage,
             math_renderer=self.math_renderer,
+            diagram_renderer=self.diagram_renderer,
         )
 
         self.markdown_editor_service = MarkdownEditorService(
