@@ -12,6 +12,7 @@ from typing import List, Optional, Sequence, Tuple
 SUPPORTED_DIAGRAM_ENVIRONMENTS: Tuple[str, ...] = (
     "tikzpicture",
     "circuitikz",
+    "tikzcd",
 )
 
 # Regex matching LaTeX environment delimiters: \begin{name} or \end{name}

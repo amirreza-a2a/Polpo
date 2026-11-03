@@ -164,3 +164,18 @@ def test_standalone_renderer_batch():
 
     assert isinstance(outcomes[h1], DiagramRenderResult)
     assert isinstance(outcomes[h2], DiagramSyntaxError)
+
+
+@pytest.mark.skipif(shutil.which("xelatex") is None and shutil.which("pdflatex") is None, reason="No TeX compiler on host")
+def test_standalone_renderer_compiles_tikzcd_to_svg():
+    renderer = StandaloneTeXDiagramRenderer()
+    req = DiagramRenderRequest(
+        source=r"""\begin{tikzcd}
+    A \arrow[r] & B
+\end{tikzcd}"""
+    )
+    res = renderer.render(req)
+    assert res.status == "rendered"
+    assert "<svg" in res.svg_xml
+    assert res.width > 0
+    assert res.height > 0

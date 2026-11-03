@@ -233,3 +233,75 @@ def test_diagram_image_provider_miss_and_hit():
     assert not img_hit.isNull()
     assert img_hit.width() == 200
     assert img_hit.height() == 100
+
+
+def test_regular_code_blocks_not_hijacked_as_diagrams():
+    """Confirms ordinary code blocks (e.g. latex, python) containing TikZ syntax are not hijacked."""
+    service = create_viewer_service()
+
+    # Case 1: Standard markdown code fence with language "latex"
+    latex_code = """```latex
+\\begin{tikzpicture}
+    \\draw (0,0) -- (1,1);
+\\end{tikzpicture}
+```"""
+    dto1 = service.render_text(raw_text=latex_code, active_regions=[], job_id=1)
+    assert len(dto1.nodes) == 1
+    assert dto1.nodes[0].node_type == "code_block"
+    assert dto1.nodes[0].language == "latex"
+    assert "\\begin{tikzpicture}" in dto1.nodes[0].content
+
+    # Case 2: Standard markdown code fence with language "python"
+    py_code = """```python
+tikz_template = \"\"\"
+\\begin{tikzpicture}
+    \\draw (0,0) -- (1,1);
+\\end{tikzpicture}
+\"\"\"
+```"""
+    dto2 = service.render_text(raw_text=py_code, active_regions=[], job_id=2)
+    assert len(dto2.nodes) == 1
+    assert dto2.nodes[0].node_type == "code_block"
+    assert dto2.nodes[0].language == "python"
+
+
+def test_multiple_diagrams_in_single_raw_block_projected():
+    """Confirms multiple diagrams within a single raw LaTeX block are all projected into nodes."""
+    renderer = FakeDiagramRenderer()
+    service = create_viewer_service(diagram_renderer=renderer)
+
+    text = """```{=latex}
+\\begin{tikzpicture}
+    \\draw (0,0) -- (1,0);
+\\end{tikzpicture}
+
+\\begin{tikzpicture}
+    \\draw (0,0) -- (0,1);
+\\end{tikzpicture}
+```"""
+    dto = service.render_text(raw_text=text, active_regions=[], job_id=1)
+    assert len(dto.nodes) == 2
+    assert all(n.node_type == "diagram" for n in dto.nodes)
+    assert "\\draw (0,0) -- (1,0);" in dto.nodes[0].diagram_source
+    assert "\\draw (0,0) -- (0,1);" in dto.nodes[1].diagram_source
+    assert dto.nodes[0].diagram_hash != dto.nodes[1].diagram_hash
+    assert dto.nodes[0].diagram_status == "rendered"
+    assert dto.nodes[1].diagram_status == "rendered"
+
+
+def test_quarto_raw_latex_tikzcd_projection():
+    """Confirms tikz-cd diagram environment is recognized and projected as a diagram node."""
+    renderer = FakeDiagramRenderer()
+    service = create_viewer_service(diagram_renderer=renderer)
+
+    text = """```{=latex}
+\\begin{tikzcd}
+    A \\arrow[r] & B
+\\end{tikzcd}
+```"""
+    dto = service.render_text(raw_text=text, active_regions=[], job_id=1)
+    assert len(dto.nodes) == 1
+    diag_node = dto.nodes[0]
+    assert diag_node.node_type == "diagram"
+    assert "\\begin{tikzcd}" in diag_node.diagram_source
+    assert diag_node.diagram_status == "rendered"
