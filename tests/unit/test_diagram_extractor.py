@@ -133,3 +133,20 @@ def test_extract_diagram_preserves_persian_and_math():
     assert len(diagrams) == 1
     assert "ورودی" in diagrams[0].source
     assert "خروجی" in diagrams[0].source
+
+
+def test_extract_tikzcd():
+    raw_tex = r"""
+\begin{tikzcd}[row sep=large]
+    A \arrow[r, "f"] & B \arrow[d, "g"] \\
+    C \arrow[u, "h"] & D
+\end{tikzcd}
+"""
+    diagrams = extract_diagrams(raw_tex)
+    assert len(diagrams) == 1
+    d = diagrams[0]
+    assert d.environment == "tikzcd"
+    assert d.is_complete is True
+    assert d.error is None
+    assert "row sep=large" in d.source
+    assert contains_diagram(raw_tex) is True

@@ -429,16 +429,24 @@ Item {
 
             Component {
                 id: diagramSuccessComponent
-                Item {
-                    width: parent.width
-                    implicitHeight: diagramImg.implicitHeight
+                Rectangle {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: Math.min(
+                        (diagramImg.paintedWidth > 0 ? diagramImg.paintedWidth : (diagramImg.implicitWidth * delegateRoot.scaleFactor)) + 24,
+                        parent ? parent.width - 20 : 760
+                    )
+                    implicitHeight: (diagramImg.paintedHeight > 0 ? diagramImg.paintedHeight : diagramImg.implicitHeight) + 20
+                    radius: 6
+                    color: (typeof theme !== "undefined" && theme && theme.resolvedTheme === "dark") ? theme.textPrimary : "transparent"
+                    border.color: (typeof theme !== "undefined" && theme && theme.resolvedTheme === "dark") ? theme.borderSubtle : "transparent"
+                    border.width: (typeof theme !== "undefined" && theme && theme.resolvedTheme === "dark") ? 1 : 0
 
                     Image {
                         id: diagramImg
-                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.centerIn: parent
                         source: model.diagramHash ? ("image://diagram/" + ((typeof theme !== "undefined" && theme && theme.resolvedTheme) ? theme.resolvedTheme : "dark") + "/" + model.diagramHash) : ""
                         fillMode: Image.PreserveAspectFit
-                        sourceSize.width: Math.min(implicitWidth * delegateRoot.scaleFactor, parent ? parent.width - 40 : 760)
+                        sourceSize.width: Math.min(implicitWidth * delegateRoot.scaleFactor, parent ? parent.width - 44 : 736)
                         asynchronous: true
                         cache: true
                     }
@@ -476,6 +484,27 @@ Item {
                             font.family: "Monospace"
                             font.pixelSize: Math.round(11 * delegateRoot.scaleFactor)
                             wrapMode: Text.Wrap
+                        }
+
+                        Rectangle {
+                            visible: Boolean(model.diagramSource)
+                            width: parent.width
+                            implicitHeight: srcText.implicitHeight + 12
+                            color: (typeof theme !== "undefined" && theme) ? theme.surfaceSunken : "transparent"
+                            radius: 4
+                            border.color: (typeof theme !== "undefined" && theme) ? theme.borderSubtle : "transparent"
+                            border.width: 1
+
+                            Text {
+                                id: srcText
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                text: model.diagramSource || ""
+                                color: (typeof theme !== "undefined" && theme) ? theme.textSecondary : "transparent"
+                                font.family: "Monospace"
+                                font.pixelSize: Math.round(11 * delegateRoot.scaleFactor)
+                                wrapMode: Text.Wrap
+                            }
                         }
                     }
                 }
