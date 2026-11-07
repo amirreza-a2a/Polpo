@@ -215,13 +215,13 @@ class MathImageProvider(QQuickImageProvider):
         w_px = self._parse_dimension(cached.width, fallback=30.0, base_unit=8.0)
         h_px = self._parse_dimension(cached.height, fallback=15.0, base_unit=8.0)
 
-        if requestedSize.width() > 0 and requestedSize.height() > 0:
+        if requestedSize is not None and requestedSize.width() > 0 and requestedSize.height() > 0:
             target_w = requestedSize.width()
             target_h = requestedSize.height()
-        elif requestedSize.width() > 0:
+        elif requestedSize is not None and requestedSize.width() > 0:
             target_w = requestedSize.width()
             target_h = max(1, round(target_w * (h_px / max(w_px, 1.0))))
-        elif requestedSize.height() > 0:
+        elif requestedSize is not None and requestedSize.height() > 0:
             target_h = requestedSize.height()
             target_w = max(1, round(target_h * (w_px / max(h_px, 1.0))))
         else:
