@@ -319,24 +319,28 @@ def run_runtime_preflight() -> StageResult:
     t0 = time.monotonic()
     ai_status = TestStatus.BLOCKED
     ai_details: Dict[str, Any] = {"active_slots": 0, "configured_providers": []}
-    try:
-        from interfaces.desktop.composition import DesktopAppContainer
-        container = DesktopAppContainer(instance_lock=None)
-        with container.uow_factory.create() as uow:
-            slots = [s for s in uow.apis.list_all() if getattr(s, "is_active", True)]
-        ai_details["active_slots"] = len(slots)
-        for s in slots:
-            ai_details["configured_providers"].append({
-                "id": s.id,
-                "provider": s.provider,
-                "label": s.label,
-                "slot_type": s.slot_type,
-                "model": s.selected_model,
-            })
-        if slots:
-            ai_status = TestStatus.PASS
-    except Exception as e:
-        ai_details["error"] = str(e)
+    user_db = get_user_data_dir() / "polpot.db"
+    if not user_db.is_file():
+        ai_details["note"] = "User database does not exist yet"
+    else:
+        try:
+            from interfaces.desktop.composition import DesktopAppContainer
+            container = DesktopAppContainer(instance_lock=None)
+            with container.uow_factory.create() as uow:
+                slots = [s for s in uow.apis.list_all() if getattr(s, "is_active", True)]
+            ai_details["active_slots"] = len(slots)
+            for s in slots:
+                ai_details["configured_providers"].append({
+                    "id": s.id,
+                    "provider": s.provider,
+                    "label": s.label,
+                    "slot_type": s.slot_type,
+                    "model": s.selected_model,
+                })
+            if slots:
+                ai_status = TestStatus.PASS
+        except Exception as e:
+            ai_details["error"] = str(e)
 
     items.append(TestItemResult(
         test_id="PREFLIGHT-10-AI-PROVIDER-CONFIG",
@@ -877,10 +881,24 @@ def run_gemini_live(opt_in: bool) -> StageResult:
             )],
         )
 
-    container = DesktopAppContainer(instance_lock=None)
-
-    with container.uow_factory.create() as uow:
-        active_slots = [s for s in uow.apis.list_all() if getattr(s, "is_active", True)]
+    try:
+        container = DesktopAppContainer(instance_lock=None)
+        with container.uow_factory.create() as uow:
+            active_slots = [s for s in uow.apis.list_all() if getattr(s, "is_active", True)]
+    except Exception as exc:
+        return StageResult(
+            stage_name="gemini-live",
+            status=TestStatus.BLOCKED,
+            total_tests=1,
+            blocked_tests=1,
+            duration_seconds=time.monotonic() - start_time,
+            items=[TestItemResult(
+                test_id="GEMINI-00-CONFIG",
+                name="Active AI Slot Resolution",
+                status=TestStatus.BLOCKED,
+                error_message=f"Could not read AI slots from database: {exc}",
+            )],
+        )
 
     if not active_slots:
         return StageResult(
