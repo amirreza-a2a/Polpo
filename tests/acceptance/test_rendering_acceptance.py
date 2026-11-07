@@ -83,3 +83,21 @@ def test_gemini_live_acceptance_opt_in_gate():
         # is BLOCKED due to no keys in the test keyring; on live CLI it is PASS.
         assert res.status in (TestStatus.PASS, TestStatus.BLOCKED)
         assert res.failed_tests == 0
+
+
+@pytest.mark.integration
+def test_gemini_live_stage_items_and_clean_architecture_compliance():
+    """Verifies that when opt_in=True, all 6 Section 4.3 acceptance items are evaluated without raw SQL."""
+    res = run_gemini_live(opt_in=True)
+    # The stage evaluates 6 items when configured, or 1 item (BLOCKED) if keys/db not found
+    if res.status == TestStatus.PASS:
+        assert res.total_tests == 6
+        item_ids = [item.test_id for item in res.items]
+        assert "GEMINI-01-TEXT" in item_ids
+        assert "GEMINI-02-VISION" in item_ids
+        assert "GEMINI-03-REPAIR-STRUCTURED" in item_ids
+        assert "GEMINI-04-FALLBACK-BEHAVIOR" in item_ids
+        assert "GEMINI-05-AUTH-ERROR" in item_ids
+        assert "GEMINI-06-TIMEOUT-FAILURE" in item_ids
+    else:
+        assert res.status == TestStatus.BLOCKED

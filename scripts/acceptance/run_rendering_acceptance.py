@@ -319,31 +319,28 @@ def run_runtime_preflight() -> StageResult:
     t0 = time.monotonic()
     ai_status = TestStatus.BLOCKED
     ai_details: Dict[str, Any] = {"active_slots": 0, "configured_providers": []}
-    try:
-        import sqlite3
-        user_db = get_user_data_dir() / "polpot.db"
-        if user_db.is_file():
-            con = sqlite3.connect(f"file:{user_db}?mode=ro", uri=True)
-            cur = con.cursor()
-            rows = cur.execute(
-                "SELECT id, provider, label, slot_type, selected_model FROM api_slots WHERE is_active = 1"
-            ).fetchall()
-            con.close()
-            ai_details["active_slots"] = len(rows)
-            for r in rows:
+    user_db = get_user_data_dir() / "polpot.db"
+    if not user_db.is_file():
+        ai_details["note"] = "User database does not exist yet"
+    else:
+        try:
+            from interfaces.desktop.composition import DesktopAppContainer
+            container = DesktopAppContainer(instance_lock=None)
+            with container.uow_factory.create() as uow:
+                slots = [s for s in uow.apis.list_all() if getattr(s, "is_active", True)]
+            ai_details["active_slots"] = len(slots)
+            for s in slots:
                 ai_details["configured_providers"].append({
-                    "id": r[0],
-                    "provider": r[1],
-                    "label": r[2],
-                    "slot_type": r[3],
-                    "model": r[4],
+                    "id": s.id,
+                    "provider": s.provider,
+                    "label": s.label,
+                    "slot_type": s.slot_type,
+                    "model": s.selected_model,
                 })
-            if rows:
+            if slots:
                 ai_status = TestStatus.PASS
-        else:
-            ai_details["note"] = "User database does not exist yet"
-    except Exception as e:
-        ai_details["error"] = str(e)
+        except Exception as e:
+            ai_details["error"] = str(e)
 
     items.append(TestItemResult(
         test_id="PREFLIGHT-10-AI-PROVIDER-CONFIG",
@@ -862,12 +859,10 @@ def run_gemini_live(opt_in: bool) -> StageResult:
             )],
         )
 
-    # Resolve active slot from user database & keyring
-    import sqlite3
-    import keyring
-    from core.ai.types import TextPromptRequest, VisionPromptRequest
+    from interfaces.desktop.composition import DesktopAppContainer
+    from core.entities.api_slot import ApiSlot, CredentialRef
     from core.ai.exceptions import AIAuthenticationError, AITimeoutError
-    from infrastructure.ai.google_adapter import GoogleAdapter
+    from application.dto.latex_repair_dto import LaTeXRepairRequest
     from PIL import Image
 
     user_db = get_user_data_dir() / "polpot.db"
@@ -886,14 +881,26 @@ def run_gemini_live(opt_in: bool) -> StageResult:
             )],
         )
 
-    con = sqlite3.connect(f"file:{user_db}?mode=ro", uri=True)
-    cur = con.cursor()
-    row = cur.execute(
-        "SELECT id, provider, label, credential_identifier, selected_model FROM api_slots WHERE is_active = 1 LIMIT 1"
-    ).fetchone()
-    con.close()
+    try:
+        container = DesktopAppContainer(instance_lock=None)
+        with container.uow_factory.create() as uow:
+            active_slots = [s for s in uow.apis.list_all() if getattr(s, "is_active", True)]
+    except Exception as exc:
+        return StageResult(
+            stage_name="gemini-live",
+            status=TestStatus.BLOCKED,
+            total_tests=1,
+            blocked_tests=1,
+            duration_seconds=time.monotonic() - start_time,
+            items=[TestItemResult(
+                test_id="GEMINI-00-CONFIG",
+                name="Active AI Slot Resolution",
+                status=TestStatus.BLOCKED,
+                error_message=f"Could not read AI slots from database: {exc}",
+            )],
+        )
 
-    if not row:
+    if not active_slots:
         return StageResult(
             stage_name="gemini-live",
             status=TestStatus.BLOCKED,
@@ -908,10 +915,13 @@ def run_gemini_live(opt_in: bool) -> StageResult:
             )],
         )
 
-    slot_id, provider, label, cred_ident, selected_model = row
-    raw_key = keyring.get_password("polpot_desktop", cred_ident)
+    primary_slot = active_slots[0]
+    try:
+        resolved_key = container.credential_resolver.resolve_api_key(primary_slot.credential_ref)
+    except Exception:
+        resolved_key = None
 
-    if not raw_key:
+    if not resolved_key:
         return StageResult(
             stage_name="gemini-live",
             status=TestStatus.BLOCKED,
@@ -920,30 +930,32 @@ def run_gemini_live(opt_in: bool) -> StageResult:
             duration_seconds=time.monotonic() - start_time,
             items=[TestItemResult(
                 test_id="GEMINI-00-KEY",
-                name="OS Keyring Secret Resolution",
+                name="Keyring/Encrypted Vault Secret Resolution",
                 status=TestStatus.BLOCKED,
-                error_message="Credential could not be resolved from OS keyring for active slot",
+                error_message="Credential could not be resolved from OS keyring or encrypted vault for active slot",
             )],
         )
 
-    adapter = GoogleAdapter(api_key=raw_key, default_model=selected_model)
-
-    # 1. Real Text Generation Request
+    # 1. Real Text Generation Request via RateLimitedAIExecutor
     t0 = time.monotonic()
     try:
-        t_resp = adapter.generate_text(TextPromptRequest(prompt="Please respond with the exact word 'OK_POLPO'"))
-        is_ok = bool(t_resp.content and len(t_resp.content.strip()) > 0)
+        content, used_slot = container.ai_executor.execute_text_with_fallback(
+            chain=active_slots,
+            prompt="Please respond with the exact word 'OK_POLPO'",
+            at_page=0,
+        )
+        is_ok = bool(content and "OK_POLPO" in content)
         items.append(TestItemResult(
             test_id="GEMINI-01-TEXT",
-            name="Real Gemini Text Generation",
+            name="Real Text Generation via RateLimitedAIExecutor",
             status=TestStatus.PASS if is_ok else TestStatus.FAIL,
             duration_ms=(time.monotonic() - t0) * 1000,
-            details={"model": t_resp.model, "response_snippet": t_resp.content.strip()[:50]},
+            details={"model": used_slot.selected_model if used_slot else "", "slot": used_slot.label if used_slot else ""},
         ))
     except Exception as exc:
         items.append(TestItemResult(
             test_id="GEMINI-01-TEXT",
-            name="Real Gemini Text Generation",
+            name="Real Text Generation via RateLimitedAIExecutor",
             status=TestStatus.FAIL,
             duration_ms=(time.monotonic() - t0) * 1000,
             error_message=str(exc),
@@ -951,37 +963,41 @@ def run_gemini_live(opt_in: bool) -> StageResult:
 
     time.sleep(1.5)
 
-    # 2. Real Vision Request (Synthetic Test Image)
+    # 2. Real Vision Request (Synthetic Test Image) via RateLimitedAIExecutor
     t0 = time.monotonic()
     try:
         img = Image.new("RGB", (64, 64), color="blue")
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         try:
-            v_resp = adapter.generate_vision(VisionPromptRequest(
-                prompt="What is the primary color of this small image? Answer with one word.",
+            v_content, used_slot = container.ai_executor.execute_vision_with_fallback(
+                chain=active_slots,
                 image_bytes=buf.getvalue(),
+                prompt="What is the primary color of this small image? Answer with one word.",
+                at_page=0,
                 mime_type="image/png",
-            ))
+            )
         except Exception:
             time.sleep(2.0)
-            v_resp = adapter.generate_vision(VisionPromptRequest(
-                prompt="What is the primary color of this small image? Answer with one word.",
+            v_content, used_slot = container.ai_executor.execute_vision_with_fallback(
+                chain=active_slots,
                 image_bytes=buf.getvalue(),
+                prompt="What is the primary color of this small image? Answer with one word.",
+                at_page=0,
                 mime_type="image/png",
-            ))
-        v_ok = bool(v_resp.content and len(v_resp.content.strip()) > 0)
+            )
+        v_ok = bool(v_content and len(v_content.strip()) > 0)
         items.append(TestItemResult(
             test_id="GEMINI-02-VISION",
-            name="Real Gemini Vision Request (Synthetic PNG)",
+            name="Real Vision Request via RateLimitedAIExecutor",
             status=TestStatus.PASS if v_ok else TestStatus.FAIL,
             duration_ms=(time.monotonic() - t0) * 1000,
-            details={"model": v_resp.model, "response_snippet": v_resp.content.strip()[:50]},
+            details={"model": used_slot.selected_model if used_slot else "", "response_snippet": v_content.strip()[:50] if v_content else ""},
         ))
     except Exception as exc:
         items.append(TestItemResult(
             test_id="GEMINI-02-VISION",
-            name="Real Gemini Vision Request (Synthetic PNG)",
+            name="Real Vision Request via RateLimitedAIExecutor",
             status=TestStatus.FAIL,
             duration_ms=(time.monotonic() - t0) * 1000,
             error_message=str(exc),
@@ -989,48 +1005,132 @@ def run_gemini_live(opt_in: bool) -> StageResult:
 
     time.sleep(1.5)
 
-    # 3. Real Structured LaTeX Repair Request
+    # 3. Real Structured LaTeX Repair via LaTeXRepairService and Same-Renderer Validation
     t0 = time.monotonic()
     try:
-        repair_prompt = (
-            "You are a LaTeX repair assistant. Fix the following invalid LaTeX formula:\n"
-            "Original: \\frac{a}{\n"
-            "Diagnostic: Missing close brace\n"
-            "Return valid JSON strictly matching: {\"repaired\": \"...\", \"notes\": \"...\"}"
+        repair_req = LaTeXRepairRequest(
+            job_id=1,
+            canonical_version=1,
+            node_id="acceptance_test_math",
+            original_source=r"\frac{a}{",
+            renderer_type="math_display",
+            sanitized_diagnostics="Missing close brace",
         )
-        r_resp = adapter.generate_text(TextPromptRequest(prompt=repair_prompt))
-        r_ok = "repaired" in r_resp.content.lower()
+        proposal = container.latex_repair_service.repair_latex(repair_req)
+        r_ok = proposal.validation_passed and bool(proposal.rendered_preview_xml)
         items.append(TestItemResult(
-            test_id="GEMINI-03-REPAIR-JSON",
-            name="Real Gemini Structured LaTeX Repair Prompt",
+            test_id="GEMINI-03-REPAIR-STRUCTURED",
+            name="Real Structured LaTeX Repair with Same-Renderer Validation",
             status=TestStatus.PASS if r_ok else TestStatus.FAIL,
             duration_ms=(time.monotonic() - t0) * 1000,
-            details={"model": r_resp.model, "response_snippet": r_resp.content.strip()[:60]},
+            details={
+                "model": proposal.model_name,
+                "repaired_source": proposal.repaired_source,
+                "change_summary": proposal.change_summary,
+                "preview_svg_bytes": len(proposal.rendered_preview_xml or ""),
+            },
+            error_message=proposal.validation_error if not r_ok else None,
         ))
     except Exception as exc:
         items.append(TestItemResult(
-            test_id="GEMINI-03-REPAIR-JSON",
-            name="Real Gemini Structured LaTeX Repair Prompt",
+            test_id="GEMINI-03-REPAIR-STRUCTURED",
+            name="Real Structured LaTeX Repair with Same-Renderer Validation",
             status=TestStatus.FAIL,
             duration_ms=(time.monotonic() - t0) * 1000,
             error_message=str(exc),
         ))
 
-    # 4. Authentication Failure Behavior
+    # 4. Fallback Behavior when First Configured Provider Fails
     t0 = time.monotonic()
-    bad_adapter = GoogleAdapter(api_key="AIzaSy_INVALID_KEY_FOR_TESTING_12345", default_model=selected_model)
     try:
-        bad_adapter.generate_text(TextPromptRequest(prompt="Hello"))
+        from infrastructure.ai.factory import create_ai_adapter
+        from infrastructure.ai.executor_service import RateLimitedAIExecutor
+
+        bad_slot = ApiSlot(
+            id=9999,
+            provider=primary_slot.provider,
+            label="Failing Primary Slot",
+            slot_type="byok",
+            selected_model=primary_slot.selected_model,
+        )
+
+        orig_factory = container.ai_adapter_factory
+        def test_fallback_factory(slot: ApiSlot):
+            if slot.id == 9999:
+                return create_ai_adapter(
+                    provider=slot.provider,
+                    api_key="AIzaSy_INVALID_TEST_KEY_FOR_FALLBACK",
+                    default_model=slot.selected_model,
+                )
+            return orig_factory(slot)
+
+        fallback_executor = RateLimitedAIExecutor(
+            adapter_factory=test_fallback_factory,
+            rate_limiter=container.rate_limiter,
+        )
+
+        test_chain = [bad_slot] + active_slots
+        fallback_content, used_slot = fallback_executor.execute_text_with_fallback(
+            chain=test_chain,
+            prompt="Please respond with the exact word 'FALLBACK_OK'",
+            at_page=0,
+        )
+        fallback_ok = bool(used_slot and used_slot.id != bad_slot.id and fallback_content)
         items.append(TestItemResult(
-            test_id="GEMINI-04-AUTH-ERROR",
-            name="Authentication Failure Exception Mapping",
+            test_id="GEMINI-04-FALLBACK-BEHAVIOR",
+            name="AI Provider Fallback on First Provider Failure",
+            status=TestStatus.PASS if fallback_ok else TestStatus.FAIL,
+            duration_ms=(time.monotonic() - t0) * 1000,
+            details={"transitioned_to_slot": used_slot.label if used_slot else None},
+        ))
+    except Exception as exc:
+        items.append(TestItemResult(
+            test_id="GEMINI-04-FALLBACK-BEHAVIOR",
+            name="AI Provider Fallback on First Provider Failure",
             status=TestStatus.FAIL,
             duration_ms=(time.monotonic() - t0) * 1000,
-            error_message="Expected AIAuthenticationError was not raised",
+            error_message=str(exc),
+        ))
+
+    # 5. Authentication Failure Behavior
+    t0 = time.monotonic()
+    try:
+        bad_auth_slot = ApiSlot(
+            id=9998,
+            provider=primary_slot.provider,
+            label="Invalid Auth Slot",
+            slot_type="byok",
+            selected_model=primary_slot.selected_model,
+        )
+
+        def bad_auth_factory(slot: ApiSlot):
+            return create_ai_adapter(
+                provider=slot.provider,
+                api_key="AIzaSy_INVALID_TEST_KEY_FOR_AUTH",
+                default_model=slot.selected_model,
+            )
+
+        auth_executor = RateLimitedAIExecutor(
+            adapter_factory=bad_auth_factory,
+            rate_limiter=container.rate_limiter,
+        )
+
+        auth_content, auth_used = auth_executor.execute_text_with_fallback(
+            chain=[bad_auth_slot],
+            prompt="Hello",
+            at_page=0,
+        )
+        auth_handled = (auth_content is None and auth_used is None)
+        items.append(TestItemResult(
+            test_id="GEMINI-05-AUTH-ERROR",
+            name="Authentication Failure Exception Mapping",
+            status=TestStatus.PASS if auth_handled else TestStatus.FAIL,
+            duration_ms=(time.monotonic() - t0) * 1000,
+            details={"handled_gracefully": auth_handled},
         ))
     except AIAuthenticationError as auth_err:
         items.append(TestItemResult(
-            test_id="GEMINI-04-AUTH-ERROR",
+            test_id="GEMINI-05-AUTH-ERROR",
             name="Authentication Failure Exception Mapping",
             status=TestStatus.PASS,
             duration_ms=(time.monotonic() - t0) * 1000,
@@ -1038,33 +1138,50 @@ def run_gemini_live(opt_in: bool) -> StageResult:
         ))
     except Exception as exc:
         items.append(TestItemResult(
-            test_id="GEMINI-04-AUTH-ERROR",
+            test_id="GEMINI-05-AUTH-ERROR",
             name="Authentication Failure Exception Mapping",
             status=TestStatus.PASS,
             duration_ms=(time.monotonic() - t0) * 1000,
             details={"caught_exception": type(exc).__name__},
         ))
 
-    # 5. Centralized Fallback Chain Progression
+    # 6. Timeout and Network Failure Behavior
     t0 = time.monotonic()
-    from core.policies.fallback_policy import FallbackChainPolicy
-    from core.entities.api_slot import ApiSlot
-    slot_a = ApiSlot(id=1, provider="google", label="Slot A", selected_model="gemini-3.5-flash-lite")
-    slot_b = ApiSlot(id=2, provider="google", label="Slot B", selected_model="gemini-3.5-flash-lite")
-    next_slot, next_idx, event = FallbackChainPolicy.advance_chain(
-        chain=[slot_a, slot_b],
-        current_index=0,
-        reason="rate_limit",
-        at_page=1,
-    )
-    fallback_ok = next_slot == slot_b and next_idx == 1
-    items.append(TestItemResult(
-        test_id="GEMINI-05-FALLBACK-POLICY",
-        name="AI Provider Fallback Chain Progression",
-        status=TestStatus.PASS if fallback_ok else TestStatus.FAIL,
-        duration_ms=(time.monotonic() - t0) * 1000,
-        details={"transitioned_to": next_slot.label if next_slot else None},
-    ))
+    try:
+        from infrastructure.ai.executor_service import RateLimitedAIExecutor
+        from unittest.mock import MagicMock
+        mock_adapter = MagicMock()
+        mock_adapter.generate_text.side_effect = AITimeoutError("Simulated request timeout after 30s")
+
+        timeout_executor = RateLimitedAIExecutor(
+            adapter_factory=lambda slot: mock_adapter,
+            rate_limiter=container.rate_limiter,
+        )
+        t_content, t_used = timeout_executor.execute_text_with_fallback(
+            chain=active_slots[:1],
+            prompt="Timeout test",
+            at_page=0,
+        )
+        timeout_handled = (t_content is None)
+        items.append(TestItemResult(
+            test_id="GEMINI-06-TIMEOUT-FAILURE",
+            name="Timeout and Network Failure Handling",
+            status=TestStatus.PASS if timeout_handled else TestStatus.FAIL,
+            duration_ms=(time.monotonic() - t0) * 1000,
+            details={"handled_gracefully": timeout_handled},
+        ))
+    except Exception as exc:
+        items.append(TestItemResult(
+            test_id="GEMINI-06-TIMEOUT-FAILURE",
+            name="Timeout and Network Failure Handling",
+            status=TestStatus.FAIL,
+            duration_ms=(time.monotonic() - t0) * 1000,
+            error_message=str(exc),
+        ))
+
+    # Clean up MathJax worker process if started during repair
+    if hasattr(container, "mathjax_supervisor") and container.mathjax_supervisor:
+        container.mathjax_supervisor.shutdown()
 
     passed = sum(1 for i in items if i.status == TestStatus.PASS)
     failed = sum(1 for i in items if i.status == TestStatus.FAIL)
