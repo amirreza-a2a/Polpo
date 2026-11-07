@@ -55,11 +55,13 @@ class ExportController(QObject):
     saveBeforeExportRequired = Signal(int, str, int)  # (job_id, export_type, current_version)
     readyForDestination = Signal(int, str, int)    # (job_id, export_type, resolved_version)
     packageRecoveryRequired = Signal(int, list, bool, str)  # (job_id, pkgs, can_auto, instructions)
+    pdfCompilationFailed = Signal(int, str, int)            # (job_id, sanitized_message, line_number)
 
     _internalExportCompleted = Signal(int, int, str)
     _internalExportError = Signal(int, int, str, bool, str, str, int)
     _internalExportWarning = Signal(int, int, str)
     _internalPackageRecoveryRequired = Signal(int, int, list, bool, str)
+    _internalPdfCompilationFailed = Signal(int, int, str, int)
 
     def __init__(
         self,
@@ -92,6 +94,7 @@ class ExportController(QObject):
         self._internalExportError.connect(self._on_internal_export_error)
         self._internalExportWarning.connect(self._on_internal_export_warning)
         self._internalPackageRecoveryRequired.connect(self._on_internal_package_recovery_required)
+        self._internalPdfCompilationFailed.connect(self._on_internal_pdf_compilation_failed)
 
     def is_exporting(self) -> bool:
         return self._is_exporting
@@ -446,6 +449,13 @@ class ExportController(QObject):
                 self._internalPackageRecoveryRequired.emit(
                     req_id, job_id, missing_pkgs, can_auto, instructions
                 )
+            except PdfCompilationError as pce:
+                line_no = pce.line_number or 0
+                msg = pce.sanitized_message or str(pce)
+                self._internalPdfCompilationFailed.emit(req_id, job_id, msg, line_no)
+                self._internalExportError.emit(
+                    req_id, job_id, str(pce), False, export_type, str(local_path), version
+                )
             except DestinationAlreadyExistsError as dae:
                 self._internalExportError.emit(
                     req_id, job_id, str(dae), True, export_type, str(local_path), version
@@ -595,6 +605,36 @@ class ExportController(QObject):
         self._is_exporting = False
         self.exportingChanged.emit()
         self.packageRecoveryRequired.emit(job_id, pkgs, can_auto, instructions)
+
+    @Slot(int, int, str, int)
+    def _on_internal_pdf_compilation_failed(
+        self, req_id: int, job_id: int, sanitized_msg: str, line_no: int
+    ) -> None:
+        if req_id != self._request_id or self._is_shutdown:
+            return
+        self.pdfCompilationFailed.emit(job_id, sanitized_msg, line_no)
+
+    @Slot(int, str, int, result=bool)
+    @Slot(int, str, result=bool)
+    def requestPdfRepair(self, job_id: int, sanitized_message: str, line_number: int = 0) -> bool:
+        """
+        Facilitates AI repair initiation from PDF compilation failures.
+        If editor_controller is present, attempts to map line_number or navigate to failing region.
+        """
+        if self.editor_controller is None or self._is_shutdown:
+            return False
+        if hasattr(self.editor_controller, "activeJobId") and self.editor_controller.activeJobId != job_id:
+            return False
+
+        if line_number > 0 and hasattr(self.editor_controller, "_get_document"):
+            try:
+                doc = self.editor_controller._get_document()
+                block = doc.findBlockByLineNumber(max(0, line_number - 1))
+                if block.isValid() and hasattr(self.editor_controller, "requestNavigateToPosition"):
+                    self.editor_controller.requestNavigateToPosition.emit(block.position())
+            except Exception:
+                pass
+        return True
 
     @Slot()
     def shutdown(self) -> None:

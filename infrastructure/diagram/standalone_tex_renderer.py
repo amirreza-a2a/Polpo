@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from pathlib import Path
@@ -21,6 +22,8 @@ try:
     import fitz  # PyMuPDF
 except ImportError:
     fitz = None
+
+from infrastructure.pdf.tex_log_sanitizer import TexLogSanitizer
 
 from application.ports.diagram_renderer import (
     DiagramCancelledError,
@@ -84,6 +87,62 @@ def _extract_sanitized_latex_error(log_content: str, stderr: str) -> str:
             return first_stderr[0][:200]
 
     return "LaTeX diagram compilation failed with unknown error."
+
+
+def _parse_latex_diagnostics(
+    log_content: str,
+    stderr: str,
+    source: str,
+    preamble: str,
+    returncode: Optional[int],
+) -> DiagramSyntaxError:
+    """Parses raw LaTeX compiler log/stderr and computes fragment-relative line numbers."""
+    combined = f"{stderr}\n{log_content}"
+    sanitizer = TexLogSanitizer()
+    diag = sanitizer.sanitize(combined)
+
+    # Calculate wrapper line offset
+    header_prefix = _STANDALONE_TEMPLATE.split("__SOURCE__")[0]
+    header_tex = header_prefix.replace("__PREAMBLE__", preamble or "")
+    header_lines = header_tex.count("\n")
+
+    tex_line = diag.line_number
+    source_line: Optional[int] = None
+    if tex_line is not None:
+        candidate = tex_line - header_lines
+        num_source_lines = source.count("\n") + 1
+        if 1 <= candidate <= num_source_lines:
+            source_line = candidate
+
+    # Bound and sanitize log excerpt to at most 2000 chars
+    raw_excerpt = diag.raw_error_snippet or diag.sanitized_message
+    excerpt = sanitizer._redact_sensitive_info(raw_excerpt)
+    if len(excerpt) > 2000:
+        excerpt = excerpt[:2000]
+
+    source_sha256 = hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+    # Determine error category
+    err_cat = "syntax"
+    if diag.missing_packages:
+        err_cat = "missing_package"
+    elif diag.missing_fonts:
+        err_cat = "missing_font"
+    elif "undefined control sequence" in diag.sanitized_message.lower():
+        err_cat = "undefined_control_sequence"
+    elif "environment" in diag.sanitized_message.lower():
+        err_cat = "environment"
+
+    return DiagramSyntaxError(
+        code="syntax",
+        message=diag.sanitized_message,
+        returncode=returncode,
+        tex_line=tex_line,
+        source_line=source_line,
+        log_excerpt=excerpt,
+        source_sha256=source_sha256,
+        error_category=err_cat,
+    )
 
 
 class StandaloneTeXDiagramRenderer(IDiagramRenderer):
@@ -231,8 +290,13 @@ class StandaloneTeXDiagramRenderer(IDiagramRenderer):
             if proc.returncode != 0:
                 log_file = Path(td) / "diagram.log"
                 log_text = log_file.read_text(encoding="utf-8", errors="replace") if log_file.is_file() else ""
-                err_msg = _extract_sanitized_latex_error(log_text, stderr)
-                raise DiagramSyntaxError("syntax", err_msg)
+                raise _parse_latex_diagnostics(
+                    log_content=log_text,
+                    stderr=stderr,
+                    source=request.source,
+                    preamble=request.preamble,
+                    returncode=proc.returncode,
+                )
 
             pdf_file = Path(td) / "diagram.pdf"
             if not pdf_file.is_file() or pdf_file.stat().st_size == 0:

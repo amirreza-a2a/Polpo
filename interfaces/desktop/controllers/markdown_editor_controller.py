@@ -8,7 +8,9 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, List, Optional, Tuple, Union
 
+from application.dto.latex_repair_dto import LaTeXRepairProposal, LaTeXRepairRequest
 from application.dto.merge_dto import MergeAnalysisResultDTO
+from application.services.latex_repair_service import LaTeXRepairService
 from application.services.markdown_editor_service import MarkdownEditorService
 from application.services.markdown_merge_service import MarkdownMergeService
 from core.domain.visual_token import (
@@ -27,6 +29,7 @@ from core.markdown.visual_token_mutator import (
 )
 from interfaces.desktop.models.conflict_session import ConflictSession
 from interfaces.desktop.qt_compat import (
+    QGuiApplication,
     QObject,
     Property,
     Signal,
@@ -67,6 +70,13 @@ class MarkdownEditorController(QObject):
     autoMergeNotified = Signal(str)
     pipeline2RefinementChanged = Signal()
 
+    repairingChanged = Signal()
+    activeProposalChanged = Signal()
+    repairErrorChanged = Signal()
+    repairProposalReady = Signal("QVariant")
+    repairFailed = Signal(str)
+    repairApplied = Signal(int)
+
     saved = Signal(int)             # (new_version)
     discarded = Signal()
     conflictDetected = Signal(str)  # (conflict_message)
@@ -80,18 +90,28 @@ class MarkdownEditorController(QObject):
     _internalSaveError = Signal(int, str, bool)      # (req_id, error_message, is_conflict)
     _internalMergeAnalyzed = Signal(int, object)     # (session_id, MergeAnalysisResultDTO)
     _internalMergeError = Signal(int, str)           # (session_id, error_message)
+    _internalRepairCompleted = Signal(int, object)   # (req_id, LaTeXRepairProposal)
+    _internalRepairFailed = Signal(int, str)         # (req_id, error_message)
 
     def __init__(
         self,
         editor_service: MarkdownEditorService,
         merge_service: Optional[MarkdownMergeService] = None,
         region_service: Optional[Any] = None,
+        repair_service: Optional[LaTeXRepairService] = None,
         parent: Optional[QObject] = None,
     ):
         super().__init__(parent)
         self.editor_service = editor_service
         self.merge_service = merge_service
         self.region_service = region_service
+        self.repair_service = repair_service
+
+        self._is_repairing: bool = False
+        self._active_proposal: Optional[LaTeXRepairProposal] = None
+        self._repair_error: str = ""
+        self._repair_request_id: int = 0
+        self._repair_node_id: str = ""
 
         self._source_text: str = ""
         self._saved_source_text: str = ""
@@ -146,6 +166,8 @@ class MarkdownEditorController(QObject):
         self._internalSaveError.connect(self._on_internal_save_error)
         self._internalMergeAnalyzed.connect(self._on_internal_merge_analyzed)
         self._internalMergeError.connect(self._on_internal_merge_error)
+        self._internalRepairCompleted.connect(self._on_internal_repair_completed)
+        self._internalRepairFailed.connect(self._on_internal_repair_failed)
 
     # -----------------------------------------------------------------------
     # Properties
@@ -392,6 +414,21 @@ class MarkdownEditorController(QObject):
 
     autoMergeNotification = Property(str, auto_merge_notification, notify=autoMergeNotified)
 
+    def is_repairing(self) -> bool:
+        return self._is_repairing
+
+    isRepairing = Property(bool, is_repairing, notify=repairingChanged)
+
+    def active_proposal(self) -> Optional[dict]:
+        return self._active_proposal.to_dict() if self._active_proposal is not None else None
+
+    activeProposal = Property("QVariant", active_proposal, notify=activeProposalChanged)
+
+    def repair_error(self) -> str:
+        return self._repair_error
+
+    repairError = Property(str, repair_error, notify=repairErrorChanged)
+
     # -----------------------------------------------------------------------
     # Operations
     # -----------------------------------------------------------------------
@@ -424,6 +461,14 @@ class MarkdownEditorController(QObject):
         self._active_conflict_session = None
         self.conflictChanged.emit()
         self.mergeSessionStateChanged.emit()
+
+        self._repair_request_id += 1
+        self._is_repairing = False
+        self._active_proposal = None
+        self._repair_error = ""
+        self.repairingChanged.emit()
+        self.activeProposalChanged.emit()
+        self.repairErrorChanged.emit()
 
         def _task():
             try:
@@ -1430,6 +1475,8 @@ class MarkdownEditorController(QObject):
         self._text_document = None
         self._quick_text_doc = None
         self._headless_doc = None
+        self._is_repairing = False
+        self._active_proposal = None
         self._executor.shutdown(wait=True, cancel_futures=True)
 
     # -----------------------------------------------------------------------
@@ -1594,3 +1641,193 @@ class MarkdownEditorController(QObject):
         self._conflict_message = error_msg
         self.conflictChanged.emit()
         self.conflictDetected.emit(error_msg)
+
+    # -----------------------------------------------------------------------
+    # AI-Assisted LaTeX Error Repair Operations (LFR-04)
+    # -----------------------------------------------------------------------
+
+    @Slot(str, str, str, str, int, str, result=bool)
+    @Slot(str, str, str, str, int, result=bool)
+    @Slot(str, str, str, str, result=bool)
+    def requestRepair(
+        self,
+        node_id: str,
+        original_source: str,
+        renderer_type: str,
+        diagnostics: str,
+        error_line: int = 0,
+        log_excerpt: str = "",
+    ) -> bool:
+        """
+        Dispatches an asynchronous AI LaTeX repair request.
+        Validates active job, conflicts, and buffer presence before worker dispatch.
+        """
+        if self._is_shutdown:
+            return False
+        if self._is_repairing:
+            return False
+        if self._active_job_id <= 0:
+            self._repair_error = "No active document job loaded."
+            self.repairErrorChanged.emit()
+            self.repairFailed.emit(self._repair_error)
+            return False
+        if self._has_conflict or (
+            self._active_conflict_session is not None
+            and not self._active_conflict_session.isInvalidated
+        ):
+            self._repair_error = "Cannot perform AI repair while merge conflicts are active."
+            self.repairErrorChanged.emit()
+            self.repairFailed.emit(self._repair_error)
+            return False
+        if self.repair_service is None:
+            self._repair_error = "LaTeX repair service is not configured."
+            self.repairErrorChanged.emit()
+            self.repairFailed.emit(self._repair_error)
+            return False
+        if not original_source:
+            self._repair_error = "LaTeX source code cannot be empty."
+            self.repairErrorChanged.emit()
+            self.repairFailed.emit(self._repair_error)
+            return False
+        if original_source not in self._source_text:
+            self._repair_error = "LaTeX fragment not found in current editor buffer."
+            self.repairErrorChanged.emit()
+            self.repairFailed.emit(self._repair_error)
+            return False
+
+        self._repair_request_id += 1
+        req_id = self._repair_request_id
+        self._is_repairing = True
+        self._repair_error = ""
+        self._active_proposal = None
+        self._repair_node_id = node_id
+
+        self.repairingChanged.emit()
+        self.repairErrorChanged.emit()
+        self.activeProposalChanged.emit()
+
+        job_id = self._active_job_id
+        canonical_version = self._active_version
+        is_dirty = self._is_dirty
+
+        def _worker() -> None:
+            try:
+                req = LaTeXRepairRequest(
+                    job_id=job_id,
+                    canonical_version=canonical_version,
+                    node_id=node_id,
+                    original_source=original_source,
+                    renderer_type=renderer_type,
+                    sanitized_diagnostics=diagnostics,
+                    draft_revision=1 if is_dirty else 0,
+                    log_excerpt=log_excerpt,
+                    error_line=error_line if error_line > 0 else None,
+                )
+                proposal = self.repair_service.repair_latex(req)
+                self._internalRepairCompleted.emit(req_id, proposal)
+            except Exception as ex:
+                self._internalRepairFailed.emit(req_id, str(ex))
+
+        self._executor.submit(_worker)
+        return True
+
+    def _on_internal_repair_completed(self, req_id: int, proposal: LaTeXRepairProposal) -> None:
+        if self._is_shutdown or req_id != self._repair_request_id:
+            return
+
+        self._is_repairing = False
+        self.repairingChanged.emit()
+
+        if self._active_job_id != proposal.job_id or self._active_version != proposal.canonical_version:
+            self._repair_error = "Document version changed while repair was being generated."
+            self.repairErrorChanged.emit()
+            self.repairFailed.emit(self._repair_error)
+            return
+
+        if proposal.original_source not in self._source_text:
+            self._repair_error = "Original formula was modified or removed from editor buffer."
+            self.repairErrorChanged.emit()
+            self.repairFailed.emit(self._repair_error)
+            return
+
+        if not proposal.validation_passed:
+            self._repair_error = proposal.validation_error or "AI repair failed validation."
+            self.repairErrorChanged.emit()
+            self.repairFailed.emit(self._repair_error)
+            return
+
+        self._active_proposal = proposal
+        self._repair_error = ""
+        self.activeProposalChanged.emit()
+        self.repairErrorChanged.emit()
+        self.repairProposalReady.emit(proposal.to_dict())
+
+    def _on_internal_repair_failed(self, req_id: int, error_msg: str) -> None:
+        if self._is_shutdown or req_id != self._repair_request_id:
+            return
+
+        self._is_repairing = False
+        self._repair_error = error_msg
+        self.repairingChanged.emit()
+        self.repairErrorChanged.emit()
+        self.repairFailed.emit(error_msg)
+
+    @Slot(result=bool)
+    def applyRepair(self) -> bool:
+        """
+        Applies validated AI repair proposal to editor buffer using QTextDocument atomic edit block.
+        Preserves Qt undo/redo stack, marks buffer dirty, emits navigation and applied signals.
+        """
+        if self._active_proposal is None:
+            return False
+
+        proposal = self._active_proposal
+        if self._active_job_id <= 0 or self._active_job_id != proposal.job_id:
+            return False
+        if self._active_version != proposal.canonical_version:
+            return False
+        if not proposal.validation_passed:
+            return False
+
+        doc = self._get_document()
+        plain_text = doc.toPlainText()
+        idx = plain_text.find(proposal.original_source)
+        if idx < 0:
+            return False
+
+        utf16_before = plain_text[:idx].encode("utf-16-le")
+        utf16_start = len(utf16_before) // 2
+        utf16_target = proposal.original_source.encode("utf-16-le")
+        utf16_end = utf16_start + (len(utf16_target) // 2)
+
+        cursor = QTextCursor(doc)
+        cursor.beginEditBlock()
+        try:
+            cursor.setPosition(utf16_start)
+            cursor.setPosition(utf16_end, QTextCursor.MoveMode.KeepAnchor)
+            cursor.insertText(proposal.repaired_source)
+        finally:
+            cursor.endEditBlock()
+
+        self.set_source_text(doc.toPlainText())
+        self._active_proposal = None
+        self.activeProposalChanged.emit()
+        self.updateCursorPosition(utf16_start)
+        self.requestNavigateToPosition.emit(utf16_start)
+        self.repairApplied.emit(utf16_start)
+        return True
+
+    @Slot()
+    def rejectRepair(self) -> None:
+        """Discards active repair proposal without modifying editor buffer."""
+        self._active_proposal = None
+        self._repair_error = ""
+        self.activeProposalChanged.emit()
+        self.repairErrorChanged.emit()
+
+    @Slot(str)
+    def copyToClipboard(self, text: str) -> None:
+        """Copies given text to system clipboard via QGuiApplication."""
+        clipboard = QGuiApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(text)

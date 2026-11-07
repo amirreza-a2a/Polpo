@@ -157,6 +157,8 @@ class MarkdownDocumentModel(QAbstractListModel):
     DiagramHeightRole = Qt.ItemDataRole.UserRole + 35
     DiagramHasErrorRole = Qt.ItemDataRole.UserRole + 36
     DiagramErrorMessageRole = Qt.ItemDataRole.UserRole + 37
+    DiagramErrorLineRole = Qt.ItemDataRole.UserRole + 38
+    DiagramLogExcerptRole = Qt.ItemDataRole.UserRole + 39
 
     def __init__(
         self,
@@ -239,6 +241,8 @@ class MarkdownDocumentModel(QAbstractListModel):
             self.DiagramHeightRole: b"diagramHeight",
             self.DiagramHasErrorRole: b"diagramHasError",
             self.DiagramErrorMessageRole: b"diagramErrorMessage",
+            self.DiagramErrorLineRole: b"diagramErrorLine",
+            self.DiagramLogExcerptRole: b"diagramLogExcerpt",
         }
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
@@ -325,6 +329,10 @@ class MarkdownDocumentModel(QAbstractListModel):
             return bool(item.get("diagramHasError", False))
         elif role == self.DiagramErrorMessageRole:
             return str(item.get("diagramErrorMessage", "") or "")
+        elif role == self.DiagramErrorLineRole:
+            return int(item.get("diagramErrorLine", 0) or 0)
+        elif role == self.DiagramLogExcerptRole:
+            return str(item.get("diagramLogExcerpt", "") or "")
         return None
 
     def _update_doc_hash_to_tex(self, document_dto: Optional[MarkdownDocumentDTO]) -> None:
@@ -419,6 +427,8 @@ class MarkdownDocumentModel(QAbstractListModel):
                 "hasError": bool(getattr(s, "has_error", False)),
                 "errorCategory": str(getattr(s, "error_category", "") or ""),
                 "errorMessage": str(getattr(s, "error_message", "") or ""),
+                "errorLine": int(getattr(s, "error_line", 0) or 0),
+                "logExcerpt": str(getattr(s, "log_excerpt", "") or ""),
             }
 
         seg_dicts = [_convert_segment(s) for s in node.segments]
@@ -504,6 +514,8 @@ class MarkdownDocumentModel(QAbstractListModel):
             "diagramHeight": float(getattr(node, "diagram_height", 0.0) or 0.0),
             "diagramHasError": bool(getattr(node, "has_error", False)) if getattr(node, "node_type", "") == "diagram" else False,
             "diagramErrorMessage": str(getattr(node, "error_message", "") or "") if getattr(node, "node_type", "") == "diagram" else "",
+            "diagramErrorLine": int(getattr(node, "error_line", 0) or 0) if getattr(node, "node_type", "") == "diagram" else 0,
+            "diagramLogExcerpt": str(getattr(node, "log_excerpt", "") or "") if getattr(node, "node_type", "") == "diagram" else "",
         }
 
 

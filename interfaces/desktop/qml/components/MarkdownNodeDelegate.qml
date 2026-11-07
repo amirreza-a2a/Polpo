@@ -402,6 +402,9 @@ Item {
                     mathTex: model.mathTex || ""
                     category: model.mathErrorCategory || ""
                     errorMessage: model.mathErrorMessage || ""
+                    nodeId: model.nodeId || ""
+                    errorLine: model.errorLine || 0
+                    logExcerpt: model.logExcerpt || ""
                     controller: delegateRoot.controller
                     scaleFactor: delegateRoot.scaleFactor
                 }
@@ -470,11 +473,85 @@ Item {
                         anchors.margins: 10
                         spacing: 6
 
-                        Text {
-                            text: "⚠️ LaTeX Diagram Syntax Error"
-                            color: (typeof theme !== "undefined" && theme) ? theme.error : "transparent"
-                            font.bold: true
-                            font.pixelSize: Math.round(13 * delegateRoot.scaleFactor)
+                        RowLayout {
+                            width: parent.width
+                            spacing: 8
+
+                            Text {
+                                text: "⚠️ LaTeX Diagram Syntax Error"
+                                color: (typeof theme !== "undefined" && theme) ? theme.error : "transparent"
+                                font.bold: true
+                                font.pixelSize: Math.round(13 * delegateRoot.scaleFactor)
+                                Layout.alignment: Qt.AlignVCenter
+                            }
+
+                            Item {
+                                Layout.fillWidth: true
+                            }
+
+                            Button {
+                                id: diagRepairBtn
+                                text: (typeof markdownEditorController !== "undefined" && markdownEditorController && markdownEditorController.isRepairing) ? "در حال اصلاح..." : "اصلاح با هوش مصنوعی"
+                                font.pixelSize: Math.round(11 * delegateRoot.scaleFactor)
+                                Layout.preferredHeight: 24
+                                Layout.alignment: Qt.AlignVCenter
+                                enabled: typeof markdownEditorController !== "undefined" && markdownEditorController !== null && !markdownEditorController.isRepairing
+
+                                background: Rectangle {
+                                    color: diagRepairBtn.down ? ((typeof theme !== "undefined" && theme) ? theme.accentActive : "transparent") : (diagRepairBtn.hovered ? ((typeof theme !== "undefined" && theme) ? theme.accentHover : "transparent") : ((typeof theme !== "undefined" && theme) ? theme.accent : "transparent"))
+                                    radius: 3
+                                }
+
+                                contentItem: Text {
+                                    text: diagRepairBtn.text
+                                    color: (typeof theme !== "undefined" && theme) ? theme.accentText : "transparent"
+                                    font: diagRepairBtn.font
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+
+                                onClicked: {
+                                    if (typeof markdownEditorController !== "undefined" && markdownEditorController && typeof markdownEditorController.requestRepair === "function") {
+                                        markdownEditorController.requestRepair(
+                                            model.nodeId || ("diagram_" + index),
+                                            model.diagramSource,
+                                            "diagram",
+                                            model.diagramErrorMessage,
+                                            model.diagramErrorLine || 0,
+                                            model.diagramLogExcerpt || ""
+                                        );
+                                    }
+                                }
+                            }
+
+                            Button {
+                                id: diagCopyBtn
+                                text: "کپی کد"
+                                font.pixelSize: Math.round(11 * delegateRoot.scaleFactor)
+                                Layout.preferredHeight: 24
+                                Layout.alignment: Qt.AlignVCenter
+
+                                background: Rectangle {
+                                    color: diagCopyBtn.down ? ((typeof theme !== "undefined" && theme) ? theme.surfaceActive : "transparent") : (diagCopyBtn.hovered ? ((typeof theme !== "undefined" && theme) ? theme.surfaceHover : "transparent") : ((typeof theme !== "undefined" && theme) ? theme.surface : "transparent"))
+                                    radius: 3
+                                    border.color: (typeof theme !== "undefined" && theme) ? (diagCopyBtn.visualFocus ? theme.focusRing : theme.border) : "transparent"
+                                    border.width: 1
+                                }
+
+                                contentItem: Text {
+                                    text: diagCopyBtn.text
+                                    color: (typeof theme !== "undefined" && theme) ? theme.textPrimary : "transparent"
+                                    font: diagCopyBtn.font
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+
+                                onClicked: {
+                                    if (typeof markdownEditorController !== "undefined" && markdownEditorController && typeof markdownEditorController.copyToClipboard === "function") {
+                                        markdownEditorController.copyToClipboard(model.diagramSource || "");
+                                    }
+                                }
+                            }
                         }
 
                         Text {

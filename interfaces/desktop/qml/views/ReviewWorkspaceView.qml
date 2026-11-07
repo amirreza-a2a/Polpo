@@ -426,6 +426,11 @@ Item {
         objectName: "missingPackageRecoveryModal"
     }
 
+    LaTeXRepairDialog {
+        id: latexRepairModal
+        objectName: "latexRepairModal"
+    }
+
     ModalDialog {
         id: saveBeforeExportModal
         objectName: "saveBeforeExportModal"
@@ -593,6 +598,10 @@ Item {
                     rightPane.setTab(1);
                 }
             }
+        }
+        function onRepairProposalReady(proposal) {
+            latexRepairModal.proposal = proposal;
+            latexRepairModal.open();
         }
     }
 }

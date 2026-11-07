@@ -60,16 +60,27 @@ class MathRenderError(Exception):
     Attributes:
         code: Error code (e.g., JSON-RPC or parser error code).
         message: Descriptive error message explaining the failure.
+        tex_line: Optional line number reported in the TeX source.
+        source_line: Optional fragment-relative line number.
+        log_excerpt: Bounded and sanitized diagnostic log excerpt.
+        source_sha256: SHA-256 hash of the failing formula string.
+        error_category: Categorized error classifier.
     """
 
     code: int
     message: str
+    tex_line: Optional[int] = None
+    source_line: Optional[int] = None
+    log_excerpt: str = ""
+    source_sha256: str = ""
+    error_category: str = ""
 
     def __post_init__(self) -> None:
         super().__init__(self.message)
 
     def __str__(self) -> str:
-        return f"{self.__class__.__name__}({self.code}): {self.message}"
+        loc = f" at line {self.source_line}" if self.source_line else ""
+        return f"{self.__class__.__name__}({self.code}{loc}): {self.message}"
 
 
 @dataclass(frozen=True)

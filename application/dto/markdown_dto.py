@@ -38,6 +38,8 @@ class InlineSegmentDTO:
     has_error: bool = False
     error_category: str = ""
     error_message: str = ""
+    error_line: Optional[int] = None
+    log_excerpt: str = ""
 
 
 @dataclass(frozen=True)
@@ -96,6 +98,8 @@ class MarkdownNodeDTO:
     diagram_status: str = ""
     diagram_width: float = 0.0
     diagram_height: float = 0.0
+    error_line: Optional[int] = None
+    log_excerpt: str = ""
 
 
 
