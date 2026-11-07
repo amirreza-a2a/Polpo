@@ -309,6 +309,7 @@ def create_app(
     markdown_editor_controller = MarkdownEditorController(
         editor_service=container.markdown_editor_service,
         merge_service=markdown_merge_service,
+        repair_service=container.latex_repair_service,
     )
     theme_controller.resolvedThemeChanged.connect(
         markdown_editor_controller.set_syntax_theme

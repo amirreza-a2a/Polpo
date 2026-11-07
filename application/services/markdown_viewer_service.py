@@ -119,11 +119,13 @@ def _map_math_error_category(err: MathRenderError) -> str:
 
 def _extract_math_outcome_metadata(
     outcome: Optional[Union[MathRenderResult, MathRenderError]],
-) -> Tuple[bool, str, str]:
-    """Extracts presentation error metadata (has_error, error_category, error_message) from an outcome."""
+) -> Tuple[bool, str, str, Optional[int], str]:
+    """Extracts presentation error metadata (has_error, error_category, error_message, error_line, log_excerpt) from an outcome."""
     if isinstance(outcome, MathRenderError):
-        return True, _map_math_error_category(outcome), getattr(outcome, "message", str(outcome))
-    return False, "", ""
+        err_line = getattr(outcome, "source_line", None) or getattr(outcome, "tex_line", None)
+        log_exc = getattr(outcome, "log_excerpt", "")
+        return True, _map_math_error_category(outcome), getattr(outcome, "message", str(outcome)), err_line, log_exc
+    return False, "", "", None, ""
 
 
 class MarkdownViewerService:
@@ -508,6 +510,8 @@ class MarkdownViewerService:
             has_error = False
             error_category = ""
             error_message = ""
+            error_line = None
+            log_excerpt = ""
             diagram_status = "pending"
             width = 0.0
             height = 0.0
@@ -516,6 +520,7 @@ class MarkdownViewerService:
                 has_error = True
                 error_category = "syntax"
                 error_message = error_msg or "Incomplete diagram syntax."
+                log_excerpt = error_message
                 diagram_status = "error"
             else:
                 outcome = diagram_outcomes.get(diag_hash) if diagram_outcomes else None
@@ -530,9 +535,11 @@ class MarkdownViewerService:
                     height = outcome.height
                 elif isinstance(outcome, DiagramRenderError):
                     has_error = True
-                    error_category = outcome.code
+                    error_category = getattr(outcome, "error_category", None) or outcome.code
                     error_message = outcome.message
                     diagram_status = "error"
+                    error_line = getattr(outcome, "source_line", None) or getattr(outcome, "tex_line", None)
+                    log_excerpt = getattr(outcome, "log_excerpt", "")
                 elif self.diagram_renderer is None:
                     diagram_status = "unavailable"
 
@@ -550,6 +557,8 @@ class MarkdownViewerService:
                     has_error=has_error,
                     error_category=error_category,
                     error_message=error_message,
+                    error_line=error_line,
+                    log_excerpt=log_excerpt,
                     source_start_line=block.source_start_line,
                     source_end_line=block.source_end_line,
                     source_start_col=block.source_start_col,
@@ -839,7 +848,7 @@ class MarkdownViewerService:
                     math_hash = MathRenderRequest(tex=sub_b.content, display=True).compute_hash()
                     escaped_tex = html.escape(sub_b.content, quote=True)
                     outcome = math_outcomes.get(math_hash) if math_outcomes else None
-                    has_err, err_cat, err_msg = _extract_math_outcome_metadata(outcome)
+                    has_err, err_cat, err_msg, err_line, err_log = _extract_math_outcome_metadata(outcome)
                     if has_err:
                         seg_html = f'<span style="{_MATH_ERROR_SPAN_STYLE}" class="math-error">$${escaped_tex}$$</span>'
                         inner_htmls.append(f'<p align="center">{seg_html}</p>')
@@ -857,6 +866,8 @@ class MarkdownViewerService:
                         has_error=has_err,
                         error_category=err_cat,
                         error_message=err_msg,
+                        error_line=err_line,
+                        log_excerpt=err_log,
                     )
                     quote_segments.append(math_seg)
                     quote_children.append(
@@ -984,7 +995,7 @@ class MarkdownViewerService:
             node_id = f"math_{math_hash[:12]}_{seen_counts[key]}"
             raw = f"$${tex}$$"
             outcome = math_outcomes.get(math_hash) if math_outcomes else None
-            has_error, error_category, error_message = _extract_math_outcome_metadata(outcome)
+            has_error, error_category, error_message, error_line, log_excerpt = _extract_math_outcome_metadata(outcome)
             return MarkdownNodeDTO(
                 node_id=node_id,
                 node_type="math_block",
@@ -995,6 +1006,8 @@ class MarkdownViewerService:
                 has_error=has_error,
                 error_category=error_category,
                 error_message=error_message,
+                error_line=error_line,
+                log_excerpt=log_excerpt,
                 source_start_line=block.source_start_line,
                 source_end_line=block.source_end_line,
                 source_start_col=block.source_start_col,
@@ -1112,7 +1125,7 @@ class MarkdownViewerService:
                 math_hash = MathRenderRequest(tex=math_tex, display=False).compute_hash()
                 escaped_tex = html.escape(math_tex, quote=True)
                 outcome = math_outcomes.get(math_hash) if math_outcomes else None
-                has_error, error_category, error_message = _extract_math_outcome_metadata(outcome)
+                has_error, error_category, error_message, error_line, log_excerpt = _extract_math_outcome_metadata(outcome)
                 if has_error:
                     math_html = f'<span style="{_MATH_ERROR_SPAN_STYLE}" class="math-error">${escaped_tex}$</span>'
                 elif self.math_renderer is not None:
@@ -1137,6 +1150,8 @@ class MarkdownViewerService:
                         has_error=has_error,
                         error_category=error_category,
                         error_message=error_message,
+                        error_line=error_line,
+                        log_excerpt=log_excerpt,
                     )
                 )
 

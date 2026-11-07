@@ -37,6 +37,7 @@ from application.services.artifact_service import ArtifactService
 from application.services.document_viewer_service import DocumentViewerService
 from application.services.markdown_viewer_service import MarkdownViewerService
 from application.services.markdown_editor_service import MarkdownEditorService
+from application.services.latex_repair_service import LaTeXRepairService
 from application.services.document_publication_service import DocumentPublicationService
 from application.services.crop_artifact_staging_service import CropArtifactStagingService
 from application.services.visual_region_publication_service import VisualRegionPublicationService
@@ -215,6 +216,13 @@ class DesktopAppContainer:
             uow_factory=self.uow_factory,
             storage=self.storage,
             document_publication_service=self.document_publication_service,
+        )
+
+        self.latex_repair_service = LaTeXRepairService(
+            uow_factory=self.uow_factory,
+            ai_executor=self.ai_executor,
+            diagram_renderer=self.diagram_renderer,
+            math_renderer=self.math_renderer,
         )
 
         self.export_package_service = ExportPackageService(

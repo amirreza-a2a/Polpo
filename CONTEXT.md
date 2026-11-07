@@ -141,6 +141,15 @@ The unified authoring, AST representation, background rendering, and preview sub
 * **Asynchronous Desktop Preview:** Live preview is debounced (250ms) in background worker threads (`MarkdownViewerWorker`). Rendered SVGs are served to QML via `DiagramImageProvider` (`image://diagram/{theme}/{hash}`) and displayed crisp and vector-scaled using `QSvgRenderer` in `MarkdownNodeDelegate.qml`.
 * **Stock Prompt Reconciliation:** AI prompt templates (`prompts/templates/fa/`, `prompts/pipeline2/`) strictly emit canonical Quarto raw LaTeX blocks. At application startup, `PromptSeedingService.reconcile_stock_prompts()` safely updates unmodified historical stock prompts in SQLite while preserving user-customized templates.
 
+### 2.17 `AI-Assisted LaTeX Error Repair Subsystem`
+The production-quality interactive repair capability for broken LaTeX formulas and technical diagrams ([ADR-006](docs/adr/2026-11-07-adr-006-ai-assisted-latex-repair.md)).
+* **Diagnostic Context & Sanitization:** Structured diagnostic DTOs (`DiagramRenderError`, `MathRenderError`) normalize error line coordinates relative to the failing fragment and sanitize compiler log excerpts (redacting local user paths and bounding output to 40 lines / 4,000 characters).
+* **AI Repair Service (`LaTeXRepairService`):** Application service orchestrating structured repair generation via active BYOK AI provider chain (`prompts/repair/latex_repair_v1.txt`). Enforces machine-readable JSON schema (version 1) and safety isolation boundaries (forbidding standalone document wrappers, shell escapes, or whole-document rewrites).
+* **Same-Pipeline Automated Compiler Validation:** Every AI-generated repair candidate is compiled through the identical rendering pipeline (MathJax or Standalone XeLaTeX/dvisvgm) before being presented to the user. Candidates that fail compilation or emit empty SVGs are rejected or retried through a bounded 1-attempt follow-up loop incorporating compiler error diagnostics.
+* **Native Desktop Review Dialog (`LaTeXRepairDialog.qml`):** Modal QML review interface presenting side-by-side visual diffs, semantic invariant tags, live vector preview rendering, and clipboard copy. Repairs are applied only upon explicit user confirmation.
+* **OCC Watermark & Undo/Redo Preservation:** Applying a proposal replaces the exact target fragment in the active editor buffer via atomic `QTextCursor` edit blocks, preserving the Qt undo/redo stack (`Ctrl+Z`), marking the buffer dirty (`isDirty = True`), and keeping the canonical version watermark intact without silently mutating database history.
+* **PDF Export Repair Integration:** Quarto PDF export compilation errors in `ExportController` emit `pdfCompilationFailed` with line numbers, enabling immediate cross-pane navigation and repair triggering.
+
 ---
 
 ## 3. Architectural Seams Map

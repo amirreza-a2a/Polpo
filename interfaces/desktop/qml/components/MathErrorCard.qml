@@ -9,6 +9,9 @@ Rectangle {
     property string mathTex: ""
     property string category: ""
     property string errorMessage: ""
+    property string nodeId: ""
+    property int errorLine: 0
+    property string logExcerpt: ""
     property var controller: null
     property real scaleFactor: 1.0
 
@@ -79,6 +82,41 @@ Rectangle {
 
             Item {
                 Layout.fillWidth: true
+            }
+
+            Button {
+                id: repairBtn
+                text: (typeof markdownEditorController !== "undefined" && markdownEditorController && markdownEditorController.isRepairing) ? "در حال اصلاح..." : "اصلاح با هوش مصنوعی"
+                font.pixelSize: Math.round(11 * scaleFactor)
+                Layout.preferredHeight: 24
+                Layout.alignment: Qt.AlignVCenter
+                enabled: typeof markdownEditorController !== "undefined" && markdownEditorController !== null && !markdownEditorController.isRepairing
+
+                background: Rectangle {
+                    color: repairBtn.down ? ((typeof theme !== "undefined" && theme) ? theme.accentActive : "transparent") : (repairBtn.hovered ? ((typeof theme !== "undefined" && theme) ? theme.accentHover : "transparent") : ((typeof theme !== "undefined" && theme) ? theme.accent : "transparent"))
+                    radius: 3
+                }
+
+                contentItem: Text {
+                    text: repairBtn.text
+                    color: (typeof theme !== "undefined" && theme) ? theme.accentText : "transparent"
+                    font: repairBtn.font
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+
+                onClicked: {
+                    if (typeof markdownEditorController !== "undefined" && markdownEditorController && typeof markdownEditorController.requestRepair === "function") {
+                        markdownEditorController.requestRepair(
+                            mathErrorCardRoot.nodeId || "math_node",
+                            mathErrorCardRoot.mathTex,
+                            "math_display",
+                            mathErrorCardRoot.errorMessage,
+                            mathErrorCardRoot.errorLine,
+                            mathErrorCardRoot.logExcerpt
+                        );
+                    }
+                }
             }
 
             Button {

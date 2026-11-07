@@ -63,15 +63,38 @@ class DiagramRenderError(Exception):
     Attributes:
         code: Error classification token (e.g., 'syntax', 'timeout', 'unavailable').
         message: Descriptive error message explaining the failure.
+        returncode: Optional exit code returned by the compiler process.
+        tex_line: Optional line number reported in the compiled .tex document.
+        source_line: Optional fragment-relative line number in the source diagram.
+        log_excerpt: Bounded and sanitized compiler log excerpt.
+        source_sha256: SHA-256 hash of the failing diagram source fragment.
+        error_category: Categorized error classifier.
     """
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        returncode: Optional[int] = None,
+        tex_line: Optional[int] = None,
+        source_line: Optional[int] = None,
+        log_excerpt: str = "",
+        source_sha256: str = "",
+        error_category: str = "",
+    ) -> None:
         self.code = code
         self.message = message
+        self.returncode = returncode
+        self.tex_line = tex_line
+        self.source_line = source_line
+        self.log_excerpt = log_excerpt
+        self.source_sha256 = source_sha256
+        self.error_category = error_category or code
         super().__init__(message)
 
     def __str__(self) -> str:
-        return f"{self.__class__.__name__}({self.code}): {self.message}"
+        loc = f" at line {self.source_line}" if self.source_line else ""
+        return f"{self.__class__.__name__}({self.code}{loc}): {self.message}"
 
 
 class DiagramSyntaxError(DiagramRenderError):
