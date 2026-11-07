@@ -210,11 +210,16 @@ def run_runtime_preflight() -> StageResult:
     required_packages = ["standalone.cls", "tikz.sty", "pgfplots.sty", "circuitikz.sty", "tikz-cd.sty"]
     pkg_results: Dict[str, str] = {}
     missing_pkgs: List[str] = []
-    for pkg in required_packages:
-        loc = shutil.which("kpsewhich")
-        if loc:
+    kpsewhich_bin = shutil.which("kpsewhich")
+    if not kpsewhich_bin:
+        pkg_status = TestStatus.BLOCKED
+        for pkg in required_packages:
+            pkg_results[pkg] = "kpsewhich_not_found"
+        pkg_error = "kpsewhich executable not found (TeX distribution not present)"
+    else:
+        for pkg in required_packages:
             try:
-                res = subprocess.run([loc, pkg], capture_output=True, text=True, timeout=3)
+                res = subprocess.run([kpsewhich_bin, pkg], capture_output=True, text=True, timeout=3)
                 p = res.stdout.strip()
                 if p:
                     pkg_results[pkg] = p
@@ -224,18 +229,16 @@ def run_runtime_preflight() -> StageResult:
             except Exception as e:
                 pkg_results[pkg] = f"error: {e}"
                 missing_pkgs.append(pkg)
-        else:
-            pkg_results[pkg] = "kpsewhich_not_found"
-            missing_pkgs.append(pkg)
+        pkg_status = TestStatus.PASS if not missing_pkgs else TestStatus.FAIL
+        pkg_error = f"Missing required TeX packages: {missing_pkgs}" if missing_pkgs else None
 
-    pkg_status = TestStatus.PASS if not missing_pkgs else TestStatus.FAIL
     items.append(TestItemResult(
         test_id="PREFLIGHT-06-TEX-PACKAGES",
         name="LaTeX Packages (standalone, tikz, pgfplots, circuitikz, tikz-cd)",
         status=pkg_status,
         duration_ms=(time.monotonic() - t0) * 1000,
         details=pkg_results,
-        error_message=f"Missing required TeX packages: {missing_pkgs}" if missing_pkgs else None,
+        error_message=pkg_error,
     ))
 
     # 7. Persian Fonts Availability
