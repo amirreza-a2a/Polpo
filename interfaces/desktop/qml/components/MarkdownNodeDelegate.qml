@@ -405,6 +405,8 @@ Item {
                     nodeId: model.nodeId || ""
                     errorLine: model.errorLine || 0
                     logExcerpt: model.logExcerpt || ""
+                    sourceStartLine: model.sourceStartLine || 0
+                    sourceEndLine: model.sourceEndLine || 0
                     controller: delegateRoot.controller
                     scaleFactor: delegateRoot.scaleFactor
                 }
@@ -495,7 +497,7 @@ Item {
                                 font.pixelSize: Math.round(11 * delegateRoot.scaleFactor)
                                 Layout.preferredHeight: 24
                                 Layout.alignment: Qt.AlignVCenter
-                                enabled: typeof markdownEditorController !== "undefined" && markdownEditorController !== null && !markdownEditorController.isRepairing
+                                enabled: typeof markdownEditorController !== "undefined" && markdownEditorController !== null && !markdownEditorController.isRepairing && (typeof markdownEditorController.canRepair === "undefined" || markdownEditorController.canRepair)
 
                                 background: Rectangle {
                                     color: diagRepairBtn.down ? ((typeof theme !== "undefined" && theme) ? theme.accentActive : "transparent") : (diagRepairBtn.hovered ? ((typeof theme !== "undefined" && theme) ? theme.accentHover : "transparent") : ((typeof theme !== "undefined" && theme) ? theme.accent : "transparent"))
@@ -511,15 +513,18 @@ Item {
                                 }
 
                                 onClicked: {
-                                    if (typeof markdownEditorController !== "undefined" && markdownEditorController && typeof markdownEditorController.requestRepair === "function") {
-                                        markdownEditorController.requestRepair(
-                                            model.nodeId || ("diagram_" + index),
-                                            model.diagramSource,
-                                            "diagram",
-                                            model.diagramErrorMessage,
-                                            model.diagramErrorLine || 0,
-                                            model.diagramLogExcerpt || ""
-                                        );
+                                    var nid = model.nodeId || ("diagram_" + index);
+                                    var src = model.diagramSource || "";
+                                    var msg = model.diagramErrorMessage || "";
+                                    var eline = model.diagramErrorLine || 0;
+                                    var lex = model.diagramLogExcerpt || "";
+                                    var sline = model.sourceStartLine || 0;
+                                    var elineNo = model.sourceEndLine || 0;
+
+                                    if (typeof reviewWorkspaceRoot !== "undefined" && reviewWorkspaceRoot && typeof reviewWorkspaceRoot.triggerRepairWithConsent === "function") {
+                                        reviewWorkspaceRoot.triggerRepairWithConsent(nid, src, "diagram", msg, eline, lex, sline, elineNo);
+                                    } else if (typeof markdownEditorController !== "undefined" && markdownEditorController && typeof markdownEditorController.requestRepair === "function") {
+                                        markdownEditorController.requestRepair(nid, src, "diagram", msg, eline, lex, sline, elineNo);
                                     }
                                 }
                             }

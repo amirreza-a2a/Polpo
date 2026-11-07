@@ -12,6 +12,8 @@ Rectangle {
     property string nodeId: ""
     property int errorLine: 0
     property string logExcerpt: ""
+    property int sourceStartLine: 0
+    property int sourceEndLine: 0
     property var controller: null
     property real scaleFactor: 1.0
 
@@ -90,7 +92,7 @@ Rectangle {
                 font.pixelSize: Math.round(11 * scaleFactor)
                 Layout.preferredHeight: 24
                 Layout.alignment: Qt.AlignVCenter
-                enabled: typeof markdownEditorController !== "undefined" && markdownEditorController !== null && !markdownEditorController.isRepairing
+                enabled: typeof markdownEditorController !== "undefined" && markdownEditorController !== null && !markdownEditorController.isRepairing && (typeof markdownEditorController.canRepair === "undefined" || markdownEditorController.canRepair)
 
                 background: Rectangle {
                     color: repairBtn.down ? ((typeof theme !== "undefined" && theme) ? theme.accentActive : "transparent") : (repairBtn.hovered ? ((typeof theme !== "undefined" && theme) ? theme.accentHover : "transparent") : ((typeof theme !== "undefined" && theme) ? theme.accent : "transparent"))
@@ -106,15 +108,18 @@ Rectangle {
                 }
 
                 onClicked: {
-                    if (typeof markdownEditorController !== "undefined" && markdownEditorController && typeof markdownEditorController.requestRepair === "function") {
-                        markdownEditorController.requestRepair(
-                            mathErrorCardRoot.nodeId || "math_node",
-                            mathErrorCardRoot.mathTex,
-                            "math_display",
-                            mathErrorCardRoot.errorMessage,
-                            mathErrorCardRoot.errorLine,
-                            mathErrorCardRoot.logExcerpt
-                        );
+                    var nid = mathErrorCardRoot.nodeId || "math_node";
+                    var src = mathErrorCardRoot.mathTex;
+                    var msg = mathErrorCardRoot.errorMessage;
+                    var eline = mathErrorCardRoot.errorLine;
+                    var lex = mathErrorCardRoot.logExcerpt;
+                    var sline = mathErrorCardRoot.sourceStartLine;
+                    var elineNo = mathErrorCardRoot.sourceEndLine;
+
+                    if (typeof reviewWorkspaceRoot !== "undefined" && reviewWorkspaceRoot && typeof reviewWorkspaceRoot.triggerRepairWithConsent === "function") {
+                        reviewWorkspaceRoot.triggerRepairWithConsent(nid, src, "math_display", msg, eline, lex, sline, elineNo);
+                    } else if (typeof markdownEditorController !== "undefined" && markdownEditorController && typeof markdownEditorController.requestRepair === "function") {
+                        markdownEditorController.requestRepair(nid, src, "math_display", msg, eline, lex, sline, elineNo);
                     }
                 }
             }

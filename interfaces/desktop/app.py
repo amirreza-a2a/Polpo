@@ -318,6 +318,9 @@ def create_app(
     bridge.pipeline2_completed_received.connect(
         markdown_editor_controller.onPipeline2Completed
     )
+    api_key_controller.slots_changed.connect(
+        markdown_editor_controller.refreshRepairAvailability
+    )
     pdf_setup_controller = PdfSetupController(
         runtime_discovery=container.pdf_runtime_discovery,
         package_recovery_service=container.package_recovery_service,

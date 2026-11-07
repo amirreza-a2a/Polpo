@@ -97,6 +97,7 @@ class LaTeXRepairProposal:
     retry_count: int = 0
     provider_label: str = ""
     model_name: str = ""
+    source_range: Tuple[int, int] = (0, 0)
 
     def to_dict(self) -> dict:
         return {
@@ -119,4 +120,5 @@ class LaTeXRepairProposal:
             "retryCount": self.retry_count,
             "providerLabel": self.provider_label,
             "modelName": self.model_name,
+            "sourceRange": list(self.source_range),
         }

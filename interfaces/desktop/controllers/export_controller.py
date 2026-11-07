@@ -3,6 +3,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import re
 from typing import Any, Dict, List, Optional
 
 from application.dto.pdf_export_dto import ExportPdfCommand
@@ -620,20 +621,43 @@ class ExportController(QObject):
         """
         Facilitates AI repair initiation from PDF compilation failures.
         If editor_controller is present, attempts to map line_number or navigate to failing region.
+        Avoids naive line jumping by searching for failing LaTeX control sequences in Markdown.
         """
         if self.editor_controller is None or self._is_shutdown:
             return False
         if hasattr(self.editor_controller, "activeJobId") and self.editor_controller.activeJobId != job_id:
             return False
 
-        if line_number > 0 and hasattr(self.editor_controller, "_get_document"):
-            try:
-                doc = self.editor_controller._get_document()
-                block = doc.findBlockByLineNumber(max(0, line_number - 1))
+        if not hasattr(self.editor_controller, "_get_document"):
+            return True
+
+        try:
+            doc = self.editor_controller._get_document()
+            plain_text = doc.toPlainText()
+
+            # 1. Search for specific LaTeX control sequence mentioned in diagnostic
+            tokens = re.findall(r"\\[a-zA-Z]+", sanitized_message or "")
+            generic_macros = {r"\documentclass", r"\begin", r"\end", r"\usepackage", r"\par"}
+            specific_tokens = [t for t in tokens if t not in generic_macros]
+
+            navigated = False
+            for token in specific_tokens:
+                if token in plain_text:
+                    idx = plain_text.find(token)
+                    utf16_pos = len(plain_text[:idx].encode("utf-16-le")) // 2
+                    if hasattr(self.editor_controller, "requestNavigateToPosition"):
+                        self.editor_controller.requestNavigateToPosition.emit(utf16_pos)
+                    navigated = True
+                    break
+
+            # 2. Fall back to line_number only if within Markdown document block count
+            if not navigated and line_number > 0 and line_number <= doc.blockCount():
+                block = doc.findBlockByLineNumber(line_number - 1)
                 if block.isValid() and hasattr(self.editor_controller, "requestNavigateToPosition"):
                     self.editor_controller.requestNavigateToPosition.emit(block.position())
-            except Exception:
-                pass
+        except Exception:
+            pass
+
         return True
 
     @Slot()
