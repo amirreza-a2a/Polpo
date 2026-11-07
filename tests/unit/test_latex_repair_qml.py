@@ -73,3 +73,23 @@ def test_math_error_card_qml_loads(qapp):
     card = component.create()
     assert card is not None
     assert card.objectName() == "mathErrorCard"
+
+
+def test_latex_repair_consent_dialog_qml_loads(qapp):
+    engine = QQmlApplicationEngine()
+    theme = ThemeController()
+    engine.rootContext().setContextProperty("theme", theme)
+    engine.rootContext().setContextProperty("markdownEditorController", MagicMock())
+
+    qml_path = Path(__file__).resolve().parents[2] / "interfaces/desktop/qml/dialogs/LaTeXRepairConsentDialog.qml"
+    component = QQmlComponent(engine, QUrl.fromLocalFile(str(qml_path)))
+    assert component.status() == QQmlComponent.Status.Ready, f"Errors: {[e.toString() for e in component.errors()]}"
+
+    dialog = component.create()
+    assert dialog is not None
+    assert dialog.objectName() == "latexRepairConsentModal"
+
+    dialog.setProperty("originalSource", "\\frac{1}{0")
+    dialog.setProperty("rendererType", "math_display")
+    assert dialog.property("originalSource") == "\\frac{1}{0"
+    assert dialog.property("rendererType") == "math_display"

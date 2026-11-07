@@ -334,3 +334,74 @@ def test_repair_latex_compiler_rejection_exhausts_retries():
     assert not prop.validation_passed
     assert "Undefined control sequence \\badcmd" in prop.validation_error
     assert ai_exec.execute_text_with_fallback.call_count == 2  # Attempt 0 and Retry 1
+
+
+def test_parse_and_validate_ai_response_rejects_openout():
+    service = LaTeXRepairService(MagicMock(), MagicMock())
+    raw = json.dumps({
+        "schema_version": 1,
+        "repaired_source": "\\immediate\\openout\\file=test.txt",
+        "change_summary": "Unsafe file open attempt",
+        "preserved_invariants": [],
+    })
+    data, err = service.parse_and_validate_ai_response(raw, "\\draw (0,0);")
+    assert data is None
+    assert "forbidden" in err
+
+
+def test_has_active_provider():
+    uow_factory = MagicMock()
+    # 1. No active slots -> False
+    uow_factory.create.return_value = MockUow([])
+    service = LaTeXRepairService(uow_factory, MagicMock())
+    assert service.has_active_provider() is False
+
+    # 2. Active slot -> True
+    uow_factory.create.return_value = MockUow([make_dummy_slot()])
+    assert service.has_active_provider() is True
+
+
+def test_repair_latex_single_pass_prevents_template_injection():
+    uow_factory = MagicMock()
+    uow_factory.create.return_value = MockUow([make_dummy_slot()])
+    ai_exec = MagicMock()
+    ai_exec.execute_text_with_fallback.return_value = (
+        json.dumps({
+            "schema_version": 1,
+            "repaired_source": "x = 1",
+            "change_summary": "Fixed",
+            "preserved_invariants": [],
+        }),
+        make_dummy_slot(),
+    )
+    math_renderer = MagicMock(spec=IMathRenderer)
+    math_renderer.render.return_value = MathRenderResult("h", "<svg></svg>", "1ex", "1ex", "0ex")
+
+    service = LaTeXRepairService(uow_factory, ai_exec, math_renderer=math_renderer)
+
+    # Diagnostic containing {original_source} placeholder: should not trigger secondary substitution!
+    req = LaTeXRepairRequest(
+        job_id=5,
+        canonical_version=1,
+        node_id="math_inj",
+        original_source="x = {original_source}",
+        renderer_type="math_inline",
+        sanitized_diagnostics="Syntax error inside {original_source}",
+    )
+    service.repair_latex(req)
+
+    called_prompt = ai_exec.execute_text_with_fallback.call_args.kwargs["prompt"]
+    assert "Syntax error inside {original_source}" in called_prompt
+
+
+def test_validate_candidate_quarto_pdf():
+    mock_diag = MagicMock(spec=IDiagramRenderer)
+    mock_diag.render.return_value = DiagramRenderResult("h", "<svg></svg>", 50.0, 50.0, "rendered")
+
+    service = LaTeXRepairService(MagicMock(), MagicMock(), diagram_renderer=mock_diag)
+    passed, err, svg, w, h = service.validate_candidate(
+        candidate_source="\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}",
+        renderer_type="quarto_pdf",
+    )
+    assert passed is True
+    assert svg == "<svg></svg>"

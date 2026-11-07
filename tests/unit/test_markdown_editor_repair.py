@@ -331,3 +331,101 @@ def test_reject_repair(qapp, mock_editor_service, mock_repair_service):
         assert ctrl.repairError == ""
     finally:
         ctrl.shutdown()
+
+
+def test_can_repair_property(qapp, mock_editor_service, mock_repair_service):
+    ctrl = MarkdownEditorController(
+        editor_service=mock_editor_service,
+        repair_service=mock_repair_service,
+    )
+    try:
+        # 1. No active job -> False
+        mock_repair_service.has_active_provider.return_value = True
+        assert ctrl.canRepair is False
+
+        # 2. Active job and provider configured -> True
+        ctrl.load_source_sync(10)
+        assert ctrl.canRepair is True
+
+        # 3. Provider unconfigured -> False
+        mock_repair_service.has_active_provider.return_value = False
+        ctrl.refreshRepairAvailability()
+        assert ctrl.canRepair is False
+
+        # 4. Active conflict -> False
+        mock_repair_service.has_active_provider.return_value = True
+        ctrl._has_conflict = True
+        assert ctrl.canRepair is False
+    finally:
+        ctrl.shutdown()
+
+
+def test_apply_repair_disambiguates_duplicate_occurrences(qapp, mock_editor_service):
+    # Document with duplicate failing formula in Section 1 and Section 2
+    doc_text = "# Section 1\n$\\frac{1}{0}$\n\n# Section 2\n$\\frac{1}{0}$\n"
+    mock_editor = MagicMock()
+    mock_editor.load_source_text.return_value = (doc_text, 1)
+
+    repair_service = MagicMock()
+    # Repair proposal targeting the second occurrence on line 5 with line range (5, 5)
+    proposal_target_sec2 = LaTeXRepairProposal(
+        request_id="rep-sec2",
+        job_id=10,
+        canonical_version=1,
+        draft_revision=0,
+        node_id="math-sec2",
+        original_source="\\frac{1}{0}",
+        original_hash="hash",
+        repaired_source="\\frac{1}{2}",
+        repaired_hash="hash2",
+        change_summary="Fixed Section 2 denominator",
+        preserved_invariants=(),
+        validation_passed=True,
+        source_range=(5, 5),
+    )
+    repair_service.repair_latex.return_value = proposal_target_sec2
+    repair_service.has_active_provider.return_value = True
+
+    ctrl = MarkdownEditorController(editor_service=mock_editor, repair_service=repair_service)
+    try:
+        ctrl.load_source_sync(10)
+        # Deliver proposal targeting Section 2 (line 5)
+        ctrl._repair_request_id = 1
+        ctrl._on_internal_repair_completed(1, proposal_target_sec2)
+        assert ctrl.activeProposal is not None
+
+        # Apply repair
+        assert ctrl.applyRepair() is True
+
+        # Section 1 MUST remain unchanged: \frac{1}{0}
+        # Section 2 MUST be updated: \frac{1}{2}
+        assert "# Section 1\n$\\frac{1}{0}$" in ctrl.sourceText
+        assert "# Section 2\n$\\frac{1}{2}$" in ctrl.sourceText
+
+        # Test ambiguous case: duplicate occurrences without line range -> fail closed!
+        ambiguous_proposal = LaTeXRepairProposal(
+            request_id="rep-ambig",
+            job_id=10,
+            canonical_version=1,
+            draft_revision=0,
+            node_id="math-ambig",
+            original_source="\\frac{1}{0}",
+            original_hash="hash",
+            repaired_source="\\frac{1}{9}",
+            repaired_hash="hash9",
+            change_summary="Ambiguous fix",
+            preserved_invariants=(),
+            validation_passed=True,
+            source_range=(0, 0),  # No line range provided!
+        )
+        ctrl._repair_request_id = 2
+        ctrl._on_internal_repair_completed(2, ambiguous_proposal)
+
+        # In a doc with 2 occurrences of \frac{1}{0}, ambiguous proposal must fail closed:
+        ctrl.set_source_text("# A\n$\\frac{1}{0}$\n\n# B\n$\\frac{1}{0}$\n")
+        assert ctrl.applyRepair() is False
+        assert "ambiguous" in ctrl.repairError.lower()
+        # Buffer must NOT have been mutated
+        assert ctrl.sourceText == "# A\n$\\frac{1}{0}$\n\n# B\n$\\frac{1}{0}$\n"
+    finally:
+        ctrl.shutdown()

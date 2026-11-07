@@ -68,28 +68,31 @@ This ADR formalizes the architectural design and safety boundaries for an **AI-a
   3. The request runs asynchronously in background worker threads (`QThreadPool` / `ThreadPoolExecutor`); the Qt GUI thread is never blocked.
 
 ### D05 — Native QML Review & Adoption Dialog
-- **Decision:** Presentation and adoption of repair proposals are handled by a dedicated native Qt/QML component (`LaTeXRepairDialog.qml`).
+- **Decision:** Presentation and adoption of repair proposals are handled by dedicated native Qt/QML components (`LaTeXRepairConsentDialog.qml` and `LaTeXRepairDialog.qml`).
 - **UX Requirements:**
-  1. **Side-by-Side Comparison:** Clear visual diff between the original broken source and the proposed repaired source.
-  2. **Vector Graphic Preview:** Renders the verified SVG preview natively so the user can visually confirm diagram/formula correctness before applying.
-  3. **Theme Compliance:** All styling uses semantic tokens (`theme.accent`, `theme.surface`, `theme.error`, `theme.success`) without raw hex color literals.
-  4. **Clipboard Copy:** Authors can copy the repaired LaTeX code without applying it directly to the editor buffer.
-  5. **Explicit User Control:** The repair is applied ONLY upon explicit user action ("Apply Repair"). The application never silently mutates user documents.
+  1. **Pre-Transmission Data Disclosure & Consent:** Prior to dispatching source code or logs to the configured AI provider, an explicit modal consent dialog discloses the exact LaTeX code and compiler diagnostic being sent, reassuring the user that no other document content or local files are transmitted.
+  2. **Reactive Provider Availability:** Repair trigger actions on error cards are dynamically enabled/disabled via `canRepair`, which monitors active BYOK provider configuration.
+  3. **Side-by-Side Comparison:** Clear visual diff between the original broken source and the proposed repaired source.
+  4. **Vector Graphic Preview:** Renders the verified SVG preview natively so the user can visually confirm diagram/formula correctness before applying.
+  5. **Theme Compliance:** All styling uses semantic tokens (`theme.accent`, `theme.surface`, `theme.error`, `theme.success`) without raw hex color literals.
+  6. **Clipboard Copy:** Authors can copy the repaired LaTeX code without applying it directly to the editor buffer.
+  7. **Explicit User Control:** The repair is applied ONLY upon explicit user action ("Apply Repair"). The application never silently mutates user documents.
 
 ### D06 — Atomic Editor Replacement & OCC Watermark Preservation
 - **Decision:** When the user applies a repair proposal, `MarkdownEditorController` replaces the exact target fragment in the active editor buffer using `QTextCursor` atomic edit blocks.
 - **Invariants:**
-  1. **Undo/Redo Integrity:** The edit block preserves the Qt `QUndoStack`, allowing the user to press `Ctrl+Z` to revert the repair immediately.
-  2. **In-Memory Modification Only:** Applying a repair marks the document buffer dirty (`is_dirty = True`) but DOES NOT commit a new canonical version to SQLite automatically.
-  3. **OCC Watermark Invariant:** The editor buffer's `active_version` watermark remains unchanged. When the user subsequently saves the document, standard Optimistic Concurrency Control verifies that `base_version == canonical_version`. If a concurrent edit occurred, `StaleDocumentVersionError` is raised and standard 3-way merge conflict resolution is invoked.
-  4. **Stale Repair Rejection:** If the canonical document version changed or if the original fragment was modified while the repair request was in flight, the repair proposal is rejected with a descriptive error.
+  1. **Duplicate Fragment Disambiguation:** When a LaTeX fragment occurs multiple times in a document, `MarkdownEditorController.applyRepair()` uses the proposal's `source_range` (line boundaries) to target the exact occurrence. If the location remains ambiguous, the operation fails closed without modifying the buffer, advising the user to replace manually.
+  2. **Undo/Redo Integrity:** The edit block preserves the Qt `QUndoStack`, allowing the user to press `Ctrl+Z` to revert the repair immediately.
+  3. **In-Memory Modification Only:** Applying a repair marks the document buffer dirty (`is_dirty = True`) but DOES NOT commit a new canonical version to SQLite automatically.
+  4. **OCC Watermark Invariant:** The editor buffer's `active_version` watermark remains unchanged. When the user subsequently saves the document, standard Optimistic Concurrency Control verifies that `base_version == canonical_version`. If a concurrent edit occurred, `StaleDocumentVersionError` is raised and standard 3-way merge conflict resolution is invoked.
+  5. **Stale Repair Rejection:** If the canonical document version changed or if the original fragment was modified while the repair request was in flight, the repair proposal is rejected with a descriptive error.
 
 ### D07 — Architectural Boundary & Dependency Direction
 - **Decision:** In accordance with `AGENTS.md` and Clean Architecture principles:
   1. `LaTeXRepairService` resides in `application/services/`, depending only on domain entities (`ApiSlot`, `Job`) and application ports (`IAIExecutionService`, `IDiagramRenderer`, `IMathRenderer`, `IUnitOfWorkFactory`).
   2. It has zero dependencies on PySide6, Qt, QML, sqlite3, or vendor SDKs.
-  3. `MarkdownEditorController` in `interfaces/desktop/controllers/` orchestrates background execution and exposes typed Qt signals/slots (`repairProposalReady`, `repairFailed`, `requestRepair`, `applyRepair`).
-  4. Quarto PDF export compilation errors in `ExportController` emit `pdfCompilationFailed` with line numbers, enabling immediate cross-pane navigation and repair triggering.
+  3. `MarkdownEditorController` in `interfaces/desktop/controllers/` orchestrates background execution and exposes typed Qt signals/slots (`repairProposalReady`, `repairFailed`, `requestRepair`, `applyRepair`, `canRepair`).
+  4. Quarto PDF export compilation errors in `ExportController` map specific failing TeX control sequences to Markdown editor positions, avoiding naive line number jumping.
 
 ---
 
@@ -98,9 +101,9 @@ This ADR formalizes the architectural design and safety boundaries for an **AI-a
 | Gate / Test Suite | Scope | Status |
 |-------------------|-------|--------|
 | `test_diagram_renderer_diagnostics.py` | Line numbers, log excerpts, syntax error categorization | PASS (6 tests) |
-| `test_latex_repair_service.py` | Schema parsing, isolation boundaries, same-pipeline validation, bounded retry | PASS (10 tests) |
-| `test_markdown_editor_repair.py` | Async dispatch, buffer replacement, undo stack, OCC conflict prevention | PASS (9 tests) |
-| `test_latex_repair_qml.py` | QML dialog loading, property bindings, theme token compliance | PASS (2 tests) |
-| `test_export_pdf_repair.py` | Quarto PDF error mapping, line number extraction, repair slot | PASS (2 tests) |
+| `test_latex_repair_service.py` | Schema parsing, isolation boundaries, same-pipeline validation, bounded retry, openout rejection, template injection safety | PASS (14 tests) |
+| `test_markdown_editor_repair.py` | Async dispatch, buffer replacement, undo stack, OCC conflict prevention, canRepair, duplicate occurrence disambiguation | PASS (11 tests) |
+| `test_latex_repair_qml.py` | QML review dialog, consent dialog loading, property bindings, theme token compliance | PASS (3 tests) |
+| `test_export_pdf_repair.py` | Quarto PDF error mapping, token-based navigation, boundary checks | PASS (2 tests) |
 | `test_latex_repair_e2e.py` | End-to-end integration: seed SQLite, AI fix, validation, buffer replace, OCC save | PASS (2 tests) |
 | `scripts/run_quality_gates.py` | Diff hygiene, bytecode compilation, 88 architecture AST rules (164 subtests) | PASS |

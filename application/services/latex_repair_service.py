@@ -40,6 +40,8 @@ _FORBIDDEN_LATEX_PATTERNS = (
     re.compile(r"\\write18\b", re.IGNORECASE),
     re.compile(r"\\immediate\s*\\write", re.IGNORECASE),
     re.compile(r"\\input\s*\|", re.IGNORECASE),
+    re.compile(r"\\openout\b", re.IGNORECASE),
+    re.compile(r"\\immediate\s*\\openout", re.IGNORECASE),
 )
 
 _MAX_SOURCE_BYTES = 50000
@@ -81,13 +83,30 @@ class LaTeXRepairService:
         ai_executor: IAIExecutionService,
         diagram_renderer: Optional[IDiagramRenderer] = None,
         math_renderer: Optional[IMathRenderer] = None,
+        pdf_validator: Optional[Any] = None,
         prompt_path: Optional[str] = None,
     ) -> None:
         self.uow_factory = uow_factory
         self.ai_executor = ai_executor
         self.diagram_renderer = diagram_renderer
         self.math_renderer = math_renderer
+        self.pdf_validator = pdf_validator
         self._prompt_path = prompt_path
+
+    def has_active_provider(self) -> bool:
+        """Checks if at least one active AI provider slot is configured."""
+        try:
+            with self.uow_factory.create() as uow:
+                if hasattr(uow.apis, "list_all"):
+                    all_slots = uow.apis.list_all()
+                    return any(getattr(s, "is_active", True) for s in all_slots)
+                elif hasattr(uow.apis, "list_by_user"):
+                    all_slots = uow.apis.list_by_user(user_id=1, include_public=True)
+                    return any(getattr(s, "is_active", True) for s in all_slots)
+        except Exception as e:
+            logger.warning("Failed to check active AI providers: %s", e)
+            return False
+        return False
 
     def parse_and_validate_ai_response(
         self,
@@ -216,6 +235,25 @@ class LaTeXRepairService:
             except Exception as e:
                 return False, f"Unexpected math renderer failure: {e}", None, 0.0, 0.0
 
+        # 3. Quarto / XeLaTeX PDF validation
+        elif "pdf" in r_type or "quarto" in r_type:
+            if self.pdf_validator is not None:
+                try:
+                    passed, err_msg, preview_xml = self.pdf_validator(candidate_source)
+                    return passed, err_msg, preview_xml, 0.0, 0.0
+                except Exception as e:
+                    return False, f"PDF validation failure: {e}", None, 0.0, 0.0
+
+            # If no dedicated pdf_validator is injected, validate through diagram or math pipeline
+            # depending on candidate structure
+            clean = candidate_source.strip()
+            if any(k in clean for k in (r"\begin{tikzpicture}", r"\begin{pgfplots}", r"\begin{circuitikz}", r"\begin{tikzcd}")):
+                if self.diagram_renderer is not None:
+                    return self.validate_candidate(candidate_source, "diagram", environment_profile)
+            elif self.math_renderer is not None:
+                return self.validate_candidate(candidate_source, "math_display", environment_profile)
+            return False, "PDF validator is not configured and candidate could not be mapped to diagram or math renderer.", None, 0.0, 0.0
+
         # Fallback / generic
         return False, f"Unsupported renderer_type: '{renderer_type}'.", None, 0.0, 0.0
 
@@ -261,6 +299,7 @@ class LaTeXRepairService:
                 preserved_invariants=(),
                 validation_passed=False,
                 validation_error="No active AI provider slot configured. Please configure an API key.",
+                source_range=request.source_range,
             )
 
         # 2. Load repair prompt template
@@ -273,13 +312,18 @@ class LaTeXRepairService:
         used_slot: Optional[ApiSlot] = None
 
         while attempt <= bounded_retries:
-            prompt_text = (
-                template.replace("{failure_type}", request.renderer_type)
-                .replace("{environment_profile}", request.environment_profile)
-                .replace("{allowed_packages}", ", ".join(request.allowed_packages))
-                .replace("{diagnostic_message}", current_diag)
-                .replace("{log_excerpt}", current_log or "(no detailed log available)")
-                .replace("{original_source}", request.original_source)
+            substitutions = {
+                "failure_type": request.renderer_type,
+                "environment_profile": request.environment_profile,
+                "allowed_packages": ", ".join(request.allowed_packages),
+                "diagnostic_message": current_diag,
+                "log_excerpt": current_log or "(no detailed log available)",
+                "original_source": request.original_source,
+            }
+            prompt_text = re.sub(
+                r"\{(failure_type|environment_profile|allowed_packages|diagnostic_message|log_excerpt|original_source)\}",
+                lambda m: substitutions.get(m.group(1), m.group(0)),
+                template,
             )
 
             # Re-attempt clarification if this is a follow-up
@@ -348,6 +392,7 @@ class LaTeXRepairService:
                     retry_count=attempt,
                     provider_label=used_slot.label if used_slot else "",
                     model_name=used_slot.selected_model if used_slot else "",
+                    source_range=request.source_range,
                 )
 
             # Compiler rejected candidate
@@ -373,4 +418,5 @@ class LaTeXRepairService:
             retry_count=attempt - 1,
             provider_label=used_slot.label if used_slot else "",
             model_name=used_slot.selected_model if used_slot else "",
+            source_range=request.source_range,
         )

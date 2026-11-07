@@ -76,6 +76,7 @@ class MarkdownEditorController(QObject):
     repairProposalReady = Signal("QVariant")
     repairFailed = Signal(str)
     repairApplied = Signal(int)
+    canRepairChanged = Signal()
 
     saved = Signal(int)             # (new_version)
     discarded = Signal()
@@ -428,6 +429,25 @@ class MarkdownEditorController(QObject):
         return self._repair_error
 
     repairError = Property(str, repair_error, notify=repairErrorChanged)
+
+    def can_repair(self) -> bool:
+        if self._is_shutdown or self.repair_service is None:
+            return False
+        if self._active_job_id <= 0:
+            return False
+        if self._has_conflict or (
+            self._active_conflict_session is not None
+            and not self._active_conflict_session.isInvalidated
+        ):
+            return False
+        return self.repair_service.has_active_provider()
+
+    canRepair = Property(bool, can_repair, notify=canRepairChanged)
+
+    @Slot()
+    def refreshRepairAvailability(self) -> None:
+        """Refreshes the canRepair property when API slots or document state change."""
+        self.canRepairChanged.emit()
 
     # -----------------------------------------------------------------------
     # Operations
@@ -1511,6 +1531,7 @@ class MarkdownEditorController(QObject):
         self.conflictChanged.emit()
         self.cursorMetricsChanged.emit()
         self.documentMetricsChanged.emit()
+        self.canRepairChanged.emit()
         self.checkForPipeline2Refinement()
 
         if self._search_query:
@@ -1646,6 +1667,7 @@ class MarkdownEditorController(QObject):
     # AI-Assisted LaTeX Error Repair Operations (LFR-04)
     # -----------------------------------------------------------------------
 
+    @Slot(str, str, str, str, int, str, int, int, result=bool)
     @Slot(str, str, str, str, int, str, result=bool)
     @Slot(str, str, str, str, int, result=bool)
     @Slot(str, str, str, str, result=bool)
@@ -1657,6 +1679,8 @@ class MarkdownEditorController(QObject):
         diagnostics: str,
         error_line: int = 0,
         log_excerpt: str = "",
+        start_line: int = 0,
+        end_line: int = 0,
     ) -> bool:
         """
         Dispatches an asynchronous AI LaTeX repair request.
@@ -1720,6 +1744,7 @@ class MarkdownEditorController(QObject):
                     renderer_type=renderer_type,
                     sanitized_diagnostics=diagnostics,
                     draft_revision=1 if is_dirty else 0,
+                    source_range=(start_line, end_line),
                     log_excerpt=log_excerpt,
                     error_line=error_line if error_line > 0 else None,
                 )
@@ -1777,6 +1802,7 @@ class MarkdownEditorController(QObject):
         """
         Applies validated AI repair proposal to editor buffer using QTextDocument atomic edit block.
         Preserves Qt undo/redo stack, marks buffer dirty, emits navigation and applied signals.
+        Disambiguates duplicate occurrences using source_range and fails closed if ambiguous.
         """
         if self._active_proposal is None:
             return False
@@ -1791,13 +1817,57 @@ class MarkdownEditorController(QObject):
 
         doc = self._get_document()
         plain_text = doc.toPlainText()
-        idx = plain_text.find(proposal.original_source)
-        if idx < 0:
+        target = proposal.original_source
+        count = plain_text.count(target)
+        if count == 0:
             return False
 
-        utf16_before = plain_text[:idx].encode("utf-16-le")
+        chosen_idx = -1
+        start_line = proposal.source_range[0] if proposal.source_range else 0
+        end_line = proposal.source_range[1] if proposal.source_range and len(proposal.source_range) > 1 else start_line
+
+        if count == 1:
+            chosen_idx = plain_text.find(target)
+        else:
+            # Multiple occurrences exist: disambiguate using source_range line numbers
+            if start_line > 0:
+                indices = []
+                pos = 0
+                while True:
+                    found = plain_text.find(target, pos)
+                    if found == -1:
+                        break
+                    indices.append(found)
+                    pos = found + 1
+
+                matching_indices = []
+                for idx in indices:
+                    line_no = plain_text[:idx].count("\n") + 1
+                    if start_line <= line_no <= max(start_line, end_line):
+                        matching_indices.append((idx, line_no))
+                    elif abs(line_no - start_line) <= 1:
+                        matching_indices.append((idx, line_no))
+
+                if len(matching_indices) == 1:
+                    chosen_idx = matching_indices[0][0]
+                elif len(matching_indices) > 1:
+                    exact = [idx for idx, lno in matching_indices if lno == start_line]
+                    if len(exact) == 1:
+                        chosen_idx = exact[0]
+
+            if chosen_idx < 0:
+                # Ambiguous location: fail closed per Section 6.4 & ADR-006 to prevent corrupting wrong block
+                self._repair_error = (
+                    "Target fragment appears multiple times in document and exact location is ambiguous. "
+                    "Replacement cancelled to prevent corruption. Please copy repaired source and apply manually."
+                )
+                self.repairErrorChanged.emit()
+                self.repairFailed.emit(self._repair_error)
+                return False
+
+        utf16_before = plain_text[:chosen_idx].encode("utf-16-le")
         utf16_start = len(utf16_before) // 2
-        utf16_target = proposal.original_source.encode("utf-16-le")
+        utf16_target = target.encode("utf-16-le")
         utf16_end = utf16_start + (len(utf16_target) // 2)
 
         cursor = QTextCursor(doc)

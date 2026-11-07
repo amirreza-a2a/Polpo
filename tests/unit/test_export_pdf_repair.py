@@ -91,6 +91,23 @@ def test_request_pdf_repair_navigation(qapp):
         assert len(nav_positions) == 1
         # Line 5 position should be > 0
         assert nav_positions[0] > 0
+
+        # Token-based navigation: finds \badmacro in document and navigates to its position
+        doc_with_macro = "# Title\n\nSome text.\n\nHere is \\badmacro in code."
+        mock_editor_service.load_source_text.return_value = (doc_with_macro, 1)
+        editor_ctrl.load_source_sync(12)
+        nav_positions.clear()
+
+        # TeX reported line 200 (way beyond document length), but diagnostic contains \badmacro
+        assert export_ctrl.requestPdfRepair(
+            job_id=12,
+            sanitized_message="Undefined control sequence \\badmacro on input line 200",
+            line_number=200,
+        ) is True
+        assert len(nav_positions) == 1
+        # Position should match position of \badmacro
+        expected_pos = doc_with_macro.find("\\badmacro")
+        assert nav_positions[0] == expected_pos
     finally:
         export_ctrl.shutdown()
         editor_ctrl.shutdown()

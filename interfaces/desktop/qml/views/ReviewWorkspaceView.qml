@@ -431,6 +431,23 @@ Item {
         objectName: "latexRepairModal"
     }
 
+    LaTeXRepairConsentDialog {
+        id: latexRepairConsentModal
+        objectName: "latexRepairConsentModal"
+    }
+
+    function triggerRepairWithConsent(nodeId, source, rendererType, diag, errorLine, logExcerpt, startLine, endLine) {
+        latexRepairConsentModal.nodeId = nodeId;
+        latexRepairConsentModal.originalSource = source;
+        latexRepairConsentModal.rendererType = rendererType;
+        latexRepairConsentModal.diagnostics = diag || "";
+        latexRepairConsentModal.errorLine = errorLine || 0;
+        latexRepairConsentModal.logExcerpt = logExcerpt || "";
+        latexRepairConsentModal.startLine = startLine || 0;
+        latexRepairConsentModal.endLine = endLine || 0;
+        latexRepairConsentModal.open();
+    }
+
     ModalDialog {
         id: saveBeforeExportModal
         objectName: "saveBeforeExportModal"
@@ -583,6 +600,11 @@ Item {
             missingPackageRecoveryModal.canAutoRecover = canAuto;
             missingPackageRecoveryModal.instructions = inst;
             missingPackageRecoveryModal.open();
+        }
+        function onPdfCompilationFailed(jid, sanitizedMsg, lineNo) {
+            if (typeof exportController !== "undefined" && exportController) {
+                exportController.requestPdfRepair(jid, sanitizedMsg, lineNo);
+            }
         }
     }
 
