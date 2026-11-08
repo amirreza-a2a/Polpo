@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import pytest
 
 from scripts.acceptance.run_rendering_acceptance import (
@@ -101,19 +102,27 @@ VERSION_ID="24.04"
     assert "x86_64" in err
 
 
-def test_ubuntu_24_04_missing_mandatory_xelatex_package_yields_fail(monkeypatch):
+def test_ubuntu_24_04_missing_mandatory_xelatex_package_yields_fail(tmp_path: Path, monkeypatch):
     """Item 9: Valid Ubuntu 24.04 target but missing mandatory XeLaTeX package must yield FAIL."""
     from scripts.acceptance.run_rendering_acceptance import run_runtime_preflight
     import shutil
     import subprocess
 
-    # Mock /etc/os-release to represent valid Ubuntu 24.04
+    # Isolate user data dir to prevent side-effects on runner environment
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "test_xdg"))
+
+    # Mock /etc/os-release to represent valid Ubuntu 24.04 without globally overriding Path.is_file
     os_release_text = "ID=ubuntu\nVERSION_ID=\"24.04\"\nPRETTY_NAME=\"Ubuntu 24.04.5 LTS\"\n"
+    orig_read_text = Path.read_text
+    orig_is_file = Path.is_file
     monkeypatch.setattr(
         "pathlib.Path.read_text",
-        lambda self, *args, **kwargs: os_release_text if "os-release" in str(self) else "",
+        lambda self, *args, **kwargs: os_release_text if "os-release" in str(self) else orig_read_text(self, *args, **kwargs),
     )
-    monkeypatch.setattr("pathlib.Path.is_file", lambda self: True)
+    monkeypatch.setattr(
+        "pathlib.Path.is_file",
+        lambda self: True if "os-release" in str(self) else orig_is_file(self),
+    )
     monkeypatch.setattr("platform.machine", lambda: "x86_64")
     monkeypatch.setattr("platform.system", lambda: "Linux")
 
