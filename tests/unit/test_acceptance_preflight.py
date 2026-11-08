@@ -104,6 +104,7 @@ VERSION_ID="24.04"
 def test_ubuntu_24_04_missing_mandatory_xelatex_package_yields_fail(monkeypatch):
     """Item 9: Valid Ubuntu 24.04 target but missing mandatory XeLaTeX package must yield FAIL."""
     from scripts.acceptance.run_rendering_acceptance import run_runtime_preflight
+    import shutil
     import subprocess
 
     # Mock /etc/os-release to represent valid Ubuntu 24.04
@@ -115,6 +116,15 @@ def test_ubuntu_24_04_missing_mandatory_xelatex_package_yields_fail(monkeypatch)
     monkeypatch.setattr("pathlib.Path.is_file", lambda self: True)
     monkeypatch.setattr("platform.machine", lambda: "x86_64")
     monkeypatch.setattr("platform.system", lambda: "Linux")
+
+    # Mock shutil.which so kpsewhich is found regardless of host runner environment
+    orig_which = shutil.which
+    def mock_which(cmd, *args, **kwargs):
+        if cmd == "kpsewhich":
+            return "/usr/bin/kpsewhich"
+        return orig_which(cmd, *args, **kwargs)
+
+    monkeypatch.setattr("shutil.which", mock_which)
 
     # Mock kpsewhich so circuitikz.sty is missing
     orig_run = subprocess.run
