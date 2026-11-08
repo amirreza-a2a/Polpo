@@ -373,3 +373,128 @@ def test_interactive_mathjax_repair_journey(qapp, journey_env):
             ctrl.shutdown()
     finally:
         supervisor.shutdown()
+
+
+@pytest.mark.integration
+def test_mathjax_repair_validation_expression_matrix(journey_env):
+    """Verifies that real MathJax validates complex candidates: aligned, cases, matrices, nested braces, Persian text."""
+    supervisor = MathJaxProcessSupervisor()
+    math_cache = MathSvgCache()
+    real_math_client = MathJaxClient(supervisor=supervisor, cache=math_cache)
+
+    try:
+        service = LaTeXRepairService(
+            uow_factory=journey_env["uow_factory"],
+            ai_executor=MagicMock(),
+            math_renderer=real_math_client,
+        )
+
+        expressions = [
+            (r"\begin{aligned} a &= b + c \\ d &= e + f \end{aligned}", "math_display"),
+            (r"f(x) = \begin{cases} x & x \ge 0 \\ -x & x < 0 \end{cases}", "math_display"),
+            (r"\begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}", "math_display"),
+            (r"\frac{\frac{a}{b} + 1}{\frac{c}{d} - 1}", "math_display"),
+            (r"v = \frac{\Delta x}{\Delta t} \quad \text{سرعت متوسط}", "math_display"),
+            (r"E = mc^2", "math_inline"),
+        ]
+
+        for expr, r_type in expressions:
+            passed, err, svg, w, h = service.validate_candidate(
+                candidate_source=expr,
+                renderer_type=r_type,
+            )
+            assert passed is True, f"Failed to validate candidate {expr}: {err}"
+            assert err is None
+            assert svg is not None and "<svg" in svg
+    finally:
+        supervisor.shutdown()
+
+
+@pytest.mark.integration
+def test_failed_candidate_cannot_replace_canonical_document(qapp, journey_env):
+    """Verifies that a candidate that fails compiler/MathJax validation cannot replace the original source."""
+    uow_factory = journey_env["uow_factory"]
+    editor_service = journey_env["editor_service"]
+    publication_service = journey_env["publication_service"]
+    job_id = journey_env["job_id"]
+
+    supervisor = MathJaxProcessSupervisor()
+    math_cache = MathSvgCache()
+    real_math_client = MathJaxClient(supervisor=supervisor, cache=math_cache)
+
+    try:
+        broken_math = r"x = \frac{1"
+        invalid_candidate = r"x = \frac{1}{"  # Still invalid syntax!
+
+        doc_text = f"# Math Doc\n\n$$\n{broken_math}\n$$\n"
+        publication_service.publish_initial(job_id=job_id, markdown_text=doc_text)
+
+        dummy_slot = ApiSlot(
+            id=1,
+            provider="google",
+            label="Gemini Flash",
+            selected_model="gemini-2.5-flash",
+            credential_ref=CredentialRef("c1", "google", "byok"),
+        )
+        mock_ai = MagicMock(spec=IAIExecutionService)
+        mock_ai.execute_text_with_fallback.return_value = (
+            json.dumps({
+                "schema_version": 1,
+                "repaired_source": invalid_candidate,
+                "change_summary": "Incomplete repair attempt",
+                "preserved_invariants": [],
+            }),
+            dummy_slot,
+        )
+
+        repair_service = LaTeXRepairService(
+            uow_factory=uow_factory,
+            ai_executor=mock_ai,
+            math_renderer=real_math_client,
+        )
+
+        ctrl = MarkdownEditorController(
+            editor_service=editor_service,
+            repair_service=repair_service,
+        )
+        try:
+            ctrl.load_source_sync(job_id)
+            assert ctrl.activeVersion == 1
+
+            proposals_ready = []
+            repair_errors = []
+            ctrl.repairProposalReady.connect(proposals_ready.append)
+            ctrl.repairFailed.connect(repair_errors.append)
+
+            ctrl.requestRepair(
+                node_id="math-fail-1",
+                original_source=broken_math,
+                renderer_type="math_display",
+                diagnostics="Missing }",
+                error_line=0,
+                log_excerpt="",
+                start_line=3,
+                end_line=5,
+            )
+
+            deadline = time.time() + 3.0
+            while not proposals_ready and not repair_errors and time.time() < deadline:
+                qapp.processEvents()
+                time.sleep(0.01)
+
+            # Failed candidate must emit repairFailed and NEVER emit a valid proposal ready
+            assert len(proposals_ready) == 0
+            assert len(repair_errors) == 1
+            assert "failed" in repair_errors[0].lower() or "missing" in repair_errors[0].lower() or "error" in repair_errors[0].lower()
+            assert ctrl.activeProposal is None
+
+            # Attempting to apply a failed proposal must return False and NOT change source
+            applied = ctrl.applyRepair()
+            assert applied is False
+            assert broken_math in ctrl.sourceText
+            assert invalid_candidate not in ctrl.sourceText
+            assert ctrl.isDirty is False
+        finally:
+            ctrl.shutdown()
+    finally:
+        supervisor.shutdown()

@@ -37,6 +37,9 @@ _MAX_SOURCE_BYTES = 50000
 _FORBIDDEN_COMMANDS = frozenset({
     "documentclass", "usepackage",
     "input", "include", "includeonly",
+    "import", "subimport", "inputfrom", "subinputfrom",
+    "lstinputlisting", "verbatiminput", "tcbinputlisting",
+    "catchfile", "catchfiledef",
     "openin", "openout", "read", "write", "write18",
     "newread", "newwrite", "closein", "closeout",
     "immediate", "catcode", "special",
@@ -52,7 +55,12 @@ _FORBIDDEN_ENVIRONMENTS = re.compile(
 _COMMAND_PATTERN = re.compile(r"(?<!\\)(?:\\\\)*\\([a-zA-Z@]+)")
 _TRAVERSAL_PATTERN = re.compile(r"(?:\.\./|\.\.\\)")
 _ABSOLUTE_PATH_PATTERN = re.compile(
-    r"(?:[a-zA-Z]:[/\\]|/(?:bin|boot|dev|etc|home|lib|media|mnt|opt|proc|root|run|sbin|srv|sys|tmp|usr|var|Users|private)\b)",
+    r"(?:[a-zA-Z]:[/\\]"
+    r"|\\\\[a-zA-Z0-9_.-]+[/\\]"
+    r"|//[a-zA-Z0-9_.-]+/"
+    r"|/(?:bin|boot|dev|etc|home|lib|media|mnt|opt|proc|root|run|sbin|srv|sys|tmp|usr|var|Users|private)\b"
+    r"|(?<=[{\x22\x27=\s])/(?:[^}\s\x22\x27\\]+/[^}\s\x22\x27\\]+|[^}\s\x22\x27\\]+\.[a-zA-Z0-9_]+)"
+    r")",
     re.IGNORECASE,
 )
 

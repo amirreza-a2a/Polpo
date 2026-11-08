@@ -1577,6 +1577,9 @@ def run_tex_security() -> StageResult:
         r"\begin{filecontents}{evil.tex}x\end{filecontents}",
         r"\immediate\write18{ls}", r"\scantokens{\input{f}}",
         r"\includegraphics{/etc/passwd}", r"\includegraphics{C:/Windows/win.ini}",
+        r"\includegraphics{/custom/canary.png}", r"\includegraphics{\\server\share\canary.png}",
+        r"\lstinputlisting{secret.txt}", r"\verbatiminput{secret.txt}",
+        r"\import{dir/}{file.tex}", r"\catchfiledef{\data}{secret.txt}{}",
     ]
     all_rejected = all(not validate_latex_safety(m)[0] for m in malicious)
     benign = [
@@ -1640,7 +1643,7 @@ def run_qml_e2e_acceptance() -> StageResult:
 
     from PySide6.QtGui import QGuiApplication
     from PySide6.QtQuick import QQuickView
-    from PySide6.QtCore import QUrl, QObject, Property, Slot
+    from PySide6.QtCore import QUrl, QObject, Property, Signal, Slot
     from PIL import Image
 
     from infrastructure.markdown.pandoc_parser import PandocParser
@@ -1739,6 +1742,8 @@ def run_qml_e2e_acceptance() -> StageResult:
         view.rootContext().setContextProperty("theme", theme)
 
         class DummyViewerController(QObject):
+            requestScrollToNode = Signal(int)
+
             def __init__(self, m):
                 super().__init__()
                 self._m = m
@@ -1748,6 +1753,10 @@ def run_qml_e2e_acceptance() -> StageResult:
             def isLoading(self): return False
             @Property(str, constant=True)
             def errorMessage(self): return ""
+            @Property(bool, constant=True)
+            def previewPaused(self): return False
+            @Property(str, constant=True)
+            def previewPausedReason(self): return ""
             @Property(int, constant=True)
             def activeVersion(self): return 1
             @Property(float, constant=True)
