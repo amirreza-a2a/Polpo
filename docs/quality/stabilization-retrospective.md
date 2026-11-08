@@ -346,3 +346,35 @@ All pull requests targeting `main` must:
    - `test-linux`
    - `test-windows`
 3. Merge using a linear history method (**Squash and merge** or **Rebase and merge**).
+
+---
+
+## 11. RC2 Acceptance Hardening Addendum: TeX Security, Native QML Scene Graph Acceptance, and AI Repair Verification
+
+**Date:** 2026-11-08<br/>
+**Platform Verified:** Ubuntu 24.04.5 LTS (`x86_64`)<br/>
+**Authoritative Baseline:** Commit `2db4ebf1c6c9ad256b8210f2e4bff5ba2474b2ad` (PR #183)<br/>
+
+### 11.1 Hardening Outcomes
+
+1. **TeX Subprocess Filesystem Isolation & Kpathsea Enforcement:**
+   - Configured `openin_any = "p"`, `openout_any = "p"`, `shell_escape = "f"`, and `TEXMFOUTPUT = str(workdir)` in `StandaloneTeXDiagramRenderer` and `SubprocessSupervisor`.
+   - Proved via adversarial tests (`test_diagram_security.py`) that external absolute canary reads, relative directory traversal reads (`../`), external canary writes, and shell execution via `\write18` are strictly blocked.
+   - Environment variables matching sensitive patterns (`API`, `KEY`, `SECRET`, `TOKEN`, `AUTH`, `CREDENTIAL`, etc.) are stripped before spawning compiler child processes.
+2. **Comment-Aware Safety Tokenizer:**
+   - Implemented `strip_latex_comments` and `validate_latex_safety` in `LaTeXRepairService`.
+   - Candidate repairs with forbidden control sequences (`\input`, `\include`, `\openin`, `\openout`, `\read`, `\write`, `\write18`, `\catcode`, `\special`, `\documentclass`, `\usepackage`, `\begin{document}`) or traversal paths (`../`) are rejected immediately, while legitimate comments and node labels (e.g. `\node {input};`) are preserved.
+3. **Native QML Offscreen Scene Graph Preview Acceptance:**
+   - Replaced synthetic image provider tests with a full end-to-end offscreen Qt Quick Scene Graph pipeline test (`test_qml_e2e_acceptance.py`).
+   - Validated Markdown AST parsing, MathJax formula compilation, TikZ/PGFPlots/CircuitTikZ/TikZ-CD rendering, SVG caching, and image provider binding directly inside `MarkdownView.qml`.
+   - Captured offscreen render screenshot via `QQuickView.grabWindow()` and proved presence of rich multi-color vector graphics (>20 distinct colors).
+4. **Acceptance Preflight & Verdict Hardening:**
+   - Hardened OS target classification to verify `ID=ubuntu`, `VERSION_ID=24.04*`, and `machine=x86_64`.
+   - Fixed overall status logic: mandatory blocked stages produce an overall `BLOCKED` status, and failed stages produce `FAIL`.
+5. **Interactive Repair Journey Acceptance:**
+   - Proved the 26-step interactive repair journey: pre-transmission consent gating, data minimization, same-pipeline automated validation, reject buffer immutability, apply buffer replacement, `Ctrl+Z` undo restoration, redo reapplication, and OCC Save advancing canonical version from `v1` to `v2`.
+
+### 11.2 Residual Risks & Reviewer Guidance
+
+1. **Live AI Execution Opt-In:** Live Gemini API calls require explicit `--run-live-ai` opt-in and valid API keys in OS Keyring. Without opt-in, the `gemini-live` stage safely returns `SKIPPED_WITH_REASON`.
+2. **Native Kpathsea Environment Variable Sensitivity:** `openin_any = p` depends on TeX Live's Kpathsea library honoring environment variables. On non-TeX Live distributions (e.g. MikTeX on Windows), equivalent configuration file settings must be verified if used outside the bundled TeX Live pipeline.

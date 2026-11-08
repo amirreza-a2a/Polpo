@@ -8,8 +8,11 @@ from scripts.acceptance.run_rendering_acceptance import (
     run_diagram_render_live,
     run_gemini_live,
     run_mathjax_live,
+    run_qml_e2e_acceptance,
     run_quarto_pdf_live,
+    run_repair_workflow,
     run_runtime_preflight,
+    run_tex_security,
 )
 
 
@@ -101,3 +104,33 @@ def test_gemini_live_stage_items_and_clean_architecture_compliance():
         assert "GEMINI-06-TIMEOUT-FAILURE" in item_ids
     else:
         assert res.status == TestStatus.BLOCKED
+
+
+@pytest.mark.integration
+def test_tex_security_acceptance():
+    """Verifies TeX security sandbox, environment sanitization, and comment tokenizer."""
+    if not is_tex_compiler_installed():
+        pytest.skip("No TeX compiler installed on host runner; skipping TeX security test")
+    res = run_tex_security()
+    assert res.status == TestStatus.PASS, f"TeX security failed: {[i for i in res.items if i.status != TestStatus.PASS]}"
+    assert res.failed_tests == 0
+
+
+@pytest.mark.integration
+def test_qml_e2e_acceptance_stage():
+    """Verifies complete offscreen Qt Quick Scene Graph pipeline projection and rendering."""
+    if not is_tex_compiler_installed():
+        pytest.skip("No TeX compiler installed on host runner; skipping QML E2E test")
+    res = run_qml_e2e_acceptance()
+    assert res.status == TestStatus.PASS, f"QML E2E acceptance failed: {[i for i in res.items if i.status != TestStatus.PASS]}"
+    assert res.failed_tests == 0
+
+
+@pytest.mark.integration
+def test_repair_workflow_acceptance_stage():
+    """Verifies interactive AI repair journey: consent, compiler validation, undo, and OCC."""
+    if not is_tex_compiler_installed():
+        pytest.skip("No TeX compiler installed on host runner; skipping repair workflow test")
+    res = run_repair_workflow()
+    assert res.status == TestStatus.PASS, f"Repair workflow acceptance failed: {[i for i in res.items if i.status != TestStatus.PASS]}"
+    assert res.failed_tests == 0

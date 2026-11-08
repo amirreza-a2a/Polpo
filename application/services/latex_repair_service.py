@@ -32,19 +32,85 @@ from core.entities.api_slot import ApiSlot
 
 logger = logging.getLogger(__name__)
 
-_FORBIDDEN_LATEX_PATTERNS = (
-    re.compile(r"\\documentclass\b", re.IGNORECASE),
-    re.compile(r"\\begin\{document\}", re.IGNORECASE),
-    re.compile(r"\\end\{document\}", re.IGNORECASE),
-    re.compile(r"\\usepackage\b", re.IGNORECASE),
-    re.compile(r"\\write18\b", re.IGNORECASE),
-    re.compile(r"\\immediate\s*\\write", re.IGNORECASE),
-    re.compile(r"\\input\s*\|", re.IGNORECASE),
-    re.compile(r"\\openout\b", re.IGNORECASE),
-    re.compile(r"\\immediate\s*\\openout", re.IGNORECASE),
+_MAX_SOURCE_BYTES = 50000
+
+_FORBIDDEN_COMMANDS = frozenset({
+    "documentclass", "usepackage",
+    "input", "include", "includeonly",
+    "openin", "openout", "read", "write", "write18",
+    "newread", "newwrite", "closein", "closeout",
+    "immediate", "catcode", "special",
+    "csname", "endcsname", "scantokens",
+    "directlua", "luaexec", "luacode",
+    "filecontents",
+})
+
+_FORBIDDEN_ENVIRONMENTS = re.compile(
+    r"\\(?:begin|end)\s*\{\s*(?:document|filecontents\*?)\s*\}",
+    re.IGNORECASE,
+)
+_COMMAND_PATTERN = re.compile(r"(?<!\\)(?:\\\\)*\\([a-zA-Z@]+)")
+_TRAVERSAL_PATTERN = re.compile(r"(?:\.\./|\.\.\\)")
+_ABSOLUTE_PATH_PATTERN = re.compile(
+    r"(?:[a-zA-Z]:[/\\]|/(?:bin|boot|dev|etc|home|lib|media|mnt|opt|proc|root|run|sbin|srv|sys|tmp|usr|var|Users|private)\b)",
+    re.IGNORECASE,
 )
 
-_MAX_SOURCE_BYTES = 50000
+
+def strip_latex_comments(source: str) -> str:
+    """Strips TeX comments (% to end of line) while correctly preserving escaped percent signs (\\%)."""
+    lines: List[str] = []
+    for line in source.splitlines():
+        clean_chars: List[str] = []
+        i = 0
+        while i < len(line):
+            ch = line[i]
+            if ch == "\\":
+                bs_count = 0
+                while i < len(line) and line[i] == "\\":
+                    bs_count += 1
+                    i += 1
+                clean_chars.append("\\" * bs_count)
+                if i < len(line):
+                    if line[i] == "%":
+                        if bs_count % 2 == 1:
+                            clean_chars.append("%")
+                            i += 1
+                        else:
+                            break
+            elif ch == "%":
+                break
+            else:
+                clean_chars.append(ch)
+                i += 1
+        lines.append("".join(clean_chars))
+    return "\n".join(lines)
+
+
+def validate_latex_safety(source: str) -> Tuple[bool, Optional[str]]:
+    """Inspects a LaTeX fragment for forbidden commands, wrappers, primitives, and path traversals.
+
+    Comments are stripped before inspection so that harmless comments containing
+    command names or benign text are not falsely rejected.
+    """
+    stripped = strip_latex_comments(source)
+
+    if _FORBIDDEN_ENVIRONMENTS.search(stripped):
+        return False, "Repaired source contains forbidden document or filecontents environment wrapper."
+
+    if _TRAVERSAL_PATTERN.search(stripped):
+        return False, "Repaired source contains forbidden path traversal."
+
+    if _ABSOLUTE_PATH_PATTERN.search(stripped):
+        return False, "Repaired source contains forbidden absolute filesystem path reference."
+
+    # Extract all control sequences
+    for m in _COMMAND_PATTERN.finditer(stripped):
+        cmd = m.group(1).lower()
+        if cmd in _FORBIDDEN_COMMANDS or cmd.lstrip("@") in _FORBIDDEN_COMMANDS:
+            return False, f"Repaired source contains forbidden LaTeX command \\{cmd}."
+
+    return True, None
 
 
 def _resolve_repair_prompt_content(custom_path: Optional[str] = None) -> str:
@@ -167,9 +233,9 @@ class LaTeXRepairService:
         if len(repaired_clean.encode("utf-8")) > _MAX_SOURCE_BYTES:
             return None, f"Repaired source exceeds maximum allowed size ({_MAX_SOURCE_BYTES} bytes)."
 
-        for pattern in _FORBIDDEN_LATEX_PATTERNS:
-            if pattern.search(repaired_clean):
-                return None, f"Repaired source contains forbidden LaTeX wrapper or command matching {pattern.pattern}."
+        is_safe, safety_err = validate_latex_safety(repaired_clean)
+        if not is_safe:
+            return None, safety_err
 
         # Prevent entire document rewrite:
         if (repaired_clean.startswith("# ") or repaired_clean.startswith("---\n")) and not (

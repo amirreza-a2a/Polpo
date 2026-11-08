@@ -23,6 +23,7 @@ import logging
 import os
 from pathlib import Path
 import platform
+import re
 import signal
 import subprocess
 import threading
@@ -85,17 +86,29 @@ class SubprocessSupervisor:
         """
         Builds a sanitized environment dictionary based on os.environ.
 
-        Strips any QUARTO_* variables and TEXINPUTS overrides to prevent
-        unintended profile or path hijacking, retaining standard system essentials.
+        Strips any QUARTO_* variables, TEXINPUTS overrides, and sensitive credential-bearing
+        environment variables (API keys, secrets, tokens). Sets paranoid Kpathsea file-access
+        and shell escape restrictions (openin_any=p, openout_any=p, shell_escape=f).
         """
         env: Dict[str, str] = {}
+        sensitive_pattern = re.compile(
+            r"(API|KEY|SECRET|TOKEN|AUTH|CREDENTIAL|PASS|POLPO|GEMINI|OPENAI|AWS|GITHUB)",
+            re.IGNORECASE,
+        )
         for key, value in os.environ.items():
             upper_key = key.upper()
             if upper_key.startswith("QUARTO_"):
                 continue
             if upper_key == "TEXINPUTS" or upper_key.startswith("TEXINPUTS"):
                 continue
+            if sensitive_pattern.search(upper_key):
+                continue
             env[key] = value
+
+        # Defense in depth: enforce restricted TeX file-access and disable shell escape
+        env["openin_any"] = "p"
+        env["openout_any"] = "p"
+        env["shell_escape"] = "f"
 
         if extra_env:
             for k, v in extra_env.items():
@@ -103,6 +116,8 @@ class SubprocessSupervisor:
                 if upper_k.startswith("QUARTO_"):
                     continue
                 if upper_k == "TEXINPUTS" or upper_k.startswith("TEXINPUTS"):
+                    continue
+                if sensitive_pattern.search(upper_k):
                     continue
                 env[k] = v
 
