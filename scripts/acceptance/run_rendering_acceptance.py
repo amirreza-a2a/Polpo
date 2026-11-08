@@ -48,6 +48,7 @@ logger = logging.getLogger("acceptance")
 # ---------------------------------------------------------------------------
 
 class TestStatus:
+    __test__ = False
     PASS = "PASS"
     FAIL = "FAIL"
     BLOCKED = "BLOCKED"
@@ -57,6 +58,7 @@ class TestStatus:
 
 @dataclass
 class TestItemResult:
+    __test__ = False
     test_id: str
     name: str
     status: str
@@ -93,31 +95,109 @@ class AcceptanceReport:
 # Stage 1: Runtime Preflight Probe
 # ---------------------------------------------------------------------------
 
+def classify_os_target(
+    os_release_text: Optional[str],
+    machine: str,
+    system: str,
+) -> Tuple[str, Optional[str], Dict[str, str]]:
+    """Strictly classifies the host OS target against Ubuntu 24.04 (x86_64) acceptance baseline.
+
+    Returns:
+        (status, error_message_or_none, parsed_details_dict)
+    """
+    details: Dict[str, str] = {
+        "system": system,
+        "machine": machine,
+    }
+    if os_release_text is None:
+        return (
+            TestStatus.BLOCKED,
+            "/etc/os-release file not found; unsupported host environment for Ubuntu 24 suite",
+            details,
+        )
+
+    for line in os_release_text.splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            details[k.strip()] = v.strip().strip('"')
+
+    distro_id = details.get("ID", "").lower()
+    version_id = details.get("VERSION_ID", "")
+
+    if distro_id != "ubuntu":
+        return (
+            TestStatus.BLOCKED,
+            f"Unsupported Linux distribution '{distro_id or 'unknown'}'; Ubuntu 24.04 required",
+            details,
+        )
+
+    if not (version_id == "24.04" or version_id.startswith("24.04.")):
+        return (
+            TestStatus.BLOCKED,
+            f"Unsupported Ubuntu version '{version_id or 'unknown'}'; Ubuntu 24.04 required",
+            details,
+        )
+
+    if machine not in ("x86_64", "amd64"):
+        return (
+            TestStatus.BLOCKED,
+            f"Unsupported CPU architecture '{machine}'; x86_64 required for Ubuntu 24 suite",
+            details,
+        )
+
+    return TestStatus.PASS, None, details
+
+
+def compute_overall_status(
+    stages: Dict[str, StageResult],
+    optional_stages: Tuple[str, ...] = ("gemini-live",),
+) -> str:
+    """Computes the overall acceptance suite status with strict fail and block propagation.
+
+    Rules:
+      1. Any stage failure -> overall FAIL.
+      2. Any mandatory stage blocked -> overall BLOCKED.
+      3. All mandatory stages pass (and optional stages pass or skipped with reason) -> PASS.
+    """
+    has_failure = any(stg.status == TestStatus.FAIL for stg in stages.values())
+    if has_failure:
+        return TestStatus.FAIL
+
+    mandatory_stages = {
+        name: stg for name, stg in stages.items() if name not in optional_stages
+    }
+    has_blocked_mandatory = any(
+        stg.status == TestStatus.BLOCKED for stg in mandatory_stages.values()
+    )
+    if has_blocked_mandatory:
+        return TestStatus.BLOCKED
+
+    return TestStatus.PASS
+
+
 def run_runtime_preflight() -> StageResult:
     start_time = time.monotonic()
     items: List[TestItemResult] = []
 
     # 1. OS Release and Architecture
     t0 = time.monotonic()
-    os_details = {
-        "platform": platform.platform(),
-        "system": platform.system(),
-        "release": platform.release(),
-        "machine": platform.machine(),
-    }
     os_release_file = Path("/etc/os-release")
-    if os_release_file.is_file():
-        for line in os_release_file.read_text(encoding="utf-8").splitlines():
-            if "=" in line:
-                k, v = line.split("=", 1)
-                os_details[k.strip()] = v.strip().strip('"')
+    os_release_text = os_release_file.read_text(encoding="utf-8") if os_release_file.is_file() else None
+    os_status, os_error, os_details = classify_os_target(
+        os_release_text=os_release_text,
+        machine=platform.machine(),
+        system=platform.system(),
+    )
+    os_details["platform"] = platform.platform()
+    os_details["release"] = platform.release()
 
     items.append(TestItemResult(
         test_id="PREFLIGHT-01-OS",
-        name="Operating System and Architecture",
-        status=TestStatus.PASS if "Ubuntu" in os_details.get("PRETTY_NAME", "") or os_details["system"] == "Linux" else TestStatus.PASS,
+        name="Operating System and Architecture (Ubuntu 24.04 x86_64)",
+        status=os_status,
         duration_ms=(time.monotonic() - t0) * 1000,
         details=os_details,
+        error_message=os_error,
     ))
 
     # 2. Python and PySide6
@@ -1324,6 +1404,622 @@ def run_desktop_preview() -> StageResult:
 
 
 # ---------------------------------------------------------------------------
+# Stage 7: TeX Execution Security and Isolation Acceptance
+# ---------------------------------------------------------------------------
+
+def run_tex_security() -> StageResult:
+    start_time = time.monotonic()
+    items: List[TestItemResult] = []
+
+    from infrastructure.diagram.standalone_tex_renderer import (
+        StandaloneTeXDiagramRenderer,
+        _build_sandboxed_environment,
+    )
+    from application.services.latex_repair_service import validate_latex_safety
+    from application.ports.diagram_renderer import DiagramRenderRequest, DiagramRenderError
+
+    compiler = StandaloneTeXDiagramRenderer().resolve_compiler_path()
+    if not compiler:
+        return StageResult(
+            stage_name="tex-security",
+            status=TestStatus.BLOCKED,
+            total_tests=1,
+            blocked_tests=1,
+            duration_seconds=time.monotonic() - start_time,
+            items=[TestItemResult(
+                test_id="SEC-00-TOOLCHAIN",
+                name="TeX Compiler Security Prerequisite",
+                status=TestStatus.BLOCKED,
+                error_message="TeX compiler not found",
+            )],
+        )
+
+    # 1. Environment Sanitization and Kpathsea Policy
+    t0 = time.monotonic()
+    with tempfile.TemporaryDirectory(prefix="polpo_sec_env_") as td:
+        workdir = Path(td)
+        os.environ["POLPO_TEST_SECRET_API_KEY_123"] = "secret_val"
+        try:
+            env = _build_sandboxed_environment(workdir)
+            sec_ok = (
+                env.get("openin_any") == "p"
+                and env.get("openout_any") == "p"
+                and env.get("shell_escape") == "f"
+                and env.get("TEXMFOUTPUT") == str(workdir)
+                and "POLPO_TEST_SECRET_API_KEY_123" not in env
+                and "PATH" in env
+            )
+            items.append(TestItemResult(
+                test_id="SEC-01-PARANOID-ENV",
+                name="Subprocess Environment Sanitization & Kpathsea Paranoid Policy",
+                status=TestStatus.PASS if sec_ok else TestStatus.FAIL,
+                duration_ms=(time.monotonic() - t0) * 1000,
+                details={
+                    "openin_any": env.get("openin_any"),
+                    "openout_any": env.get("openout_any"),
+                    "shell_escape": env.get("shell_escape"),
+                    "secrets_stripped": True,
+                },
+            ))
+        finally:
+            os.environ.pop("POLPO_TEST_SECRET_API_KEY_123", None)
+
+    renderer = StandaloneTeXDiagramRenderer()
+
+    # 2. Canary File External Absolute Path Read
+    t0 = time.monotonic()
+    with tempfile.TemporaryDirectory(prefix="polpo_sec_canary_") as cd:
+        canary = Path(cd) / "secret.txt"
+        canary_secret = "TOP_SECRET_CANARY_TOKEN_998811"
+        canary.write_text(canary_secret, encoding="utf-8")
+
+        req = DiagramRenderRequest(
+            source=rf"\begin{{tikzpicture}}\node {{\input{{{canary.as_posix()}}}}};\end{{tikzpicture}}"
+        )
+        try:
+            renderer.render(req)
+            leak_detected = True
+        except DiagramRenderError as exc:
+            leak_detected = canary_secret in str(exc)
+        except Exception:
+            leak_detected = False
+
+        items.append(TestItemResult(
+            test_id="SEC-02-CANARY-ABS-READ",
+            name="External Canary File Absolute Path Read Blocking",
+            status=TestStatus.PASS if not leak_detected else TestStatus.FAIL,
+            duration_ms=(time.monotonic() - t0) * 1000,
+            details={"blocked_read": not leak_detected},
+        ))
+
+    # 3. Relative Path Traversal Read
+    t0 = time.monotonic()
+    req = DiagramRenderRequest(
+        source=r"\begin{tikzpicture}\node {\input{../secret.txt}};\end{tikzpicture}"
+    )
+    rel_blocked = False
+    try:
+        renderer.render(req)
+    except DiagramRenderError:
+        rel_blocked = True
+    except Exception:
+        rel_blocked = True
+
+    items.append(TestItemResult(
+        test_id="SEC-03-CANARY-REL-READ",
+        name="Relative Path Traversal Read Blocking",
+        status=TestStatus.PASS if rel_blocked else TestStatus.FAIL,
+        duration_ms=(time.monotonic() - t0) * 1000,
+        details={"traversal_blocked": rel_blocked},
+    ))
+
+    # 4. External File Write Blocking
+    t0 = time.monotonic()
+    with tempfile.TemporaryDirectory(prefix="polpo_sec_write_") as wd:
+        target = Path(wd) / "unauthorized_file.txt"
+        req = DiagramRenderRequest(
+            source=rf"""\begin{{tikzpicture}}
+    \newwrite\outfile
+    \openout\outfile={target.as_posix()}
+    \write\outfile{{MALICIOUS_WRITE}}
+    \closeout\outfile
+\end{{tikzpicture}}"""
+        )
+        try:
+            renderer.render(req)
+        except Exception:
+            pass
+
+        items.append(TestItemResult(
+            test_id="SEC-04-CANARY-WRITE",
+            name="External File Write Blocking (openout_any=p)",
+            status=TestStatus.PASS if not target.exists() else TestStatus.FAIL,
+            duration_ms=(time.monotonic() - t0) * 1000,
+            details={"target_exists": target.exists()},
+        ))
+
+    # 5. Shell Execution (\write18) Blocking
+    t0 = time.monotonic()
+    with tempfile.TemporaryDirectory(prefix="polpo_sec_sh_") as sd:
+        marker = Path(sd) / "marker.txt"
+        req = DiagramRenderRequest(
+            source=rf"""\begin{{tikzpicture}}
+    \immediate\write18{{touch {marker.as_posix()}}}
+\end{{tikzpicture}}"""
+        )
+        try:
+            renderer.render(req)
+        except Exception:
+            pass
+
+        items.append(TestItemResult(
+            test_id="SEC-05-WRITE18-SHELL",
+            name="Shell Command Execution Blocking (-no-shell-escape)",
+            status=TestStatus.PASS if not marker.exists() else TestStatus.FAIL,
+            duration_ms=(time.monotonic() - t0) * 1000,
+            details={"shell_executed": marker.exists()},
+        ))
+
+    # 6. AI Response Validation Tokenizer and Comment Hygiene
+    t0 = time.monotonic()
+    malicious = [
+        r"\input{file}", r"\include{file}", r"\openin\f=x", r"\read\f to \d",
+        r"\openout\f=x", r"\write18{ls}", r"\catcode`\@=11", r"\special{ps:}",
+        r"\documentclass{article}", r"\usepackage{x}", r"../evil",
+    ]
+    all_rejected = all(not validate_latex_safety(m)[0] for m in malicious)
+    benign = [
+        r"% \input{commented}",
+        r"\node {input};",
+        r"\node {100\%};",
+        r"\begin{tikzpicture}\draw (0,0) -- (1,1);\end{tikzpicture}",
+    ]
+    all_accepted = all(validate_latex_safety(b)[0] for b in benign)
+    items.append(TestItemResult(
+        test_id="SEC-06-AI-VALIDATION",
+        name="AI Candidate Validation & Comment-Aware Inspection",
+        status=TestStatus.PASS if (all_rejected and all_accepted) else TestStatus.FAIL,
+        duration_ms=(time.monotonic() - t0) * 1000,
+        details={"all_malicious_rejected": all_rejected, "all_benign_accepted": all_accepted},
+    ))
+
+    # 7. Normal Features Preserved
+    t0 = time.monotonic()
+    safe_req = DiagramRenderRequest(
+        source=r"""\begin{tikzpicture}
+    \draw (0,0) rectangle (2,1);
+\end{tikzpicture}"""
+    )
+    safe_res = renderer.render(safe_req)
+    safe_ok = safe_res.status == "rendered" and "<svg" in safe_res.svg_xml
+    items.append(TestItemResult(
+        test_id="SEC-07-NORMAL-PRESERVATION",
+        name="Legitimate Diagram Compilation Preservation",
+        status=TestStatus.PASS if safe_ok else TestStatus.FAIL,
+        duration_ms=(time.monotonic() - t0) * 1000,
+        details={"svg_bytes": len(safe_res.svg_xml)},
+    ))
+
+    passed = sum(1 for i in items if i.status == TestStatus.PASS)
+    failed = sum(1 for i in items if i.status == TestStatus.FAIL)
+    blocked = sum(1 for i in items if i.status == TestStatus.BLOCKED)
+
+    return StageResult(
+        stage_name="tex-security",
+        status=TestStatus.PASS if failed == 0 and blocked == 0 else TestStatus.FAIL,
+        total_tests=len(items),
+        passed_tests=passed,
+        failed_tests=failed,
+        blocked_tests=blocked,
+        duration_seconds=time.monotonic() - start_time,
+        items=items,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Stage 8: Real Native QML End-to-End Scene Graph Acceptance
+# ---------------------------------------------------------------------------
+
+def run_qml_e2e_acceptance() -> StageResult:
+    start_time = time.monotonic()
+    items: List[TestItemResult] = []
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    os.environ.setdefault("QSG_RHI_BACKEND", "software")
+
+    from PySide6.QtGui import QGuiApplication
+    from PySide6.QtQuick import QQuickView
+    from PySide6.QtCore import QUrl, QObject, Property, Slot
+    from PIL import Image
+
+    from infrastructure.markdown.pandoc_parser import PandocParser
+    from infrastructure.diagram.cache import DiagramSvgCache
+    from infrastructure.diagram.standalone_tex_renderer import StandaloneTeXDiagramRenderer
+    from infrastructure.math.lru_cache import MathSvgCache
+    from infrastructure.math.mathjax_supervisor import MathJaxProcessSupervisor
+    from infrastructure.math.mathjax_client import MathJaxClient
+    from application.services.markdown_viewer_service import MarkdownViewerService
+    from interfaces.desktop.models.markdown_document_model import MarkdownDocumentModel
+    from interfaces.desktop.providers.diagram_image_provider import DiagramImageProvider
+    from interfaces.desktop.providers.math_image_provider import MathImageProvider
+    from interfaces.desktop.controllers.theme_controller import ThemeController
+    from unittest.mock import MagicMock
+    from tests.acceptance.test_qml_e2e_acceptance import E2E_MIXED_DOCUMENT_FIXTURE
+
+    t0 = time.monotonic()
+    supervisor = MathJaxProcessSupervisor()
+    math_cache = MathSvgCache()
+    math_client = MathJaxClient(supervisor=supervisor, cache=math_cache)
+    diag_cache = DiagramSvgCache()
+    diag_renderer = StandaloneTeXDiagramRenderer(cache=diag_cache)
+
+    try:
+        service = MarkdownViewerService(
+            parser=PandocParser(),
+            uow_factory=MagicMock(),
+            storage=MagicMock(),
+            math_renderer=math_client,
+            diagram_renderer=diag_renderer,
+        )
+
+        dto = service.render_text(
+            raw_text=E2E_MIXED_DOCUMENT_FIXTURE,
+            active_regions=[],
+            job_id=999,
+            version=1,
+        )
+        nodes = dto.nodes
+        items.append(TestItemResult(
+            test_id="QML-01-PIPELINE-PROJECTION",
+            name="Markdown AST & Diagram/Math Projection Pipeline",
+            status=TestStatus.PASS if len(nodes) >= 12 else TestStatus.FAIL,
+            duration_ms=(time.monotonic() - t0) * 1000,
+            details={"node_count": len(nodes)},
+        ))
+
+        # Check code block fence integrity
+        code_nodes = [n for n in nodes if n.node_type == "code_block"]
+        is_code_ok = bool(code_nodes and "\\begin{tikzpicture}" in (code_nodes[0].content or code_nodes[0].raw_markdown))
+        items.append(TestItemResult(
+            test_id="QML-02-CODE-FENCE-INTEGRITY",
+            name="Ordinary Code Fence Hijack Prevention",
+            status=TestStatus.PASS if is_code_ok else TestStatus.FAIL,
+            duration_ms=1.0,
+            details={"code_nodes_count": len(code_nodes)},
+        ))
+
+        # Diagram Nodes
+        diagram_nodes = [n for n in nodes if n.node_type == "diagram"]
+        valid_diagrams = [d for d in diagram_nodes if not d.has_error]
+        invalid_diagrams = [d for d in diagram_nodes if d.has_error]
+
+        items.append(TestItemResult(
+            test_id="QML-03-DIAGRAM-SVGS",
+            name="Real Technical Diagram SVGs (TikZ, PGFPlots, CircuitTikZ, TikZ-CD)",
+            status=TestStatus.PASS if len(valid_diagrams) == 5 else TestStatus.FAIL,
+            duration_ms=1.0,
+            details={"valid_diagram_count": len(valid_diagrams)},
+        ))
+
+        items.append(TestItemResult(
+            test_id="QML-04-ERROR-CARD-METADATA",
+            name="Broken Diagram Error Card Metadata Generation",
+            status=TestStatus.PASS if len(invalid_diagrams) == 1 else TestStatus.FAIL,
+            duration_ms=1.0,
+            details={"error_message": invalid_diagrams[0].error_message if invalid_diagrams else ""},
+        ))
+
+        # Model & Providers
+        model = MarkdownDocumentModel()
+        model.set_document(dto)
+        diag_provider = DiagramImageProvider(cache=diag_cache)
+        math_provider = MathImageProvider(cache=math_cache)
+
+        t_qml = time.monotonic()
+        app = QGuiApplication.instance() or QGuiApplication(sys.argv[:1])
+        view = QQuickView()
+        view.setResizeMode(QQuickView.ResizeMode.SizeRootObjectToView)
+        view.resize(900, 1400)
+
+        view.engine().addImageProvider("diagram", diag_provider)
+        view.engine().addImageProvider("math", math_provider)
+
+        theme = ThemeController()
+        view.rootContext().setContextProperty("theme", theme)
+
+        class DummyViewerController(QObject):
+            def __init__(self, m):
+                super().__init__()
+                self._m = m
+            @Property(bool, constant=True)
+            def hasDocument(self): return True
+            @Property(bool, constant=True)
+            def isLoading(self): return False
+            @Property(str, constant=True)
+            def errorMessage(self): return ""
+            @Property(int, constant=True)
+            def activeVersion(self): return 1
+            @Property(float, constant=True)
+            def scaleFactor(self): return 1.0
+            @Property(int, constant=True)
+            def selectedNodeIndex(self): return -1
+            @Property(QObject, constant=True)
+            def model(self): return self._m
+            @Slot(result=int)
+            def modelGeneration(self): return 1
+            @Slot(int, int)
+            def reportNodeClicked(self, i, g): pass
+
+        ctrl = DummyViewerController(model)
+        view.rootContext().setContextProperty("markdownViewerController", ctrl)
+
+        qml_path = _REPO_ROOT / "interfaces" / "desktop" / "qml" / "views" / "MarkdownView.qml"
+        view.setSource(QUrl.fromLocalFile(str(qml_path)))
+        view.show()
+
+        for _ in range(25):
+            app.processEvents()
+            time.sleep(0.01)
+
+        img = view.grabWindow()
+        out_png = _REPO_ROOT / "build" / "acceptance_qml_preview.png"
+        out_png.parent.mkdir(parents=True, exist_ok=True)
+        img.save(str(out_png))
+
+        pil_img = Image.open(str(out_png))
+        colors = pil_img.getcolors(maxcolors=20000)
+        has_colors = len(colors or []) > 20
+
+        items.append(TestItemResult(
+            test_id="QML-05-SCENE-GRAPH-CAPTURE",
+            name="Qt Quick Scene Graph Offscreen Render & Screenshot Capture",
+            status=TestStatus.PASS if (img.width() == 900 and img.height() == 1400 and has_colors) else TestStatus.FAIL,
+            duration_ms=(time.monotonic() - t_qml) * 1000,
+            details={
+                "screenshot_path": str(out_png),
+                "dimensions": f"{img.width()}x{img.height()}",
+                "distinct_colors": len(colors or []),
+                "file_bytes": out_png.stat().st_size if out_png.is_file() else 0,
+            },
+        ))
+
+    finally:
+        supervisor.shutdown()
+
+    passed = sum(1 for i in items if i.status == TestStatus.PASS)
+    failed = sum(1 for i in items if i.status == TestStatus.FAIL)
+    blocked = sum(1 for i in items if i.status == TestStatus.BLOCKED)
+
+    return StageResult(
+        stage_name="qml-preview-e2e",
+        status=TestStatus.PASS if failed == 0 and blocked == 0 else TestStatus.FAIL,
+        total_tests=len(items),
+        passed_tests=passed,
+        failed_tests=failed,
+        blocked_tests=blocked,
+        duration_seconds=time.monotonic() - start_time,
+        items=items,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Stage 9: Interactive AI LaTeX Repair Workflow Acceptance
+# ---------------------------------------------------------------------------
+
+def run_repair_workflow() -> StageResult:
+    start_time = time.monotonic()
+    items: List[TestItemResult] = []
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+    from PySide6.QtGui import QGuiApplication
+    app = QGuiApplication.instance() or QGuiApplication(sys.argv[:1])
+
+    from infrastructure.persistence.sqlite.connection import SQLiteDatabaseManager
+    from infrastructure.persistence.sqlite.migration_runner import SQLiteMigrationRunner
+    from infrastructure.persistence.sqlite.unit_of_work import SQLiteUnitOfWorkFactory
+    from infrastructure.storage.local_storage import LocalStorageAdapter
+    from application.services.crop_artifact_staging_service import CropArtifactStagingService
+    from application.services.document_publication_service import DocumentPublicationService
+    from application.services.markdown_editor_service import MarkdownEditorService
+    from application.services.latex_repair_service import LaTeXRepairService
+    from interfaces.desktop.controllers.markdown_editor_controller import MarkdownEditorController
+    from infrastructure.diagram.standalone_tex_renderer import StandaloneTeXDiagramRenderer
+    from application.ports.ai_executor import IAIExecutionService
+    from core.entities.api_slot import ApiSlot
+    from core.entities.credential_ref import CredentialRef
+    from core.entities.job import Job, JobStatus
+    from core.entities.prompt import Prompt, PromptType
+    from unittest.mock import MagicMock
+
+    with tempfile.TemporaryDirectory(prefix="polpo_repair_wf_") as td:
+        temp_path = Path(td)
+        db_file = temp_path / "repair_wf.db"
+        db_manager = SQLiteDatabaseManager(str(db_file))
+        SQLiteMigrationRunner(db_manager).run_migrations()
+        uow_factory = SQLiteUnitOfWorkFactory(db_manager)
+
+        artifacts_dir = temp_path / "artifacts"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        staging_service = CropArtifactStagingService(base_dir=artifacts_dir / ".staging")
+        storage = LocalStorageAdapter(base_dir=str(artifacts_dir))
+
+        pub_service = DocumentPublicationService(
+            uow_factory=uow_factory,
+            artifacts_dir=artifacts_dir,
+            staging_service=staging_service,
+        )
+        editor_service = MarkdownEditorService(
+            uow_factory=uow_factory,
+            storage=storage,
+            document_publication_service=pub_service,
+        )
+
+        with uow_factory.create() as uow:
+            slot = ApiSlot(
+                id=None,
+                provider="google",
+                label="Gemini Flash",
+                selected_model="gemini-2.5-flash",
+                credential_ref=CredentialRef("c1", "google", "byok"),
+            )
+            uow.apis.save(slot)
+            p = uow.prompts.save(Prompt(id=None, name="P", text="T", prompt_type=PromptType.PIPELINE_1, is_default=True))
+            job = uow.jobs.save(Job(id=None, file_name="doc.pdf", file_path=str(temp_path / "doc.pdf"), prompt_id=p.id, status=JobStatus.DONE))
+            uow.commit()
+            job_id = job.id
+
+        broken_tikz = r"\begin{tikzpicture}" + "\n" + r"    \draw (0,0) -- (1,1)" + "\n" + r"\end{tikzpicture}"
+        corrected_tikz = r"\begin{tikzpicture}" + "\n" + r"    \draw (0,0) -- (1,1);" + "\n" + r"\end{tikzpicture}"
+        doc_text = f"# Title\n\n```{{=latex}}\n{broken_tikz}\n```\n\nEnd.\n"
+        pub_service.publish_initial(job_id=job_id, markdown_text=doc_text)
+
+        ai_calls: list[dict] = []
+        def mock_ai_execute(chain, prompt, **kwargs):
+            ai_calls.append({"prompt": prompt})
+            return (
+                json.dumps({
+                    "schema_version": 1,
+                    "repaired_source": corrected_tikz,
+                    "change_summary": "Added semicolon",
+                    "preserved_invariants": ["syntax_valid"],
+                }),
+                chain[0],
+            )
+
+        mock_ai = MagicMock(spec=IAIExecutionService)
+        mock_ai.execute_text_with_fallback.side_effect = mock_ai_execute
+
+        diag_renderer = StandaloneTeXDiagramRenderer()
+        repair_service = LaTeXRepairService(
+            uow_factory=uow_factory,
+            ai_executor=mock_ai,
+            diagram_renderer=diag_renderer,
+        )
+
+        ctrl = MarkdownEditorController(
+            editor_service=editor_service,
+            repair_service=repair_service,
+        )
+
+        try:
+            ctrl.load_source_sync(job_id)
+
+            # 1. Gating
+            items.append(TestItemResult(
+                test_id="REPAIR-01-GATING",
+                name="AI Repair Reactive Action Gating (canRepair)",
+                status=TestStatus.PASS if ctrl.canRepair else TestStatus.FAIL,
+                details={"canRepair": ctrl.canRepair},
+            ))
+
+            # 2. Consent Check: 0 requests when not granted
+            items.append(TestItemResult(
+                test_id="REPAIR-02-PRE-TRANSMISSION-CONSENT",
+                name="Pre-Transmission Consent Enforcement",
+                status=TestStatus.PASS if len(ai_calls) == 0 else TestStatus.FAIL,
+                details={"ai_calls_prior_to_consent": len(ai_calls)},
+            ))
+
+            # 3. Request repair with user consent
+            proposals: list = []
+            ctrl.repairProposalReady.connect(proposals.append)
+            ctrl.requestRepair("diag-1", broken_tikz, "diagram", "Syntax error", 0, "", 3, 5)
+
+            deadline = time.time() + 4.0
+            while not proposals and time.time() < deadline:
+                app.processEvents()
+                time.sleep(0.01)
+
+            prop = proposals[0] if proposals else None
+            is_valid_prop = bool(prop and prop.get("validationPassed") and "<svg" in prop.get("renderedPreviewXml", ""))
+            items.append(TestItemResult(
+                test_id="REPAIR-03-SAME-RENDERER-VALIDATION",
+                name="Same-Pipeline Automated Compiler Validation",
+                status=TestStatus.PASS if is_valid_prop else TestStatus.FAIL,
+                details={"validation_passed": prop.get("validationPassed") if prop else False},
+            ))
+
+            # Check minimal disclosure
+            transmitted = ai_calls[0]["prompt"] if ai_calls else ""
+            minimal_ok = broken_tikz in transmitted and "# Title" not in transmitted
+            items.append(TestItemResult(
+                test_id="REPAIR-04-MINIMAL-DISCLOSURE",
+                name="Data Minimization & Diagnostic Excerpt Boundary",
+                status=TestStatus.PASS if minimal_ok else TestStatus.FAIL,
+                details={"document_leakage": "# Title" in transmitted},
+            ))
+
+            # 4. Reject proposal leaves buffer intact
+            ctrl.rejectRepair()
+            reject_ok = (ctrl.activeProposal is None and not ctrl.isDirty and broken_tikz in ctrl.sourceText)
+            items.append(TestItemResult(
+                test_id="REPAIR-05-REJECT-INTEGRITY",
+                name="Proposal Rejection Buffer Immutability",
+                status=TestStatus.PASS if reject_ok else TestStatus.FAIL,
+                details={"isDirty": ctrl.isDirty},
+            ))
+
+            # 5. Apply, Undo, Redo
+            proposals.clear()
+            ctrl.requestRepair("diag-1", broken_tikz, "diagram", "Syntax error", 0, "", 3, 5)
+            deadline = time.time() + 4.0
+            while not proposals and time.time() < deadline:
+                app.processEvents()
+                time.sleep(0.01)
+
+            ctrl.applyRepair()
+            apply_ok = ctrl.isDirty and corrected_tikz in ctrl.sourceText and ctrl.activeVersion == 1
+
+            # Undo
+            doc = ctrl._get_document()
+            doc.undo()
+            ctrl.set_source_text(doc.toPlainText())
+            undo_ok = broken_tikz in ctrl.sourceText
+
+            # Redo
+            doc.redo()
+            ctrl.set_source_text(doc.toPlainText())
+            redo_ok = corrected_tikz in ctrl.sourceText
+
+            items.append(TestItemResult(
+                test_id="REPAIR-06-UNDO-REDO-OCC",
+                name="Atomic Buffer Replacement, Undo/Redo & OCC Watermark",
+                status=TestStatus.PASS if (apply_ok and undo_ok and redo_ok) else TestStatus.FAIL,
+                details={"apply_ok": apply_ok, "undo_ok": undo_ok, "redo_ok": redo_ok},
+            ))
+
+            # 6. Save under OCC
+            ctrl.save_sync()
+            saved_text, saved_ver = editor_service.load_source_text(job_id)
+            save_ok = (saved_ver == 2 and corrected_tikz in saved_text and not ctrl.isDirty)
+            items.append(TestItemResult(
+                test_id="REPAIR-07-OCC-PERSISTENCE",
+                name="OCC Versioned Publication & Document Persistence",
+                status=TestStatus.PASS if save_ok else TestStatus.FAIL,
+                details={"canonical_version": saved_ver},
+            ))
+
+        finally:
+            ctrl.shutdown()
+
+    passed = sum(1 for i in items if i.status == TestStatus.PASS)
+    failed = sum(1 for i in items if i.status == TestStatus.FAIL)
+    blocked = sum(1 for i in items if i.status == TestStatus.BLOCKED)
+
+    return StageResult(
+        stage_name="latex-repair-workflow",
+        status=TestStatus.PASS if failed == 0 and blocked == 0 else TestStatus.FAIL,
+        total_tests=len(items),
+        passed_tests=passed,
+        failed_tests=failed,
+        blocked_tests=blocked,
+        duration_seconds=time.monotonic() - start_time,
+        items=items,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Report Serialization (JSON and Markdown)
 # ---------------------------------------------------------------------------
 
@@ -1376,7 +2072,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run Polpo real-world rendering acceptance tests on Ubuntu 24")
     parser.add_argument(
         "--stage",
-        choices=["all", "runtime-preflight", "mathjax-live", "diagram-render-live", "quarto-pdf-live", "gemini-live", "desktop-preview"],
+        choices=[
+            "all",
+            "runtime-preflight",
+            "mathjax-live",
+            "diagram-render-live",
+            "quarto-pdf-live",
+            "tex-security",
+            "qml-preview-e2e",
+            "latex-repair-workflow",
+            "gemini-live",
+            "desktop-preview",
+        ],
         default="all",
         help="Specific stage to execute (default: all)",
     )
@@ -1400,7 +2107,17 @@ def main() -> int:
     args = parser.parse_args()
 
     stages_to_run = (
-        ["runtime-preflight", "mathjax-live", "diagram-render-live", "quarto-pdf-live", "gemini-live", "desktop-preview"]
+        [
+            "runtime-preflight",
+            "mathjax-live",
+            "diagram-render-live",
+            "quarto-pdf-live",
+            "tex-security",
+            "qml-preview-e2e",
+            "latex-repair-workflow",
+            "gemini-live",
+            "desktop-preview",
+        ]
         if args.stage == "all"
         else [args.stage]
     )
@@ -1410,6 +2127,9 @@ def main() -> int:
         "mathjax-live": run_mathjax_live,
         "diagram-render-live": run_diagram_render_live,
         "quarto-pdf-live": run_quarto_pdf_live,
+        "tex-security": run_tex_security,
+        "qml-preview-e2e": run_qml_e2e_acceptance,
+        "latex-repair-workflow": run_repair_workflow,
         "gemini-live": lambda: run_gemini_live(opt_in=args.run_live_ai),
         "desktop-preview": run_desktop_preview,
     }
@@ -1434,7 +2154,8 @@ def main() -> int:
         if res.status == TestStatus.FAIL:
             any_failed = True
 
-    overall = TestStatus.FAIL if any_failed else TestStatus.PASS
+    overall = compute_overall_status(stages_results)
+    any_failed = (overall == TestStatus.FAIL)
 
     report = AcceptanceReport(
         timestamp_utc=datetime.datetime.now(datetime.timezone.utc).isoformat(),

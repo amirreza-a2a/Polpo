@@ -62,6 +62,47 @@ _LATEX_ERROR_PATTERN = re.compile(
     re.MULTILINE,
 )
 
+_SENSITIVE_ENV_PATTERN = re.compile(
+    r"(API|KEY|SECRET|TOKEN|AUTH|CREDENTIAL|PASS|POLPO|GEMINI|OPENAI|AWS|GITHUB)",
+    re.IGNORECASE,
+)
+
+_ALLOWED_ENV_PREFIXES = (
+    "PATH", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT",
+    "TEMP", "TMP", "HOME", "USER", "USERNAME", "LOGNAME",
+    "LANG", "LC_", "SHELL", "TERM",
+    "TEXMF", "FONTCONFIG", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH",
+)
+
+
+def _build_sandboxed_environment(workdir: Path) -> dict[str, str]:
+    """Builds a sanitized, isolated execution environment for untrusted LaTeX compilation.
+
+    Enforces Kpathsea paranoid file-access restrictions, disables shell escapes,
+    pins output paths to the isolated temporary workspace, and strips any sensitive
+    credential-bearing environment variables.
+    """
+    env: dict[str, str] = {}
+
+    for k, v in os.environ.items():
+        k_upper = k.upper()
+        if _SENSITIVE_ENV_PATTERN.search(k_upper):
+            continue
+        if any(k_upper == prefix or k_upper.startswith(prefix) for prefix in _ALLOWED_ENV_PREFIXES):
+            env[k] = v
+
+    # Security invariants:
+    # 1. Paranoid file opening restrictions (prevent \input, \openin from traversing to .. or absolute paths)
+    env["openin_any"] = "p"
+    # 2. Paranoid file writing restrictions (prevent \openout, \write from writing outside TEXMFOUTPUT)
+    env["openout_any"] = "p"
+    # 3. Disable shell escape at configuration level
+    env["shell_escape"] = "f"
+    # 4. Pin TEXMFOUTPUT to the isolated compilation workspace
+    env["TEXMFOUTPUT"] = str(workdir)
+
+    return env
+
 
 def _extract_sanitized_latex_error(log_content: str, stderr: str) -> str:
     """Extracts a concise, actionable error snippet from LaTeX log/stderr without machine path leakage."""
@@ -245,6 +286,7 @@ class StandaloneTeXDiagramRenderer(IDiagramRenderer):
 
             kwargs: dict[str, Any] = {
                 "cwd": td,
+                "env": _build_sandboxed_environment(Path(td)),
                 "stdin": subprocess.DEVNULL,
                 "stdout": subprocess.PIPE,
                 "stderr": subprocess.PIPE,

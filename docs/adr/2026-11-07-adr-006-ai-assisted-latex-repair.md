@@ -107,3 +107,30 @@ This ADR formalizes the architectural design and safety boundaries for an **AI-a
 | `test_export_pdf_repair.py` | Quarto PDF error mapping, token-based navigation, boundary checks | PASS (2 tests) |
 | `test_latex_repair_e2e.py` | End-to-end integration: seed SQLite, AI fix, validation, buffer replace, OCC save | PASS (2 tests) |
 | `scripts/run_quality_gates.py` | Diff hygiene, bytecode compilation, 88 architecture AST rules (164 subtests) | PASS |
+| `test_latex_repair_security.py` | Comment-aware tokenizer, forbidden TeX commands, path traversal prevention | PASS (5 tests) |
+| `test_diagram_security.py` | Kpathsea sandbox, canary reads/writes, shell escape blocking, package preservation | PASS (6 tests) |
+| `test_acceptance_preflight.py` | Strict OS target classification (Ubuntu 24.04 x86_64) and overall status computation | PASS (11 tests) |
+| `test_qml_e2e_acceptance.py` | Full Markdown -> Pandoc -> AST -> ViewerService -> Scene Graph offscreen render | PASS (1 test) |
+| `test_interactive_repair_journey.py` | 26-step interactive journey: consent, validation, reject, apply, undo, redo, OCC | PASS (2 tests) |
+| `scripts/acceptance/run_rendering_acceptance.py` | Full 9-stage acceptance harness on Ubuntu 24.04 LTS | PASS (8 passed, 1 skipped) |
+
+---
+
+## 4. Amendment 1: TeX Execution Security Sandbox, Kpathsea Enforcement, and Native QML Scene Graph Acceptance
+
+- **Date:** 2026-11-08
+- **Scope:** Standalone TeX Diagram Renderer, Subprocess Supervisor, LaTeX Repair Safety Tokenizer, QML E2E Scene Graph Testing
+
+### D08 — TeX Subprocess Filesystem Isolation & Kpathsea Paranoid Policy
+1. **Kpathsea Paranoid Configuration:** Because `-no-shell-escape` alone does not prevent native TeX primitives (`\input`, `\openin`, `\openout`, `\read`, `\write`) from traversing the local filesystem, all TeX subprocesses (XeLaTeX) are invoked with an explicit sandbox environment:
+   - `openin_any = "p"` (disallows opening dot-files or absolute paths outside the tree).
+   - `openout_any = "p"` (disallows writing to dot-files or parent directories).
+   - `shell_escape = "f"` (strictly forbids shell escapes).
+   - `TEXMFOUTPUT = str(workdir)` (confines all auxiliary outputs to the isolated temporary workspace).
+2. **Credential Sanitization:** All environment variables matching sensitive patterns (`API`, `KEY`, `SECRET`, `TOKEN`, `AUTH`, `CREDENTIAL`, `PASS`, `POLPO`, `GEMINI`, `OPENAI`, `AWS`, `GITHUB`) are completely scrubbed before spawning TeX compiler child processes.
+3. **Comment-Aware Safety Tokenizer:** In `LaTeXRepairService`, candidate LaTeX sources are tokenized by first stripping unescaped TeX comments (`%...`) while preserving escaped percent characters (`\%`). Unescaped forbidden control sequences (`\input`, `\include`, `\openin`, `\openout`, `\read`, `\write`, `\write18`, `\catcode`, `\special`, `\documentclass`, `\usepackage`, `\begin{document}`) and directory traversals (`../`) are strictly rejected. Legitimate diagram text (such as `\node {input};` or comments discussing input files) are safely preserved.
+
+### D09 — Native QML Offscreen Scene Graph Acceptance Contract
+1. Synthetic image provider unit tests are supplemented by a full offscreen Qt Quick Scene Graph pipeline test (`test_qml_e2e_acceptance.py`).
+2. The acceptance harness parses a full mixed Quarto document (Markdown, MathJax formulas, TikZ diagrams, PGFPlots curves, CircuitTikZ schematics, TikZ-CD lattices, and intentional error syntax cards), projects AST nodes through `MarkdownViewerService`, injects vector SVGs into `DiagramSvgCache` and `MathSvgCache`, mounts `MarkdownDocumentModel` into `MarkdownView.qml`, and captures the rendered window via `QQuickView.grabWindow()`.
+3. Acceptance requires visual verification of rendered multi-color vector graphics (>20 distinct pixel colors) with zero crashes or unhandled QML exceptions.
