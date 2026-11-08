@@ -107,6 +107,88 @@ def test_validate_latex_safety_rejects_path_traversal():
         assert "forbidden" in err.lower() or "traversal" in err.lower()
 
 
+def test_validate_latex_safety_rejects_macro_and_primitive_tricks():
+    service = LaTeXRepairService(MagicMock(), MagicMock())
+
+    tricks = [
+        r"\csname input\endcsname{canary.txt}",
+        r"\csname @@input\endcsname{canary.txt}",
+        r"\csname write18\endcsname{id}",
+        r"\@@input canary.txt",
+        r"\@input canary.txt",
+        r"\immediate\write18{id}",
+        r"\scantokens{\input{secret}}",
+        r"\directlua{os.execute('id')}",
+        r"\luaexec{os.execute('id')}",
+        r"\newread\myread",
+        r"\newwrite\mywrite",
+        r"\closein\myread",
+        r"\closeout\mywrite",
+    ]
+    for trick in tricks:
+        raw = json.dumps({
+            "schema_version": 1,
+            "repaired_source": trick,
+            "change_summary": "Macro or primitive execution trick",
+            "preserved_invariants": [],
+        })
+        data, err = service.parse_and_validate_ai_response(raw, r"\draw (0,0);")
+        assert data is None, f"Expected rejection for macro trick: {trick}"
+        assert err is not None
+        assert "forbidden" in err.lower()
+
+
+def test_validate_latex_safety_rejects_filecontents_environment():
+    service = LaTeXRepairService(MagicMock(), MagicMock())
+
+    filecontents_attacks = [
+        r"""\begin{filecontents}{evil.tex}
+MALICIOUS PAYLOAD
+\end{filecontents}
+\draw (0,0);""",
+        r"""\begin{filecontents*}{evil.txt}
+MALICIOUS PAYLOAD
+\end{filecontents*}
+\draw (0,0);""",
+    ]
+    for attack in filecontents_attacks:
+        raw = json.dumps({
+            "schema_version": 1,
+            "repaired_source": attack,
+            "change_summary": "Filecontents creation attempt",
+            "preserved_invariants": [],
+        })
+        data, err = service.parse_and_validate_ai_response(raw, r"\draw (0,0);")
+        assert data is None, f"Expected rejection for filecontents: {attack}"
+        assert err is not None
+        assert "forbidden" in err.lower() or "filecontents" in err.lower()
+
+
+def test_validate_latex_safety_rejects_absolute_paths():
+    service = LaTeXRepairService(MagicMock(), MagicMock())
+
+    absolute_path_attacks = [
+        r"\includegraphics{/etc/passwd}",
+        r"\includegraphics{/tmp/canary.png}",
+        r"\includegraphics{/var/log/syslog}",
+        r"\includegraphics{/home/user/secret.png}",
+        r"\includegraphics{C:/Windows/win.ini}",
+        r"\includegraphics{C:\Windows\System32\cmd.exe}",
+        r"\pgfplotstableread{/tmp/data.csv}\table",
+    ]
+    for attack in absolute_path_attacks:
+        raw = json.dumps({
+            "schema_version": 1,
+            "repaired_source": attack,
+            "change_summary": "Absolute path traversal attempt",
+            "preserved_invariants": [],
+        })
+        data, err = service.parse_and_validate_ai_response(raw, r"\draw (0,0);")
+        assert data is None, f"Expected rejection for absolute path: {attack}"
+        assert err is not None
+        assert "forbidden" in err.lower() or "absolute" in err.lower()
+
+
 def test_validate_latex_safety_preserves_legitimate_comments_and_names():
     service = LaTeXRepairService(MagicMock(), MagicMock())
 

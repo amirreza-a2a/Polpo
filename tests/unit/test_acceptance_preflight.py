@@ -101,6 +101,41 @@ VERSION_ID="24.04"
     assert "x86_64" in err
 
 
+def test_ubuntu_24_04_missing_mandatory_xelatex_package_yields_fail(monkeypatch):
+    """Item 9: Valid Ubuntu 24.04 target but missing mandatory XeLaTeX package must yield FAIL."""
+    from scripts.acceptance.run_rendering_acceptance import run_runtime_preflight
+    import subprocess
+
+    # Mock /etc/os-release to represent valid Ubuntu 24.04
+    os_release_text = "ID=ubuntu\nVERSION_ID=\"24.04\"\nPRETTY_NAME=\"Ubuntu 24.04.5 LTS\"\n"
+    monkeypatch.setattr(
+        "pathlib.Path.read_text",
+        lambda self, *args, **kwargs: os_release_text if "os-release" in str(self) else "",
+    )
+    monkeypatch.setattr("pathlib.Path.is_file", lambda self: True)
+    monkeypatch.setattr("platform.machine", lambda: "x86_64")
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+
+    # Mock kpsewhich so circuitikz.sty is missing
+    orig_run = subprocess.run
+    def mock_run(cmd, *args, **kwargs):
+        if "kpsewhich" in str(cmd[0]):
+            pkg = cmd[1]
+            if pkg == "circuitikz.sty":
+                return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"/usr/share/texlive/texmf-dist/{pkg}", stderr="")
+        return orig_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    stage = run_runtime_preflight()
+    pkg_item = next(i for i in stage.items if i.test_id == "PREFLIGHT-06-TEX-PACKAGES")
+    assert pkg_item.status == TestStatus.FAIL
+    assert "circuitikz.sty" in pkg_item.error_message
+    assert stage.failed_tests >= 1
+    assert stage.status == TestStatus.FAIL
+
+
 def test_compute_overall_status_all_pass():
     stages = {
         "runtime-preflight": StageResult("runtime-preflight", status=TestStatus.PASS),

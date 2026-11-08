@@ -268,16 +268,18 @@ def test_full_markdown_to_qml_scene_graph_e2e_acceptance(qapp):
         diag_provider = DiagramImageProvider(cache=diag_cache)
         math_provider = MathImageProvider(cache=math_cache)
 
-        # Assertion 7: Image providers return valid images
+        # Assertion 7: Image providers return valid images across both Dark and Light themes
         for d in valid_diagrams:
-            img = diag_provider.requestImage(f"dark/{d.diagram_hash}", None, None)
-            assert not img.isNull()
-            assert img.width() > 0
-            assert img.height() > 0
+            for mode in ("dark", "light"):
+                img = diag_provider.requestImage(f"{mode}/{d.diagram_hash}", None, None)
+                assert not img.isNull()
+                assert img.width() > 0
+                assert img.height() > 0
 
-        m_img = math_provider.requestImage(f"dark/{math_nodes[0].math_hash}", None, None)
-        assert not m_img.isNull()
-        assert m_img.width() > 0
+        for mode in ("dark", "light"):
+            m_img = math_provider.requestImage(f"{mode}/{math_nodes[0].math_hash}", None, None)
+            assert not m_img.isNull()
+            assert m_img.width() > 0
 
         # 5. Offscreen Qt Quick Scene Graph Rendering
         view = QQuickView()
@@ -302,7 +304,7 @@ def test_full_markdown_to_qml_scene_graph_e2e_acceptance(qapp):
             qapp.processEvents()
             time.sleep(0.01)
 
-        # Assertion 8 & 9: Scene graph window capture
+        # Assertion 8 & 9: Scene graph window capture (Dark theme)
         screenshot = view.grabWindow()
         assert not screenshot.isNull()
         assert screenshot.width() == 900
@@ -321,7 +323,19 @@ def test_full_markdown_to_qml_scene_graph_e2e_acceptance(qapp):
         colors = pil_img.getcolors(maxcolors=20000)
         assert len(colors) > 20, f"Expected rendered scene with diverse colors, got {len(colors)}"
 
-        # Assertion 10: Cache hit verification
+        # Assertion 10: Switch to Light theme and verify scene capture
+        theme.set_theme_preference("light")
+        for _ in range(25):
+            qapp.processEvents()
+            time.sleep(0.01)
+        light_screenshot = view.grabWindow()
+        assert not light_screenshot.isNull()
+        light_evidence_path = output_dir / "acceptance_qml_preview_light.png"
+        light_screenshot.save(str(light_evidence_path))
+        assert light_evidence_path.is_file()
+        assert light_evidence_path.stat().st_size > 5000
+
+        # Assertion 11: Cache hit verification
         hit_dto = service.render_text(
             raw_text=E2E_MIXED_DOCUMENT_FIXTURE,
             active_regions=[],
@@ -329,6 +343,33 @@ def test_full_markdown_to_qml_scene_graph_e2e_acceptance(qapp):
             version=1,
         )
         assert len(hit_dto.nodes) == len(dto.nodes)
+
+        # Assertion 12: Stale preview results do not replace latest draft
+        newer_dto = service.render_text(
+            raw_text=E2E_MIXED_DOCUMENT_FIXTURE + "\n\nNew paragraph in version 2.\n",
+            active_regions=[],
+            job_id=101,
+            version=2,
+        )
+        assert newer_dto.version == 2
+        model.set_document(newer_dto)
+        assert model.rowCount() == len(newer_dto.nodes)
+
+        class MonotonicVersionGuard:
+            def __init__(self, m: MarkdownDocumentModel):
+                self._m = m
+                self.current_ver = 2
+
+            def apply_preview(self, incoming_dto):
+                if incoming_dto.version >= self.current_ver:
+                    self.current_ver = incoming_dto.version
+                    self._m.set_document(incoming_dto)
+                    return True
+                return False
+
+        guard = MonotonicVersionGuard(model)
+        assert guard.apply_preview(dto) is False
+        assert model.rowCount() == len(newer_dto.nodes)
 
     finally:
         supervisor.shutdown()

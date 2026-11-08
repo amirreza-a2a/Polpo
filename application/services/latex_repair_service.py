@@ -35,13 +35,26 @@ logger = logging.getLogger(__name__)
 _MAX_SOURCE_BYTES = 50000
 
 _FORBIDDEN_COMMANDS = frozenset({
-    "documentclass", "usepackage", "input", "include", "openin", "openout",
-    "read", "catcode", "special", "write",
+    "documentclass", "usepackage",
+    "input", "include", "includeonly",
+    "openin", "openout", "read", "write", "write18",
+    "newread", "newwrite", "closein", "closeout",
+    "immediate", "catcode", "special",
+    "csname", "endcsname", "scantokens",
+    "directlua", "luaexec", "luacode",
+    "filecontents",
 })
 
-_FORBIDDEN_ENVIRONMENTS = re.compile(r"\\(?:begin|end)\s*\{\s*document\s*\}", re.IGNORECASE)
+_FORBIDDEN_ENVIRONMENTS = re.compile(
+    r"\\(?:begin|end)\s*\{\s*(?:document|filecontents\*?)\s*\}",
+    re.IGNORECASE,
+)
 _COMMAND_PATTERN = re.compile(r"(?<!\\)(?:\\\\)*\\([a-zA-Z@]+)")
 _TRAVERSAL_PATTERN = re.compile(r"(?:\.\./|\.\.\\)")
+_ABSOLUTE_PATH_PATTERN = re.compile(
+    r"(?:[a-zA-Z]:[/\\]|/(?:bin|boot|dev|etc|home|lib|media|mnt|opt|proc|root|run|sbin|srv|sys|tmp|usr|var|Users|private)\b)",
+    re.IGNORECASE,
+)
 
 
 def strip_latex_comments(source: str) -> str:
@@ -83,15 +96,18 @@ def validate_latex_safety(source: str) -> Tuple[bool, Optional[str]]:
     stripped = strip_latex_comments(source)
 
     if _FORBIDDEN_ENVIRONMENTS.search(stripped):
-        return False, "Repaired source contains forbidden document environment wrapper."
+        return False, "Repaired source contains forbidden document or filecontents environment wrapper."
 
     if _TRAVERSAL_PATTERN.search(stripped):
         return False, "Repaired source contains forbidden path traversal."
 
+    if _ABSOLUTE_PATH_PATTERN.search(stripped):
+        return False, "Repaired source contains forbidden absolute filesystem path reference."
+
     # Extract all control sequences
     for m in _COMMAND_PATTERN.finditer(stripped):
         cmd = m.group(1).lower()
-        if cmd in _FORBIDDEN_COMMANDS:
+        if cmd in _FORBIDDEN_COMMANDS or cmd.lstrip("@") in _FORBIDDEN_COMMANDS:
             return False, f"Repaired source contains forbidden LaTeX command \\{cmd}."
 
     return True, None

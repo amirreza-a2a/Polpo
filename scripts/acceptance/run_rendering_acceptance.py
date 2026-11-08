@@ -397,7 +397,7 @@ def run_runtime_preflight() -> StageResult:
 
     # 10. Configured AI Providers Probe (Read-only, Zero Secret Leakage)
     t0 = time.monotonic()
-    ai_status = TestStatus.BLOCKED
+    ai_status = TestStatus.SKIPPED_WITH_REASON
     ai_details: Dict[str, Any] = {"active_slots": 0, "configured_providers": []}
     user_db = get_user_data_dir() / "polpot.db"
     if not user_db.is_file():
@@ -421,6 +421,7 @@ def run_runtime_preflight() -> StageResult:
                 ai_status = TestStatus.PASS
         except Exception as e:
             ai_details["error"] = str(e)
+            ai_status = TestStatus.FAIL
 
     items.append(TestItemResult(
         test_id="PREFLIGHT-10-AI-PROVIDER-CONFIG",
@@ -428,12 +429,17 @@ def run_runtime_preflight() -> StageResult:
         status=ai_status,
         duration_ms=(time.monotonic() - t0) * 1000,
         details=ai_details,
-        error_message=None if ai_status == TestStatus.PASS else "No active AI slots configured in user database",
+        error_message=None if ai_status == TestStatus.PASS else (
+            f"Error reading AI slots: {ai_details.get('error')}"
+            if ai_status == TestStatus.FAIL
+            else "No active AI slots configured in user database (live AI optional)"
+        ),
     ))
 
     passed = sum(1 for i in items if i.status == TestStatus.PASS)
     failed = sum(1 for i in items if i.status == TestStatus.FAIL)
     blocked = sum(1 for i in items if i.status == TestStatus.BLOCKED)
+    skipped = sum(1 for i in items if i.status == TestStatus.SKIPPED_WITH_REASON)
 
     overall = TestStatus.PASS if failed == 0 and blocked == 0 else (TestStatus.FAIL if failed > 0 else TestStatus.BLOCKED)
 
@@ -444,6 +450,7 @@ def run_runtime_preflight() -> StageResult:
         passed_tests=passed,
         failed_tests=failed,
         blocked_tests=blocked,
+        skipped_tests=skipped,
         duration_seconds=time.monotonic() - start_time,
         items=items,
     )
@@ -1566,6 +1573,10 @@ def run_tex_security() -> StageResult:
         r"\input{file}", r"\include{file}", r"\openin\f=x", r"\read\f to \d",
         r"\openout\f=x", r"\write18{ls}", r"\catcode`\@=11", r"\special{ps:}",
         r"\documentclass{article}", r"\usepackage{x}", r"../evil",
+        r"\csname input\endcsname{f}", r"\@@input f",
+        r"\begin{filecontents}{evil.tex}x\end{filecontents}",
+        r"\immediate\write18{ls}", r"\scantokens{\input{f}}",
+        r"\includegraphics{/etc/passwd}", r"\includegraphics{C:/Windows/win.ini}",
     ]
     all_rejected = all(not validate_latex_safety(m)[0] for m in malicious)
     benign = [
@@ -1772,7 +1783,7 @@ def run_qml_e2e_acceptance() -> StageResult:
 
         items.append(TestItemResult(
             test_id="QML-05-SCENE-GRAPH-CAPTURE",
-            name="Qt Quick Scene Graph Offscreen Render & Screenshot Capture",
+            name="Qt Quick Scene Graph Offscreen Render & Screenshot Capture (Dark)",
             status=TestStatus.PASS if (img.width() == 900 and img.height() == 1400 and has_colors) else TestStatus.FAIL,
             duration_ms=(time.monotonic() - t_qml) * 1000,
             details={
@@ -1780,6 +1791,33 @@ def run_qml_e2e_acceptance() -> StageResult:
                 "dimensions": f"{img.width()}x{img.height()}",
                 "distinct_colors": len(colors or []),
                 "file_bytes": out_png.stat().st_size if out_png.is_file() else 0,
+            },
+        ))
+
+        # Switch to Light theme and capture
+        t_light = time.monotonic()
+        theme.set_theme_preference("light")
+        for _ in range(25):
+            app.processEvents()
+            time.sleep(0.01)
+
+        light_img = view.grabWindow()
+        light_png = _REPO_ROOT / "build" / "acceptance_qml_preview_light.png"
+        light_img.save(str(light_png))
+
+        pil_light = Image.open(str(light_png))
+        light_colors = pil_light.getcolors(maxcolors=20000)
+        has_light_colors = len(light_colors or []) > 20
+
+        items.append(TestItemResult(
+            test_id="QML-06-LIGHT-THEME-RENDER",
+            name="Qt Quick Scene Graph Dynamic Light Theme Re-render",
+            status=TestStatus.PASS if (light_img.width() == 900 and light_img.height() == 1400 and has_light_colors) else TestStatus.FAIL,
+            duration_ms=(time.monotonic() - t_light) * 1000,
+            details={
+                "screenshot_path": str(light_png),
+                "distinct_colors": len(light_colors or []),
+                "file_bytes": light_png.stat().st_size if light_png.is_file() else 0,
             },
         ))
 
