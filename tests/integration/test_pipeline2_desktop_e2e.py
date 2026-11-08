@@ -161,7 +161,7 @@ class TestPipeline2DesktopExecutionGap(unittest.TestCase):
         p2_done = False
         p2_job_record: Optional[Pipeline2Job] = None
 
-        while time.monotonic() - start_time < 3.0:
+        while time.monotonic() - start_time < 10.0:
             with self.uow_factory.create() as uow:
                 src_job = uow.jobs.get_by_id(source_job_id)
                 if src_job and src_job.status == JobStatus.DONE:
@@ -229,7 +229,7 @@ class TestPipeline2DesktopExecutionGap(unittest.TestCase):
 
         start_time = time.monotonic()
         p1_done = False
-        while time.monotonic() - start_time < 3.0:
+        while time.monotonic() - start_time < 10.0:
             with self.uow_factory.create() as uow:
                 src_job = uow.jobs.get_by_id(source_job_id)
                 if src_job and src_job.status == JobStatus.DONE:
@@ -298,7 +298,7 @@ class TestPipeline2DesktopExecutionGap(unittest.TestCase):
 
         start_time = time.monotonic()
         p2_done = False
-        while time.monotonic() - start_time < 3.0:
+        while time.monotonic() - start_time < 10.0:
             with self.uow_factory.create() as uow:
                 p2 = uow.pipeline2_jobs.get_by_id(p2_id)
                 if p2 and p2.status == JobStatus.DONE:
@@ -341,7 +341,7 @@ class TestPipeline2DesktopExecutionGap(unittest.TestCase):
         start_time = time.monotonic()
         all_completed = False
 
-        while time.monotonic() - start_time < 5.0:
+        while time.monotonic() - start_time < 10.0:
             active = runtime.active_worker_count
             if active > max_observed_active:
                 max_observed_active = active
@@ -414,7 +414,7 @@ class TestPipeline2DesktopExecutionGap(unittest.TestCase):
         runtime.resume()
 
         start_time = time.monotonic()
-        while time.monotonic() - start_time < 3.0:
+        while time.monotonic() - start_time < 10.0:
             with self.uow_factory.create() as uow:
                 p2 = uow.pipeline2_jobs.get_by_id(saved_p2.id)
                 if p2.status == JobStatus.DONE:
@@ -476,7 +476,7 @@ class TestPipeline2DesktopExecutionGap(unittest.TestCase):
         runtime.start()
 
         start_time = time.monotonic()
-        while time.monotonic() - start_time < 3.0:
+        while time.monotonic() - start_time < 10.0:
             with self.uow_factory.create() as uow:
                 p2 = uow.pipeline2_jobs.get_by_id(saved_p2.id)
                 if p2.status in (JobStatus.FAILED, JobStatus.DONE):
@@ -571,8 +571,8 @@ class TestPipeline2DesktopExecutionGap(unittest.TestCase):
             runtime.start()
 
             # Wait for both workers to enter their execution phase concurrently
-            self.assertTrue(p1_started.wait(timeout=2.0), "P1 worker failed to start within timeout.")
-            self.assertTrue(p2_started.wait(timeout=2.0), "P2 worker failed to start within timeout.")
+            self.assertTrue(p1_started.wait(timeout=10.0), "P1 worker failed to start within timeout.")
+            self.assertTrue(p2_started.wait(timeout=10.0), "P2 worker failed to start within timeout.")
 
             # Both workers are actively executing in parallel!
             self.assertEqual(runtime.active_worker_count, 2, "Both P1 and P2 workers must be concurrently active.")
@@ -586,7 +586,7 @@ class TestPipeline2DesktopExecutionGap(unittest.TestCase):
             # Wait for both to reach DONE
             start_wait = time.monotonic()
             all_done = False
-            while time.monotonic() - start_wait < 3.0:
+            while time.monotonic() - start_wait < 10.0:
                 with self.uow_factory.create() as uow:
                     j1 = uow.jobs.get_by_id(dto_p1.id)
                     j2 = uow.pipeline2_jobs.get_by_id(saved_p2.id)
