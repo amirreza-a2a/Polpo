@@ -172,9 +172,15 @@ def test_validate_latex_safety_rejects_absolute_paths():
         r"\includegraphics{/tmp/canary.png}",
         r"\includegraphics{/var/log/syslog}",
         r"\includegraphics{/home/user/secret.png}",
+        r"\includegraphics{/custom/img.png}",
+        r"\includegraphics{/secret.png}",
+        r"\includegraphics{\\server\share\canary.png}",
+        r"\includegraphics{//server/share/canary.png}",
         r"\includegraphics{C:/Windows/win.ini}",
         r"\includegraphics{C:\Windows\System32\cmd.exe}",
         r"\pgfplotstableread{/tmp/data.csv}\table",
+        r"\pgfplotstableread{/data/canary.csv}\table",
+        r"\openin\file=/custom_canary.txt",
     ]
     for attack in absolute_path_attacks:
         raw = json.dumps({
@@ -187,6 +193,33 @@ def test_validate_latex_safety_rejects_absolute_paths():
         assert data is None, f"Expected rejection for absolute path: {attack}"
         assert err is not None
         assert "forbidden" in err.lower() or "absolute" in err.lower()
+
+
+def test_validate_latex_safety_rejects_package_file_inclusion_commands():
+    service = LaTeXRepairService(MagicMock(), MagicMock())
+
+    package_inclusion_attacks = [
+        r"\lstinputlisting{canary.txt}",
+        r"\verbatiminput{canary.txt}",
+        r"\tcbinputlisting{canary.txt}",
+        r"\import{subdir/}{file.tex}",
+        r"\subimport{subdir/}{file.tex}",
+        r"\inputfrom{subdir/}{file.tex}",
+        r"\subinputfrom{subdir/}{file.tex}",
+        r"\catchfile{\data}{canary.txt}{}",
+        r"\catchfiledef{\data}{canary.txt}{}",
+    ]
+    for attack in package_inclusion_attacks:
+        raw = json.dumps({
+            "schema_version": 1,
+            "repaired_source": attack,
+            "change_summary": "Package file inclusion attempt",
+            "preserved_invariants": [],
+        })
+        data, err = service.parse_and_validate_ai_response(raw, r"\draw (0,0);")
+        assert data is None, f"Expected rejection for package command: {attack}"
+        assert err is not None
+        assert "forbidden" in err.lower()
 
 
 def test_validate_latex_safety_preserves_legitimate_comments_and_names():
@@ -217,6 +250,14 @@ def test_validate_latex_safety_preserves_legitimate_comments_and_names():
         (
             r"""\draw (0,0) \\input text line""",
             r"\draw (0,0);"
+        ),
+        (
+            r"""\node at (1/2, 3/4) {Value: $x / y$};""",
+            r"\node {0};"
+        ),
+        (
+            r"""\draw (0,0) -- (1/2, 1);""",
+            r"\draw (0,0) -- (1, 1);"
         ),
     ]
 

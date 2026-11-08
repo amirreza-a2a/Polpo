@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 from PIL import Image
 
-from PySide6.QtCore import Property, QObject, QUrl, Slot
+from PySide6.QtCore import Property, QObject, QUrl, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QImage
 from PySide6.QtQuick import QQuickView
 
@@ -119,6 +119,8 @@ $$\oint_C \mathbf{B} \cdot d\mathbf{l} = \mu_0 I_{\text{enc}} + \mu_0 \epsilon_0
 
 
 class DummyViewerController(QObject):
+    requestScrollToNode = Signal(int)
+
     def __init__(self, model: MarkdownDocumentModel):
         super().__init__()
         self._model = model
@@ -134,6 +136,14 @@ class DummyViewerController(QObject):
 
     @Property(str, constant=True)
     def errorMessage(self) -> str:
+        return ""
+
+    @Property(bool, constant=True)
+    def previewPaused(self) -> bool:
+        return False
+
+    @Property(str, constant=True)
+    def previewPausedReason(self) -> str:
         return ""
 
     @Property(int, constant=True)

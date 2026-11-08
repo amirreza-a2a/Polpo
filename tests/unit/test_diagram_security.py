@@ -96,6 +96,74 @@ def test_renderer_blocks_external_canary_relative_traversal_read():
 
 
 @pytest.mark.skipif(not is_tex_installed(), reason="Requires TeX compiler on host")
+def test_renderer_blocks_external_canary_include_read():
+    renderer = StandaloneTeXDiagramRenderer()
+
+    with tempfile.TemporaryDirectory(prefix="polpo_canary_inc_") as external_dir:
+        canary_file = Path(external_dir) / "canary_inc.tex"
+        canary_content = "CANARY_INCLUDE_SECRET_445566"
+        canary_file.write_text(rf"\node {{{canary_content}}};", encoding="utf-8")
+
+        attack_source = rf"""\begin{{tikzpicture}}
+    \include{{{canary_file.as_posix()}}}
+\end{{tikzpicture}}"""
+
+        req = DiagramRenderRequest(source=attack_source)
+        with pytest.raises(DiagramRenderError) as exc_info:
+            renderer.render(req)
+
+        err_msg = str(exc_info.value)
+        if hasattr(exc_info.value, "log_excerpt") and exc_info.value.log_excerpt:
+            assert canary_content not in exc_info.value.log_excerpt
+        assert canary_content not in err_msg
+
+
+@pytest.mark.skipif(not is_tex_installed(), reason="Requires TeX compiler on host")
+def test_renderer_blocks_external_canary_openin_and_read():
+    renderer = StandaloneTeXDiagramRenderer()
+
+    with tempfile.TemporaryDirectory(prefix="polpo_canary_openin_") as external_dir:
+        canary_file = Path(external_dir) / "canary_openin.txt"
+        canary_content = "CANARY_OPENIN_SECRET_332211"
+        canary_file.write_text(canary_content, encoding="utf-8")
+
+        attack_source = rf"""\begin{{tikzpicture}}
+    \newread\myfile
+    \openin\myfile={canary_file.as_posix()}
+    \read\myfile to \line
+    \node {{Data: \line}};
+    \closein\myfile
+\end{{tikzpicture}}"""
+
+        req = DiagramRenderRequest(source=attack_source)
+        with pytest.raises(DiagramRenderError) as exc_info:
+            renderer.render(req)
+
+        err_msg = str(exc_info.value)
+        if hasattr(exc_info.value, "log_excerpt") and exc_info.value.log_excerpt:
+            assert canary_content not in exc_info.value.log_excerpt
+        assert canary_content not in err_msg
+
+
+@pytest.mark.skipif(not is_tex_installed(), reason="Requires TeX compiler on host")
+def test_renderer_blocks_external_canary_openin_relative_traversal():
+    renderer = StandaloneTeXDiagramRenderer()
+
+    attack_source = r"""\begin{tikzpicture}
+    \newread\myfile
+    \openin\myfile=../canary_rel_openin.txt
+    \read\myfile to \line
+    \node {Data: \line};
+    \closein\myfile
+\end{tikzpicture}"""
+
+    req = DiagramRenderRequest(source=attack_source)
+    with pytest.raises(DiagramRenderError) as exc_info:
+        renderer.render(req)
+    assert exc_info.value is not None
+
+
+@pytest.mark.skipif(not is_tex_installed(), reason="Requires TeX compiler on host")
 def test_renderer_blocks_external_canary_file_write():
     renderer = StandaloneTeXDiagramRenderer()
 
