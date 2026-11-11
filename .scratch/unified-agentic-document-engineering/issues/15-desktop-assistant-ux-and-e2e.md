@@ -129,6 +129,10 @@ class AgentController(QObject):
 ### 5.3 Concurrency & Threading Tests
 - `test_gui_thread_not_blocked_during_quarto_compilation()`: Asserts Qt event loop processes events during background compilation.
 
+### 5.4 Persistence & OCC Tests
+- `test_e2e_editor_save_triggers_occ_publish()`: Asserts that adopting an agent proposal into the editor buffer leaves it in memory (dirty buffer) without triggering auto-save or canonical publication; explicit save (Ctrl+S) invokes `DocumentPublicationService.publish_version` under OCC (`base_version == latest_version`), producing `v{N+1}` and updating persistent task status in SQLite table `agent_tasks` under migration `006_agent_task_tables.sql`.
+- `test_e2e_task_interrupted_recovery_ui()`: Asserts that upon application restart with in-flight tasks, `AgentRecoveryService` transitions them to `INTERRUPTED` in SQLite, and the presentation controller renders the recovery notification banner in `AssistantDock.qml`.
+
 ---
 
 ## 6. Error and Recovery Behavior

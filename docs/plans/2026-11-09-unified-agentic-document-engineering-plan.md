@@ -60,6 +60,7 @@ Execution follows a strict **Supervised Agent** autonomy model: the assistant fo
 - **D-PROP-05:** Versioned declarative `PublicationStyleProfile` schema with 4 scopes, typed schema, built-in profiles, and allowlist staging injection (ADR-010, Finding F).
 - **D-PROP-06:** Append-only SQLite task journaling with privacy allowlist and conservative startup recovery (`INTERRUPTED` state; no automated replay on unknown network outcome) under migration `006_agent_task_tables.sql` (ADR-007, Finding D, Finding E, Finding I).
 - **D-PROP-07:** Decoupled `IPdfInspectionEngine` foundational port in `application/ports/` before repair orchestrator, ensuring an acyclic DAG (ADR-009, Finding B).
+- **D-PROP-08:** Persian RTL strikethrough engine standardization via `ulem` (`[normalem]` and boxed math) with static template definitions and absolute prohibition on arbitrary AI macro injection (ADR-009, Finding A).
 
 ---
 
