@@ -119,7 +119,9 @@ class PublicationStyleProfile:
   - `test_json_roundtrip_fidelity()`: Confirms lossless serialization.
 
 ### 5.2 Negative & Security Tests
-- `test_reject_raw_tex_macro_injection()`: Ensures profiles cannot contain arbitrary LaTeX macro strings.
+- `test_reject_raw_tex_macro_injection()`: Ensures profiles cannot contain arbitrary LaTeX macro strings (`\newcommand`, `\usepackage`, `\def`).
+- `test_reject_oversized_presentation_strings()`: Asserts `display_name` > 128 chars, `description` > 512 chars, or serialized `profile_json` > 16 KB raises `InvalidStyleProfileError`.
+- `test_presentation_string_sanitization()`: Asserts control characters, line breaks, and raw macro injections in `display_name` and `description` are sanitized or rejected.
 
 ### 5.3 Concurrency & Persistence Considerations
 - Pure domain entities; immutable once instantiated.

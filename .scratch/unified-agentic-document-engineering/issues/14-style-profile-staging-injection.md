@@ -94,14 +94,16 @@ class PublicationStyleService:
 
 ### 5.1 Integration Tests
 - `tests/integration/test_publication_style_service.py`:
-  - `test_custom_profile_crud_in_sqlite()`: Verifies persistence in migration 006 table.
-  - `test_builtin_profile_immutability()`: Confirms rejection of deletion.
+  - `test_custom_profile_crud_in_sqlite()`: Verifies persistence in migration 006 table (`publication_style_profiles`).
+  - `test_builtin_profile_immutability()`: Confirms rejection of deletion with `ImmutableBuiltinProfileError`.
+  - `test_delete_custom_profile_success_and_document_fallback()`: Verifies deleting a user profile succeeds and documents fall back to `builtin:academic`.
   - `test_metadata_injection_allowlist_compliance()`: Validates injected keys against `ALLOWED_ROOT_KEYS_V1`.
   - `test_font_fallback_resolution()`: Confirms fallback when font is absent.
   - `test_full_compilation_with_injected_academic_profile()`: Verifies real XeLaTeX build.
 
 ### 5.2 Negative & Security Tests
 - `test_reject_unallowlisted_profile_keys()`: Asserts arbitrary keys injected into profile JSON are rejected.
+- `test_reject_malicious_profile_json_injection()`: Asserts LaTeX macro commands, shell commands, or unallowlisted keys in `profile_json` are rejected before database commit.
 
 ### 5.3 Concurrency & Persistence Considerations
 - Database mutations executed under `BEGIN IMMEDIATE` transactions.

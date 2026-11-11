@@ -147,6 +147,9 @@ class AgentTask:
   - `test_valid_lifecycle_transitions()`: Verifies step-by-step advance from `CREATED` through `COMPLETED`.
   - `test_all_non_terminal_states_support_interrupted()`: Verifies each of the 10 non-terminal states can transition to `INTERRUPTED`.
   - `test_terminal_transition_sets_completed_at()`: Asserts `completed_at` is populated upon terminal transition.
+  - `test_interrupted_transition_sets_completed_at_once()`: Asserts `completed_at` is set on transition to `INTERRUPTED` and never reset on repeated checks.
+  - `test_interrupted_to_cancelled_dismissal()`: Asserts that an `INTERRUPTED` task can be explicitly transitioned to `CANCELLED` (user dismissal).
+  - `test_restart_creates_fresh_aggregate_with_new_id()`: Asserts that user Restart creates a brand-new `AgentTask` aggregate with a new UUID and empty authorization state, leaving the interrupted task intact.
   - `test_illegal_transition_rejection()`: Verifies illegal jumps raise `InvalidStateTransitionError`.
   - `test_terminal_state_immutability()`: Asserts that no state transitions are permitted out of terminal states.
   - `test_budget_exceeded_rejection()`: Verifies that plans with $> 10$ steps raise `AgentTaskBudgetExceededError`.

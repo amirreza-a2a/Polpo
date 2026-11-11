@@ -132,7 +132,10 @@ class AgentOrchestrationService:
   - `test_plan_rejection_halts_task()`: User rejection transitions to `REJECTED`.
   - `test_cooperative_cancellation_between_steps()`: Cancelling halts before next step.
   - `test_consent_gate_pauses_execution()`: External transmission tool halts in `AWAITING_CONSENT`.
-  - `test_unknown_network_outcome_handling()`: Network timeout halts without automated retry.
+  - `test_unknown_network_outcome_handling()`: Network timeout halts without automated retry and flags `REQUEST_OUTCOME_UNKNOWN`.
+  - `test_write_ahead_dispatch_intent_persisted_under_begin_immediate()`: Verifies `DISPATCH_INTENT` journal row is written and committed prior to external dispatch.
+  - `test_restart_task_creates_fresh_task_aggregate()`: Asserts that restarting an `INTERRUPTED` task creates a brand-new `AgentTask` aggregate with fresh ID, snapshot, and authorization.
+  - `test_dismiss_interrupted_task_transitions_to_cancelled()`: Asserts that dismissing an `INTERRUPTED` task cleanly transitions it to `CANCELLED`.
 
 ### 5.2 Negative & Security Tests
 - `test_reject_plans_with_unregistered_tools()`: Rejects model-generated plans requesting nonexistent tools.

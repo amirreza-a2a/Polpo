@@ -115,6 +115,10 @@ class ITool(ABC):
   - `test_tool_registration_and_lookup()`: Verifies tool allowlist operations.
   - `test_argument_validation()`: Verifies invalid arguments fail before execution.
   - `test_governance_consent_gating()`: Verifies `EXTERNAL_TRANSMISSION` stops at consent gate.
+  - `test_governance_action_approval_gating()`: Verifies `CONSEQUENTIAL_SYSTEM` stops at approval gate.
+  - `test_write_ahead_dispatch_intent_logged_before_execution()`: Asserts `DISPATCH_INTENT` journal event is committed before invoking external HTTP or consequential actions.
+  - `test_termination_records_tool_action_outcome_unknown()`: Asserts that process interruption during tool execution records `TOOL_ACTION_OUTCOME_UNKNOWN` without automated replay.
+  - `test_ephemeral_token_expiration_on_termination()`: Asserts consent and approval tokens cannot survive process boundaries.
   - `test_read_document_structure_tool()`: Validates extraction of headings on CommonMark fixtures.
 
 ### 5.2 Negative & Security Tests

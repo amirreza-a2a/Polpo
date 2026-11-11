@@ -299,6 +299,27 @@ When `QuartoPdfExportService` stages a document for compilation:
 3. `StagingWorkspaceManager` passes this normalized dictionary through `normalize_quarto_pdf_metadata()` which validates every key against the existing allowlist (`ALLOWED_ROOT_KEYS_V1`).
 4. **Zero Unrestricted TeX Injection:** The profile never generates arbitrary `\usepackage` lines or raw macros in the author's document; all styling flows through the existing, verified allowlist parameters.
 
+### 7.7 Privacy Classification, Storage Ownership & Retention Policy for Publication Profiles (Finding A)
+
+In accordance with [`AGENTS.md`](AGENTS.md) Rules 10 and 11 and ADR-007, the `publication_style_profiles` persistence model enforces explicit privacy classification, ownership, and retention semantics that differ fundamentally from ephemeral Agent task records:
+
+#### 1. Exhaustive Field Classification & Bounds:
+- `profile_id`: System Identifier (String, max 64 chars, regex `^(builtin:[a-z0-9_-]+|user:[0-9a-f-]{36})$`). Non-sensitive. Permanent for built-ins; user-managed for custom profiles.
+- `display_name`: Presentation Name (String, max 128 chars, sanitized). **Potentially user-sensitive** (if the user titles a profile after a confidential project or publication).
+- `description`: Presentation Summary (String, max 512 chars, sanitized). **Potentially user-sensitive** (user-authored descriptive summary).
+- `schema_version`: Schema Evolution Version (Integer NOT NULL DEFAULT 1). Non-sensitive.
+- `is_builtin`: Immutability Flag (Integer NOT NULL DEFAULT 0; 1 for built-in, 0 for user). Non-sensitive.
+- `profile_json`: Declarative Profile Specification (JSON TEXT NOT NULL, max 16 KB). Validated strictly against `PublicationStyleProfileSchema`. **Potentially sensitive** (contains structured presentation preferences such as custom TOC titles).
+  - *Prohibited Content:* Raw LaTeX macros, `header-includes`, shell commands, executable code, and unrestricted filesystem paths are strictly banned and rejected at schema validation time.
+- `created_at`, `updated_at`: Epoch Timestamps (REAL NOT NULL). Non-sensitive.
+
+#### 2. Ownership, Deletion, and Backup Semantics:
+- **Built-in Profile Immutability:** Built-in profiles (`is_builtin = 1`) shipped under `resources/styles/` are read-only and immutable. Attempts to update or delete them raise `ImmutableBuiltinProfileError`. They are not subject to SQLite purge routines.
+- **User Profile Ownership & Deletion:** User-created profiles (`is_builtin = 0`) are owned by the local desktop user and stored in the SQLite application database. They remain persisted indefinitely across sessions and are **never automatically purged** by task retention routines. A user profile is deleted only upon explicit human action via `delete_custom_profile(profile_id)`.
+- **Safe Document Fallbacks on Deletion:** If a user profile is deleted while existing documents reference it, subsequent exports fall back gracefully to `builtin:academic` with an explicit UI notification.
+- **Backup & Portability:** Custom profiles can be exported as standalone, declarative JSON files without risk of credential leakage or executable code transfer.
+- **Explicit Privacy Invariant:** Profile presentation fields (`display_name`, `description`, and embedded strings in `profile_json`) are user-controlled strings and MUST NOT be falsely assumed to be inherently non-sensitive or anonymous.
+
 ---
 
 ## 8. Consequences
