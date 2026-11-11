@@ -52,15 +52,35 @@ Execution follows a strict **Supervised Agent** autonomy model: the assistant fo
 - **D-USER-02 — Supervised Agent Autonomy:** Supervised operating mode with multi-step plan approval, pre-transmission consent, gated high-risk actions, and explicit patch adoption.
 - **D-USER-03 — Both Document and Rendering-System Repair:** Separation of document-level markup fixes, publication style configurations, preamble overrides, and product defect reports.
 
-### Proposed Architectural Decisions (Awaiting Maintainer Approval)
-- **D-PROP-01:** Provider-neutral structured JSON planning via `RateLimitedAIExecutor` (ADR-007).
-- **D-PROP-02:** `TaskInputSnapshot`, isolated `AgentWorkingCopy`, and line-based `PatchSet` with three-way conflict handling and undo/redo preservation in editor (ADR-008, Finding C).
-- **D-PROP-03:** Staging failure capture of `DiagnosticBundle` (bounded log + `.tex` snippet) before workspace purge (ADR-009, Finding G).
-- **D-PROP-04:** Multi-tier source mapping (`EXACT_TOKEN` $\to$ `CONTEXTUAL_MATCH` $\to$ `SECTION_ANCHOR` $\to$ `UNKNOWN`) (ADR-009, Finding G).
-- **D-PROP-05:** Versioned declarative `PublicationStyleProfile` schema with 4 scopes, typed schema, built-in profiles, and allowlist staging injection (ADR-010, Finding F).
-- **D-PROP-06:** Append-only SQLite task journaling with privacy allowlist and conservative startup recovery (`INTERRUPTED` state; no automated replay on unknown network outcome) under migration `006_agent_task_tables.sql` (ADR-007, Finding D, Finding E, Finding I).
-- **D-PROP-07:** Decoupled `IPdfInspectionEngine` foundational port in `application/ports/` before repair orchestrator, ensuring an acyclic DAG (ADR-009, Finding B).
-- **D-PROP-08:** Persian RTL strikethrough engine standardization via `ulem` (`[normalem]` and boxed math) with static template definitions and absolute prohibition on arbitrary AI macro injection (ADR-009, Finding A).
+### Four Open Architectural Decisions (Awaiting Explicit Maintainer Approval)
+The four architectural proposals below remain explicitly unresolved and require formal maintainer sign-off:
+
+1. **`D-PROP-01` — Tool Invocation Strategy:**
+   - *Option A:* Provider-neutral structured JSON planning via `RateLimitedAIExecutor`.
+   - *Option B:* Provider-native function calling encapsulated inside infrastructure adapters.
+   - *Recommendation:* Option A (provider portability and fallback simplicity).
+   - *Status:* `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`
+2. **`D-PROP-02` — Task Persistence Architecture:**
+   - *Option A:* Dedicated tables (`agent_tasks`, `agent_task_journal`, `publication_style_profiles`) in `polpot.db` under Migration 006.
+   - *Option B:* Separate SQLite database (`agent_tasks.db`).
+   - *Recommendation:* Option A (transactional foreign-key integrity with parent jobs and unified migration runner).
+   - *Status:* `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`
+3. **`D-PROP-06` — Publication Profile Packaging & Storage:**
+   - *Option A:* Version-controlled built-in JSON assets in `resources/styles/` plus SQLite user overrides.
+   - *Option B:* Database-seeded built-ins in `publication_style_profiles` table.
+   - *Recommendation:* Option A (immutable git versioning of default styles and clean override precedence).
+   - *Status:* `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`
+4. **`D-PROP-08` — Persian RTL Strikethrough Engine:**
+   - *Option A:* Controlled static ULEM engine in `polpo_preamble.tex` with `[normalem]` and `\renewcommand{\st}[1]{\sout{#1}}`.
+   - *Option B:* Controlled Pandoc Lua AST filter (`--lua-filter`) intercepting `Strikeout` AST elements before LaTeX emission.
+   - *Recommendation:* Option A or Option B (both experimentally resolve Pandoc 3.1.3 `\st` macro definition collision; awaiting maintainer selection).
+   - *Status:* `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`
+
+### Supporting Architecture Consensus Proposals
+- **`D-PROP-03`:** Staging failure capture of `DiagnosticBundle` (bounded log + `.tex` snippet) before workspace purge (ADR-009, Finding G).
+- **`D-PROP-04`:** Multi-tier source mapping (`EXACT_TOKEN` $\to$ `CONTEXTUAL_MATCH` $\to$ `SECTION_ANCHOR` $\to$ `UNKNOWN`) (ADR-009, Finding G).
+- **`D-PROP-05`:** `TaskInputSnapshot`, isolated `AgentWorkingCopy`, and line-based `PatchSet` with three-way conflict handling and undo/redo preservation in editor (ADR-008, Finding C).
+- **`D-PROP-07`:** Decoupled `IPdfInspectionEngine` foundational port in `application/ports/` before repair orchestrator, ensuring an acyclic DAG (ADR-009, Finding B).
 
 ---
 
@@ -222,9 +242,13 @@ stateDiagram-v2
     CREATED --> INTERRUPTED: Application restart detected
     CONTEXT_GATHERING --> INTERRUPTED: Application restart detected
     PLANNING --> INTERRUPTED: Application restart detected
+    AWAITING_PLAN_APPROVAL --> INTERRUPTED: Application restart detected
     RUNNING --> INTERRUPTED: Application restart detected
-    VALIDATING --> INTERRUPTED: Application restart detected
+    AWAITING_CONSENT --> INTERRUPTED: Application restart detected
+    AWAITING_ACTION_APPROVAL --> INTERRUPTED: Application restart detected
     PAUSED --> INTERRUPTED: Application restart detected
+    VALIDATING --> INTERRUPTED: Application restart detected
+    AWAITING_FINAL_APPROVAL --> INTERRUPTED: Application restart detected
 
     INTERRUPTED --> CANCELLED: Reconciled on startup / user dismissed
 
@@ -353,6 +377,7 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
     error_message TEXT,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
+    completed_at REAL,
     FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
 );
 
@@ -383,10 +408,22 @@ CREATE TABLE IF NOT EXISTS publication_style_profiles (
 );
 ```
 
-### 6.2 Task Journal Privacy Governance
-- `metadata_json` enforces an explicit allowlist: `task_id`, `step_index`, `event_type`, `recorded_at`, `duration_ms`, `tool_name`, `input_hash`, `output_hash`, `status`, `sanitized_error_category`, `consent_token_ref`, `approval_token_ref`, `summary`.
-- Strictly forbidden from journal: full document contents, active editor buffer, full AI prompts/responses, API credentials, unredacted paths, unbounded stack traces.
+### 6.2 Task Journal Privacy Governance & Persistent Field Policy (Finding A)
+- **Persist Lifecycle Metadata, Not Document Content:** Prohibit storing raw user requests containing source fragments, full Markdown drafts, working copies, prompts, completions, unredacted compiler diagnostics, credentials, or filesystem paths.
+- **`task_goal` Definition:** Short display label / classification only (max 256 chars, sanitized). Never store the user's raw prompt directly if it contains document or private content.
+- **`plan_json` Schema:** Validated machine-readable JSON against `AgentPlanSchema` with allowlisted keys and bounded size (max 16 KB). Prohibit unvalidated model-generated payloads or document fragments.
+- **`error_message` Policy:** Sanitized English diagnostic category or bounded summary (max 512 chars) stripped of paths and stack traces.
+- **Journal `metadata_json` Allowlist:** `task_id`, `step_index`, `event_type`, `recorded_at`, `duration_ms`, `tool_name`, `step_correlation_id` (opaque UUID replacing plain hashes), `status`, `sanitized_error_category`, `consent_token_ref` (single-use UUID reference), `approval_token_ref` (single-use UUID reference), `summary` (generic non-sensitive status <= 256 chars), `request_disposition`.
 - Entries capped at 8 KB; tasks capped at 50 journal entries.
+
+### 6.3 Task Retention, Purging, and Deletion Semantics (Finding E)
+- **Retention Baseline:** 30-day retention calculated strictly from `completed_at` (terminal transition time), NOT task creation time.
+- **Scope:** Applies to all terminal states (`COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`, `INTERRUPTED`). Active or awaiting tasks are never automatically purged.
+- **Cascade Deletion:** SQLite `ON DELETE CASCADE` automatically cleans up associated `agent_task_journal` rows.
+- **Two-Phase Idempotent Filesystem Cleanup:**
+  1. Purge scratchpad directories (`.polpo/working_copies/{id}/`) and staging failure bundles (`.polpo/staging_failures/{id}/`) using idempotent unlinks.
+  2. Delete database records in a SQLite transaction (`BEGIN IMMEDIATE`) with bounded batch limits (`LIMIT 50`).
+  3. Startup reconciliation cleans orphan scratchpad directories whose `working_copy_id` is missing in `agent_tasks`.
 
 ---
 
@@ -414,7 +451,7 @@ CREATE TABLE IF NOT EXISTS publication_style_profiles (
 ### Milestone A — Agent Foundations
 - **Tickets:** `TICK-ADE-01`, `TICK-ADE-02`, `TICK-ADE-03`, `TICK-ADE-04`.
 - **Deliverables:** Core domain `AgentTask` aggregate, policy, allowlisted `ToolRegistry`, SQLite persistence under migration `006_agent_task_tables.sql`, and `AgentOrchestrationService`.
-- **Exit Gate:** 100% unit tests pass; active tasks marked `INTERRUPTED` on simulated restart; zero vendor SDK leaks.
+- **Exit Gate:** 100% unit tests pass; all non-terminal states marked `INTERRUPTED` on simulated restart; old authorization tokens invalidated; unknown network outcomes require explicit human confirmation (zero auto-retry); negative database privacy tests pass across all tables; zero vendor SDK leaks.
 
 ### Milestone B — Working Copy and Patch Safety
 - **Tickets:** `TICK-ADE-05`, `TICK-ADE-06`, `TICK-ADE-07`.
@@ -423,13 +460,13 @@ CREATE TABLE IF NOT EXISTS publication_style_profiles (
 
 ### Milestone C — Diagnostics & Inspection Contracts
 - **Tickets:** `TICK-ADE-08`, `TICK-ADE-09`, `TICK-ADE-10`.
-- **Deliverables:** Staging failure capture, multi-tier source location mapper, deterministic error classifier, and the foundational `IPdfInspectionEngine` application port.
-- **Exit Gate:** XeLaTeX error lines map accurately to Markdown; `Package soul Error: Reconstruction failed.` classified as `TEMPLATE_CONFLICT`; `IPdfInspectionEngine` port ready.
+- **Deliverables:** Staging failure capture, multi-tier source location mapper, fail-closed error classifier (`UNKNOWN -> None` scope with 0.0 confidence, `PACKAGE_MISSING` routed to `ENVIRONMENT_DEPENDENCY`), and the foundational `IPdfInspectionEngine` application port with `require_vector_drawings = False` by default and minimized inspection DTO.
+- **Exit Gate:** XeLaTeX error lines map accurately to Markdown; `Package soul Error: Reconstruction failed.` classified as `TEMPLATE_CONFLICT`; unknown errors halt automated patching; `IPdfInspectionEngine` port ready.
 
 ### Milestone D — PDF Repair & Validation
 - **Tickets:** `TICK-ADE-11`, `TICK-ADE-12`.
-- **Deliverables:** `PdfRepairService` (bounded self-correction loop) and `PyMuPdfValidator` (structural and vector PDF inspection).
-- **Exit Gate:** Broken XeLaTeX compilation repaired via typed style profile override (`strikethrough_engine = "ulem"`); candidate validated through PyMuPDF; zero arbitrary LaTeX macro injection.
+- **Deliverables:** `PdfRepairService` (bounded self-correction loop) and `PyMuPdfValidator` (structural and vector PDF inspection, separated from visual quality claims).
+- **Exit Gate:** Broken XeLaTeX compilation repaired via typed style profile override (`strikethrough_engine = "ulem"`); candidate validated through PyMuPDF; text-only PDFs pass without vector drawings; zero arbitrary LaTeX macro injection; D-PROP-08 awaiting maintainer approval.
 
 ### Milestone E — Publication Styles
 - **Tickets:** `TICK-ADE-13`, `TICK-ADE-14`.

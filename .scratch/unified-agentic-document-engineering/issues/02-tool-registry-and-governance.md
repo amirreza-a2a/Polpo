@@ -88,10 +88,11 @@ class ITool(ABC):
    - `ReadDocumentStructureTool`: Queries CommonMark AST headers and block count.
    - `InspectMathFormulasTool`: Scans document for MathJax inline and display formulas.
    - `InspectDiagramsTool`: Scans document for TikZ, PGFPlots, and CircuitTikZ raw blocks.
-3. **Governance Policy (`core/policies/tool_governance_policy.py`):**
+3. **Governance Policy & Token Invalidation (`core/policies/tool_governance_policy.py`):**
    - If risk is `EXTERNAL_TRANSMISSION` and `context.consent_token is None`, intercept with `ToolExecutionResult(status="AWAITING_CONSENT")`.
    - If risk is `CONSEQUENTIAL_SYSTEM` and `context.approval_token is None`, intercept with `ToolExecutionResult(status="AWAITING_APPROVAL")`.
-   - Rejects payload sizes exceeding 64KB.
+   - **Token Scope & Expiration (Finding B):** Consent and approval tokens are single-use ephemeral UUID4 strings stored strictly in-memory with a 10-minute maximum TTL. Tokens expire immediately on application termination; persisted token references in the journal are non-reusable audit records.
+   - **Payload Minimization (Finding A):** Tools accepting source or diagnostic inputs enforce bounded payloads (maximum 64 KB total; diagnostic excerpts capped at 10 KB / 100 lines); attempts to pass full documents or plaintext API keys are rejected.
 
 ---
 

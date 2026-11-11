@@ -86,22 +86,27 @@ class AgentOrchestrationService:
 
 ## 3. Detailed Implementation Requirements
 
-1. **Structured JSON Plan Generation:**
+1. **Structured JSON Plan Generation & Goal Sanitization (Finding A):**
+   - Extracts a sanitized, bounded task display label (`task_goal`, max 256 chars) from `command.user_prompt`; never persists raw user requests containing document text or sensitive instructions directly into SQLite.
    - Dispatches structured prompt using `prompts/agent/planning_v1.txt`.
    - Strips Markdown code blocks (````json ... ````) before parsing.
    - Validates plan structure against schema version 1.
    - Transitions task from `CREATED` $\to$ `CONTEXT_GATHERING` $\to$ `PLANNING` $\to$ `AWAITING_PLAN_APPROVAL`.
    - Execution halts until `approve_plan()` is called.
-2. **Step Execution Loop:**
+2. **Step Execution Loop & Token Invalidation (Finding B):**
    - Iterates through `plan.steps` sequentially.
    - Evaluates governance via `ToolRegistry.execute_tool()`.
-   - If `AWAITING_CONSENT` or `AWAITING_APPROVAL`, transitions task and yields control.
+   - If `AWAITING_CONSENT` or `AWAITING_ACTION_APPROVAL`, transitions task and yields control.
+   - Authorization tokens are strictly single-use and in-memory; invalid on process restart.
    - Checks cancellation flag between steps (`task.is_cancelled()`).
-3. **Unknown Network Outcome Invariant (Finding D):**
+3. **Unknown Network Outcome Invariant (Finding B, Finding D):**
    - If an external AI request times out or disconnects before a response is received, the step outcome is marked `REQUEST_OUTCOME_UNKNOWN`.
-   - The orchestrator NEVER automatically repeats the request; it transitions task to `PAUSED` or `INTERRUPTED` and requests explicit user instruction.
-4. **Journal Audit Logging (Finding E):**
+   - The orchestrator NEVER automatically repeats the request and NEVER silently advances the provider fallback chain.
+   - It transitions task to `INTERRUPTED` or `PAUSED`, records disposition code safely without storing prompt/response text, and requires explicit user instruction with potential duplicate billing disclosure.
+4. **Journal Audit Logging (Finding A, Finding E):**
    - Appends entries to `agent_task_journal` via `task_repo` using only allowlisted fields.
+   - Replaces plain content hashes with opaque `step_correlation_id` (UUID4).
+   - Bounds `summary` to generic non-sensitive status <= 256 characters.
 
 ---
 

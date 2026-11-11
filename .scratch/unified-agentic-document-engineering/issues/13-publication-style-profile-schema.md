@@ -88,11 +88,13 @@ class PublicationStyleProfile:
    - Documentclass: allowlisted enum (`"scrartcl"`, `"article"`, `"report"`, `"scrreprt"`, `"book"`, `"scrbook"`).
    - Class options: allowlisted tokens (`"DIV=12"`, `"parskip=half"`, `"twocolumn"`, `"oneside"`, `"twoside"`).
    - Strikethrough engine: typed enum (`"ulem"`, `"soul"`, `"default"`).
-3. **Four Built-in JSON Assets under `resources/styles/`:**
-   - `academic.json`: A4, `scrartcl`, $2.0\text{ cm}$ margins, numbered sections, high-contrast links, strikethrough: `ulem`.
-   - `technical_report.json`: A4, `scrreprt`, $2.5\text{ cm}$ margins, table of contents, strikethrough: `ulem`.
-   - `textbook.json`: A4, `scrbook`, $3.0\text{ cm}$ margins, large headings, strikethrough: `ulem`.
-   - `minimal.json`: A4, `article`, clean unnumbered sections, monochrome links, strikethrough: `ulem`.
+3. **Built-in Profile Packaging (D-PROP-06 — Awaiting Maintainer Approval):**
+   - Evaluates Option A (shipped version-controlled built-in JSON assets under `resources/styles/`) vs Option B (database-seeded built-ins). Option A provides immutable default styles:
+     - `academic.json`: A4, `scrartcl`, $2.0\text{ cm}$ margins, numbered sections, high-contrast links, strikethrough: `ulem`.
+     - `technical_report.json`: A4, `scrreprt`, $2.5\text{ cm}$ margins, table of contents, strikethrough: `ulem`.
+     - `textbook.json`: A4, `scrbook`, $3.0\text{ cm}$ margins, large headings, strikethrough: `ulem`.
+     - `minimal.json`: A4, `article`, clean unnumbered sections, monochrome links, strikethrough: `ulem`.
+   - Decision `D-PROP-06` remains `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`.
 
 ---
 

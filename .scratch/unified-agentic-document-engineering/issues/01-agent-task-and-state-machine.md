@@ -51,6 +51,14 @@ class PlanStepStatus(Enum):
     FAILED = "FAILED"
     SKIPPED = "SKIPPED"
 
+class RequestDisposition(Enum):
+    REQUEST_NOT_SUBMITTED = "REQUEST_NOT_SUBMITTED"
+    REQUEST_SUBMITTED_SUCCESS = "REQUEST_SUBMITTED_SUCCESS"
+    REQUEST_SUBMITTED_FAILED = "REQUEST_SUBMITTED_FAILED"
+    REQUEST_OUTCOME_UNKNOWN = "REQUEST_OUTCOME_UNKNOWN"
+    TOOL_ACTION_EXECUTED = "TOOL_ACTION_EXECUTED"
+    TOOL_ACTION_OUTCOME_UNKNOWN = "TOOL_ACTION_OUTCOME_UNKNOWN"
+
 @dataclass(frozen=True)
 class ToolCall:
     call_id: str
@@ -69,7 +77,7 @@ class PlanStep:
 @dataclass
 class AgentPlan:
     plan_id: str
-    task_goal: str
+    task_goal: str                              # Short sanitized display label (max 256 chars)
     assessed_scope: str
     steps: List[PlanStep]
     created_at: float
@@ -79,14 +87,15 @@ class AgentTask:
     task_id: str
     job_id: int
     status: TaskStatus
-    task_goal: str
+    task_goal: str                              # Short sanitized display label (max 256 chars; never raw private text)
     plan: Optional[AgentPlan] = None
     current_step_index: int = 0
     working_copy_id: Optional[str] = None
     failure_id: Optional[str] = None
-    error_message: Optional[str] = None
+    error_message: Optional[str] = None         # Sanitized English summary (max 512 chars)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
+    completed_at: Optional[float] = None        # Set strictly on transition to terminal state
 ```
 
 ---
@@ -106,8 +115,12 @@ class AgentTask:
      - `VALIDATING` $\to$ `AWAITING_FINAL_APPROVAL` (candidate verified), `RUNNING` (bounded replan), `FAILED`, `CANCELLED`, `INTERRUPTED`.
      - `AWAITING_FINAL_APPROVAL` $\to$ `COMPLETED` (adoption), `REJECTED`, `CANCELLED`, `INTERRUPTED`.
      - `INTERRUPTED` $\to$ `CANCELLED`.
-   - Terminal states (`COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`) are strictly immutable; transitions out of them raise `InvalidStateTransitionError`.
-2. **Budget Enforcement:**
+   - Terminal states (`COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`) are strictly immutable; transitions out of them raise `InvalidStateTransitionError`. Transitioning to any terminal state sets `completed_at = time.time()`.
+2. **Exhaustive Crash Recovery Matrix (Finding B):**
+   - Every non-terminal state (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`) supports a deterministic transition to `INTERRUPTED` on process restart.
+   - Old authorization tokens expire immediately on process exit; no stale tokens authorize subsequent operations.
+   - Ambiguous network outcomes are flagged as `REQUEST_OUTCOME_UNKNOWN`, strictly prohibiting automatic retries without user confirmation.
+3. **Budget Enforcement:**
    - Tasks reject plans where `len(steps) > MAX_TASK_STEPS = 10` by raising `AgentTaskBudgetExceededError`.
 
 ---
@@ -117,7 +130,8 @@ class AgentTask:
 - [ ] `AgentTask` aggregate initializes with `CREATED` status and empty step list.
 - [ ] Transitioning from `CREATED` directly to `COMPLETED` raises `InvalidStateTransitionError`.
 - [ ] Transitioning from `AWAITING_PLAN_APPROVAL` to `RUNNING` succeeds only when a valid `AgentPlan` is attached.
-- [ ] Any active non-terminal status cleanly transitions to `INTERRUPTED` on simulated restart reconciliation.
+- [ ] Every non-terminal status (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`) cleanly transitions to `INTERRUPTED` on startup recovery.
+- [ ] Transition to terminal states sets `completed_at` timestamp.
 - [ ] `AgentTaskPolicy.is_terminal()` returns `True` exclusively for `COMPLETED`, `REJECTED`, `CANCELLED`, and `FAILED`.
 - [ ] AST check confirms zero imports of `PySide6`, `Qt`, or `sqlite3` in `core/entities/agent_task.py` and `core/policies/agent_task_policy.py`.
 
@@ -128,6 +142,8 @@ class AgentTask:
 ### 5.1 Unit Tests
 - `tests/unit/test_agent_task_policy.py`:
   - `test_valid_lifecycle_transitions()`: Verifies step-by-step advance from `CREATED` through `COMPLETED`.
+  - `test_all_non_terminal_states_support_interrupted()`: Verifies each of the 10 non-terminal states can transition to `INTERRUPTED`.
+  - `test_terminal_transition_sets_completed_at()`: Asserts `completed_at` is populated upon terminal transition.
   - `test_illegal_transition_rejection()`: Verifies illegal jumps raise `InvalidStateTransitionError`.
   - `test_terminal_state_immutability()`: Asserts that no state transitions are permitted out of terminal states.
   - `test_budget_exceeded_rejection()`: Verifies that plans with $> 10$ steps raise `AgentTaskBudgetExceededError`.

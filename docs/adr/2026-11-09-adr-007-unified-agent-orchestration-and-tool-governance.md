@@ -168,9 +168,13 @@ stateDiagram-v2
     CREATED --> INTERRUPTED: App restart during task
     CONTEXT_GATHERING --> INTERRUPTED: App restart during task
     PLANNING --> INTERRUPTED: App restart during task
+    AWAITING_PLAN_APPROVAL --> INTERRUPTED: App restart during task
     RUNNING --> INTERRUPTED: App restart during task
-    VALIDATING --> INTERRUPTED: App restart during task
+    AWAITING_CONSENT --> INTERRUPTED: App restart during task
+    AWAITING_ACTION_APPROVAL --> INTERRUPTED: App restart during task
     PAUSED --> INTERRUPTED: App restart during task
+    VALIDATING --> INTERRUPTED: App restart during task
+    AWAITING_FINAL_APPROVAL --> INTERRUPTED: App restart during task
 
     INTERRUPTED --> CANCELLED: Reconciled on startup / user dismissed
 
@@ -183,63 +187,128 @@ stateDiagram-v2
 #### State Transition Invariants:
 1. **Terminal States:** `COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`. No transitions out of terminal states are permitted.
 2. **Pre-Execution Checkpoint (`AWAITING_PLAN_APPROVAL`):** Consequential execution cannot start until the human user reviews and explicitly approves the multi-step plan.
-3. **Restart Invariant (`INTERRUPTED`):** Any task that was in an active non-terminal state (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `RUNNING`, `VALIDATING`, `PAUSED`) when the application stopped or crashed transitions to `INTERRUPTED` upon application startup. The orchestrator **never silently resumes network operations or disk mutations** upon restart.
+3. **Restart Invariant (`INTERRUPTED`):** Any task in any active or awaiting non-terminal state (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`) when the application stops or crashes transitions deterministically to `INTERRUPTED` upon application startup. The orchestrator **never silently resumes network operations or disk mutations** upon restart.
 
-### 8.3 Conservative Task Recovery Model & Network Ambiguity (Finding D)
+### 8.3 Exhaustive Task Recovery Model, Token Invalidation & Network Ambiguity (Finding B)
 
-1. **Conservative Restart Policy:**
-   - Active `AgentWorkingCopy` content and `.pdf_staging/` directories are strictly ephemeral and discarded on restart.
-   - Task state and audit metadata are persisted in SQLite, but the orchestrator does NOT attempt automated execution recovery.
-   - On application startup, `AgentRecoveryService` scans `agent_tasks`. Any task with status in `(CREATED, CONTEXT_GATHERING, PLANNING, RUNNING, VALIDATING, PAUSED)` is transitioned to `INTERRUPTED` with `error_message = "Task interrupted by application shutdown"`.
-   - The user is notified in the UI of any interrupted tasks and must take an explicit action to restart the task from scratch or safely dismiss it.
-2. **Critical Network Invariant (Unknown Outcome Handling):**
-   - **Never automatically repeat an external AI request with an unknown outcome.**
-   - If an HTTP request was dispatched to an AI provider and the process crashed, lost network connection, or timed out before receiving the response, the outcome is marked `OUTCOME_UNKNOWN`.
-   - Automatically repeating the request could cause double billing, rate-limit depletion, or race conditions.
-   - The system distinguishes:
-     - `REQUEST_NOT_SUBMITTED`: Request never left the local client. Safe to retry autonomously if within budget.
-     - `REQUEST_SUBMITTED_SUCCESS`: Response received and verified.
-     - `REQUEST_SUBMITTED_FAILED`: Response confirmed failed with an error status. Safe to advance fallback chain.
-     - `REQUEST_OUTCOME_UNKNOWN`: Network timeout or process termination while request in-flight. Requires explicit user action before any retry.
-     - `TOOL_ACTION_EXECUTED`: Local tool executed with confirmed result.
-     - `TOOL_ACTION_OUTCOME_UNKNOWN`: Process terminated during tool execution. Safe cleanup in staging; no automated replay.
+#### 1. Exhaustive Recovery Matrix Across All Task States:
+The recovery engine (`AgentRecoveryService`) scans `agent_tasks` on startup and processes every non-terminal state deterministically:
 
-### 8.4 Task Journal Privacy & Data Retention Policy (Finding E)
+| Persisted Status Before Shutdown | Recovery Transition | Working Copy Exists? | Staging Content Exists? | Model Request Submitted? | Tool Action Executed? | Authorization Tokens Valid? | Permitted User Action |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **`CREATED`** | `INTERRUPTED` | No | No | No (`REQUEST_NOT_SUBMITTED`) | No | N/A | Restart or Dismiss |
+| **`CONTEXT_GATHERING`** | `INTERRUPTED` | In-progress dropped | No | No (`REQUEST_NOT_SUBMITTED`) | No | N/A | Restart or Dismiss |
+| **`PLANNING`** | `INTERRUPTED` | Baseline dropped | No | Possible in-flight (`REQUEST_OUTCOME_UNKNOWN`) | No | N/A | Inspect uncertainty, Restart, or Dismiss (No auto-retry) |
+| **`AWAITING_PLAN_APPROVAL`** | `INTERRUPTED` | Discarded on restart | No | Plan completed (`REQUEST_SUBMITTED_SUCCESS`) | No | Invalidated | Inspect plan, Restart, or Dismiss |
+| **`RUNNING`** | `INTERRUPTED` | Discarded on restart | Purged on restart | In-flight or completed step | Prior completed; current `TOOL_ACTION_OUTCOME_UNKNOWN` | Invalidated | Inspect journal, Restart from fresh snapshot, or Dismiss |
+| **`AWAITING_CONSENT`** | `INTERRUPTED` | Discarded on restart | Purged on restart | No (`REQUEST_NOT_SUBMITTED`) | Prior completed | Invalidated | Inspect journal, Restart, or Dismiss |
+| **`AWAITING_ACTION_APPROVAL`** | `INTERRUPTED` | Discarded on restart | Purged on restart | Prior completed | Target action not executed | Invalidated | Inspect journal, Restart, or Dismiss |
+| **`PAUSED`** | `INTERRUPTED` | Discarded on restart | Purged on restart | Dispatched requests aborted | Prior completed | Invalidated | Inspect journal, Restart, or Dismiss |
+| **`VALIDATING`** | `INTERRUPTED` | Discarded on restart | Ephemeral staging purged | Completed | Validation interrupted | Invalidated | Inspect journal, Restart, or Dismiss |
+| **`AWAITING_FINAL_APPROVAL`** | `INTERRUPTED` | Unlinked/invalidated | Preview dropped | Completed | Validation completed | Invalidated (Cannot apply candidate) | Inspect candidate diff, Restart, or Dismiss |
+| **`INTERRUPTED`** | `INTERRUPTED` | None | None | N/A | N/A | Invalidated | Restart or Dismiss |
+| **`COMPLETED`** | None (terminal) | Cleaned | None | Completed | Completed | N/A | Inspect audit history / Delete |
+| **`REJECTED`** | None (terminal) | Cleaned | None | Completed | Rejected | N/A | Inspect audit history / Delete |
+| **`CANCELLED`** | None (terminal) | Cleaned | None | Aborted | Aborted | N/A | Inspect audit history / Delete |
+| **`FAILED`** | None (terminal) | Cleaned | Captured in failure bundle | Completed or failed | Interrupted | N/A | Inspect diagnostic bundle / Delete |
 
-To prevent the SQLite journal from accumulating sensitive user text, private documents, or API secrets, a strict allowlist policy is enforced:
+#### 2. Strict Authorization Token Invalidation:
+- **Token Scope & Lifetime:** All consent tokens (`ConsentToken`), action approval tokens (`ActionApprovalToken`), and final candidate approval references are ephemeral cryptographically random UUID4 tokens stored in-memory within `AuthorizationSessionManager`. They have a maximum lifetime of 10 minutes and exist only in process RAM.
+- **Process Termination Expiration:** When the application process terminates (gracefully, via crash, or via power loss), all in-memory authorization tokens immediately expire.
+- **Zero Replay:** Any `consent_token_ref` or `approval_token_ref` recorded in `agent_task_journal` is an immutable, read-only historical event reference, NOT an authorization credential. It cannot authorize any subsequent AI transmission, package installation, or editor buffer mutation.
+- **Mandatory Fresh Authorization:** A task restored from `INTERRUPTED` status cannot proceed without generating a fresh plan and obtaining new explicit human approvals.
 
-#### Explicit Allowlist of Persisted Metadata:
+#### 3. Critical Network Invariant (Unknown Outcome Handling):
+- **Never automatically repeat an external AI request with an unknown outcome.**
+- If an HTTP request was dispatched to an AI provider and the process crashed, lost network connectivity, or timed out before receiving the response, the outcome is classified as `REQUEST_OUTCOME_UNKNOWN`.
+- The system distinguishes six structured disposition states (persisted as status codes, never containing prompt or response text):
+  1. `REQUEST_NOT_SUBMITTED`: Request never left the local client. Safe to retry autonomously if within budget.
+  2. `REQUEST_SUBMITTED_SUCCESS`: Response received and verified.
+  3. `REQUEST_SUBMITTED_FAILED`: Response confirmed failed with an error status code. Safe to advance fallback chain.
+  4. `REQUEST_OUTCOME_UNKNOWN`: Network timeout or process termination while request in-flight. Requires explicit user action before any retry.
+  5. `TOOL_ACTION_EXECUTED`: Local tool executed with confirmed result.
+  6. `TOOL_ACTION_OUTCOME_UNKNOWN`: Process terminated during tool execution. Safe cleanup in staging; zero automated replay.
+- When `REQUEST_OUTCOME_UNKNOWN` is encountered:
+  - The orchestrator NEVER automatically retries the call.
+  - The orchestrator NEVER silently advances to the fallback provider.
+  - The UI displays an explicit uncertainty alert disclosing potential duplicate billing, requiring the user to manually trigger a new attempt or dismiss the task.
+
+### 8.4 Comprehensive Persistent-Data Privacy Boundary & Retention Semantics (Finding A, Finding E)
+
+To prevent persistent storage (`agent_tasks`, `agent_task_journal`, `publication_style_profiles`) from accumulating sensitive user text, private documents, or API secrets, a strict data minimization policy is enforced across all tables:
+
+**Default Policy: Persist lifecycle metadata, not document content or unrestricted model context.**
+
+#### 1. Exhaustive Persistent Field Audit & Classification:
+
+| Table | Field | Data Classification | Sensitive Content Possible? | Persistence Policy | Validation & Bounds | Retention |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `agent_tasks` | `task_id` | System Identifier | No | Persisted primary key | Canonical UUID4 format string | 30 days from `completed_at` |
+| `agent_tasks` | `job_id` | Foreign Key | No | References parent `jobs(id)` | Valid positive integer | Cascade with parent job |
+| `agent_tasks` | `status` | State Machine Enum | No | Current `TaskStatus` | Allowlisted enum string only | 30 days from `completed_at` |
+| `agent_tasks` | `task_goal` | Bounded Lifecycle Label | **Yes** (if raw request stored) | **Short display label / classification only**. Never store raw user request when it contains document fragments or private text. | Sanitized string, max 256 chars, no control chars or private path substrings | 30 days from `completed_at` |
+| `agent_tasks` | `plan_json` | Validated Structured Metadata | **Yes** (if model emits raw text/args) | **Strictly validated safe plan schema only**. Contains allowlisted tool names, rationales, and typed arguments. Absolutely prohibited: raw prompts, completions, document fragments, credentials. | JSON schema validation against `AgentPlanSchema`, max 16 KB total size | 30 days from `completed_at` |
+| `agent_tasks` | `current_step_index` | Execution Counter | No | Monotonic step counter | Integer `0 <= index <= total_steps` | 30 days from `completed_at` |
+| `agent_tasks` | `total_steps` | Execution Bound | No | Bounded plan size | Integer `0 <= steps <= 10` | 30 days from `completed_at` |
+| `agent_tasks` | `working_copy_id` | Ephemeral Scratchpad ID | No | Opaque UUID referencing `.polpo/working_copies/{id}/` | Canonical UUID4 format string; content strictly ephemeral on disk | 30 days in DB; folder purged on completion/restart |
+| `agent_tasks` | `failure_id` | Ephemeral Diagnostic ID | No | Opaque UUID referencing `.polpo/staging_failures/{id}/` | Canonical UUID4 format string; diagnostic bundle managed by LRU | 30 days in DB; bundle pruned via LRU (max 5) |
+| `agent_tasks` | `error_message` | Bounded Diagnostic Category | **Yes** (if raw logs/traces stored) | **Sanitized English error category or bounded summary string**. Never store unredacted stack traces, system paths, or source text. | Redacted by `TexLogSanitizer`, max 512 chars | 30 days from `completed_at` |
+| `agent_tasks` | `created_at` | Timestamp | No | Epoch creation time | Real/float >= 0 | 30 days from `completed_at` |
+| `agent_tasks` | `updated_at` | Timestamp | No | Epoch last update time | Real/float >= `created_at` | 30 days from `completed_at` |
+| `agent_tasks` | `completed_at` | Timestamp | No | Epoch terminal completion time; baseline for retention window | Real/float >= `created_at` (NULL for active tasks) | 30 days from `completed_at` |
+| `agent_task_journal` | `entry_id` | Sequence ID | No | Auto-increment primary key | Positive integer | Cascade deleted with task |
+| `agent_task_journal` | `task_id` | Foreign Key | No | References `agent_tasks(task_id)` | UUID4 with `ON DELETE CASCADE` | Cascade deleted with task |
+| `agent_task_journal` | `step_index` | Execution Step | No | Step index in plan | Optional integer `0 <= step <= 10` | Cascade deleted with task |
+| `agent_task_journal` | `event_type` | Audit Event Enum | No | Typed audit event | Allowlisted string enum | Cascade deleted with task |
+| `agent_task_journal` | `recorded_at` | Timestamp | No | Microsecond epoch timestamp | Real/float >= 0 | Cascade deleted with task |
+| `agent_task_journal` | `metadata_json` | Strictly Allowlisted Audit Record | **Yes** (if arbitrary keys allowed) | **Strict Allowlist only**. Capped at 8 KB per entry; max 50 entries per task. Plain content hashes prohibited (replaced by opaque correlation IDs). | Schema validation against `JournalMetadataAllowlist`, max 8 KB | Cascade deleted with task |
+| `publication_style_profiles` | `profile_id` | Profile Identifier | No | Key (`builtin:{name}` or `user:{uuid}`) | String, max 64 chars, regex `^(builtin:[a-z0-9_-]+|user:[0-9a-f-]{36})$` | Permanent (built-in) / user-managed |
+| `publication_style_profiles` | `display_name` | Presentation Name | No | Human-readable profile title | String, max 128 chars | User-managed |
+| `publication_style_profiles` | `description` | Presentation Summary | No | Optional description | String, max 512 chars | User-managed |
+| `publication_style_profiles` | `schema_version` | Schema Evolution | No | Version number | Positive integer (default 1) | User-managed |
+| `publication_style_profiles` | `is_builtin` | Immutability Flag | No | 1 for read-only built-in, 0 for user | Integer (0 or 1) | User-managed |
+| `publication_style_profiles` | `profile_json` | Declarative Profile Spec | **Yes** (if raw macros injected) | **Strictly validated declarative typesetting JSON**. Prohibit raw LaTeX macros, `header-includes`, shell commands, executable code. | Validated against `PublicationStyleProfileSchema`, max 16 KB | User-managed |
+| `publication_style_profiles` | `created_at`, `updated_at` | Timestamps | No | Epoch modification times | Real/float >= 0 | User-managed |
+
+#### 2. Explicit Allowlist of Persisted Journal Metadata (`metadata_json`):
 - `task_id` (UUID4)
-- `step_index` (integer)
-- `event_type` (`STATE_CHANGED`, `TOOL_CALLED`, `TOOL_RESULT`, `USER_APPROVAL`, `CONSENT_GRANTED`)
+- `step_index` (integer, 0–10)
+- `event_type` (`STATE_CHANGED`, `TOOL_CALLED`, `TOOL_RESULT`, `USER_APPROVAL`, `CONSENT_GRANTED`, `TASK_INTERRUPTED`)
 - `recorded_at` (epoch timestamp)
-- `duration_ms` (integer)
-- `tool_name` (string)
-- `input_hash` (SHA-256 of input arguments)
-- `output_hash` (SHA-256 of tool output)
-- `status` (`SUCCESS`, `ERROR`, `AWAITING_CONSENT`, `AWAITING_APPROVAL`)
-- `sanitized_error_category` (string, e.g. `TEMPLATE_CONFLICT`)
-- `consent_token_ref` (UUID reference)
-- `approval_token_ref` (UUID reference)
-- `summary` (bounded non-sensitive English summary, max 256 characters)
+- `duration_ms` (integer >= 0)
+- `tool_name` (allowlisted snake_case string)
+- `step_correlation_id` (UUID4 opaque correlation identifier; replaces plain SHA-256 hashes to prevent dictionary attacks)
+- `status` (`SUCCESS`, `ERROR`, `AWAITING_CONSENT`, `AWAITING_APPROVAL`, `INTERRUPTED`)
+- `sanitized_error_category` (allowlisted error category string, e.g. `TEMPLATE_CONFLICT`, `PACKAGE_MISSING`)
+- `consent_token_ref` (UUID4 audit reference; non-reusable)
+- `approval_token_ref` (UUID4 audit reference; non-reusable)
+- `summary` (bounded generic non-sensitive English summary, max 256 characters; strictly sanitized; zero document text)
+- `request_disposition` (`REQUEST_NOT_SUBMITTED`, `REQUEST_SUBMITTED_SUCCESS`, `REQUEST_SUBMITTED_FAILED`, `REQUEST_OUTCOME_UNKNOWN`, `TOOL_ACTION_EXECUTED`, `TOOL_ACTION_OUTCOME_UNKNOWN`)
 
-#### Explicit Denylist (Strictly Forbidden by Default):
+#### 3. Explicit Persistence Denylist (Strictly Prohibited):
+- Complete user requests containing raw document text or sensitive instructions.
 - Full document contents or raw Markdown text.
-- Full active editor buffer text.
-- Full AI prompts or completions.
-- Raw API keys, passwords, or credentials.
-- Full `DiagnosticBundle` objects.
-- Full intermediate `document.tex` files.
-- Unredacted local filesystem paths or usernames.
-- Unbounded compiler error logs or stack traces.
-- Private source fragments.
+- Full active editor buffer text or draft snapshots.
+- Temporary Working Copy disk content.
+- Raw model prompts or completions.
+- Unvalidated model-generated plans.
+- Full tool arguments when containing source text.
+- Full compiler diagnostics or unredacted stdout/stderr.
+- Intermediate `document.tex` files.
+- Full local filesystem paths or usernames.
+- API credentials, keys, or passwords.
+- Unredacted exceptions or raw stack traces.
 
-#### Retention & Cleanup Governance:
-- **Maximum Record Size:** `metadata_json` per journal entry is capped at 8 KB.
-- **Maximum Task Journal Entries:** Capped at 50 entries per task.
-- **Retention Period:** Completed and cancelled tasks are retained for 30 days by default, or cleaned up upon user request.
-- **User-Triggered Deletion:** Deleting an `AgentTask` executes `ON DELETE CASCADE`, purging all associated journal records and ephemeral scratchpads immediately.
-- **AI Response Lifespan:** Raw AI provider responses exist only in memory during the active step and are never persisted to disk.
+#### 4. Retention, Purging, and Cascade Deletion Semantics (Finding E):
+- **Retention Calculation:** The 30-day retention window is calculated strictly from `completed_at` (the terminal transition timestamp), NOT from task creation time.
+- **Scope of Retention:** Applies to all terminal states (`COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`, `INTERRUPTED`). Active or awaiting tasks (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`) are **never automatically purged**.
+- **Database Cascade:** Deletion of an `agent_tasks` record cascades via `FOREIGN KEY (task_id) REFERENCES agent_tasks(task_id) ON DELETE CASCADE`, purging all associated `agent_task_journal` rows atomically.
+- **Two-Phase Idempotent Filesystem Cleanup:**
+  1. *Phase 1 (Filesystem):* Remove scratchpad directories (`.polpo/working_copies/{working_copy_id}/`) and staging failure bundles (`.polpo/staging_failures/{failure_id}/`) using idempotent unlinks (`shutil.rmtree(..., ignore_errors=True)`).
+  2. *Phase 2 (Database):* Execute SQLite transaction (`BEGIN IMMEDIATE`) deleting expired task rows.
+  - If Phase 1 succeeds and Phase 2 fails: the database rolls back, task remains terminal, and cleanup is retried on the next cycle.
+  - If Phase 2 succeeds and Phase 1 partially fails: orphan folders are unreferenced and harmless; startup reconciliation scans `.polpo/working_copies/` and purges any directory without a matching `working_copy_id` in `agent_tasks`.
+- **Bounded Cleanup Batches:** Retention cleanup runs in bounded batches of at most 50 tasks per execution cycle (`LIMIT 50`) to prevent SQLite transaction locking or desktop GUI lag.
 
 ### 8.5 Tool Governance & Risk Classification
 
@@ -386,6 +455,7 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
     error_message TEXT,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
+    completed_at REAL,
     FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
 );
 

@@ -39,27 +39,30 @@ class PyMuPdfValidator(IPdfInspectionEngine):
 
 ## 3. Detailed Implementation Requirements
 
-1. **Structural PDF Inspection (Finding H):**
-   - Header & Integrity: Verifies `%PDF-` header and successful opening with `fitz.open(request.pdf_path)`. If corrupted, records `HARD_FAILURE`.
+1. **Structural PDF Inspection (Finding F, Finding H):**
+   - Header & Integrity: Verifies `%PDF-` header and successful opening with `fitz.open(request.pdf_path)`. If corrupted, records `HARD_FAILURE` and sets `is_valid = False`.
    - Page Dimensions: Verifies page dimensions match expected format (e.g. A4: $595 \times 842 \pm 2$ pt). Flags deviations as `WARNING`.
-   - Text Content Extraction: Extracts text via `page.get_text()` and checks for presence of key text anchors from `request.source_markdown`.
+   - Text Content Extraction: Extracts text via `page.get_text()` and checks for presence of bounded `request.expected_text_anchors` (does NOT require full source markdown).
    - Blank Page Detection: Flags pages with $< 10$ characters of text and zero vector drawings as `WARNING` (blank page indicator).
-   - Vector Graphics Detection: Checks `len(page.get_drawings()) > 0` on diagram pages; flags missing drawings as `WARNING`.
+   - Vector Graphics Detection: `require_vector_drawings = False` by default. Text-only documents are structurally valid with zero drawings. Verifies `len(page.get_drawings()) > 0` ONLY on pages specified in `request.policy.expected_diagram_pages`; flags missing drawings on those pages as `WARNING`.
+   - Structural vs Semantic Scope: Explicitly documents that `is_valid = True` proves structural well-formedness and readability only; it does NOT imply visual beauty, mathematical correctness, Persian RTL text correctness, or semantic fidelity.
 2. **Optional Visual Preview Generation:**
-   - If `request.generate_raster_previews` is `True`, renders 150 DPI page preview PNGs for sampled pages (first 3 pages + last page + any page with an anomaly).
-   - Enforces 50MB image memory buffer cap and 5.0-second execution timeout.
+   - If `request.generate_raster_previews` is `True`, renders 150 DPI page preview PNGs for sampled pages (first 3 pages + last page + any page with an anomaly; max 5 pages total).
+   - Enforces 50MB image memory buffer cap and 5.0-second execution timeout with cooperative cancellation checks.
 3. **Realistic Performance Target:**
-   - Structural checks complete in $< 1.5$ seconds for documents under 50 pages on standard desktop hardware.
+   - Structural checks complete in $< 1.5$ seconds for documents under 50 pages on reference hardware (Ubuntu 24.04, Core i7/Ryzen 7). This benchmark is a quality objective, not an absolute real-time guarantee.
 
 ---
 
 ## 4. Acceptance Criteria
 
-- [ ] Corrupt or empty PDF files fail inspection with `HARD_FAILURE` anomaly.
-- [ ] Orphan blank pages are detected and reported as `WARNING` without hard rejection.
-- [ ] Text extraction confirms source text presence across compiled pages.
-- [ ] Vector drawings are verified on diagram pages.
-- [ ] Page raster previews are generated cleanly as PNG byte buffers when requested.
+- [ ] Corrupt or empty PDF files fail inspection with `HARD_FAILURE` anomaly and `is_valid = False`.
+- [ ] Text-only PDF documents pass inspection cleanly without requiring vector drawings (`require_vector_drawings = False`).
+- [ ] Vector drawings are verified exclusively on pages listed in `expected_diagram_pages`.
+- [ ] Orphan blank pages are detected and reported as `WARNING` without causing automatic hard rejection.
+- [ ] Text extraction verifies presence of `expected_text_anchors` without requiring full markdown text.
+- [ ] Page raster previews are generated cleanly as PNG byte buffers for at most 5 sampled pages when requested.
+- [ ] Structural passing is explicitly documented as separate from visual/semantic correctness.
 - [ ] Implements `IPdfInspectionEngine` completely with zero Qt imports.
 
 ---
@@ -69,10 +72,12 @@ class PyMuPdfValidator(IPdfInspectionEngine):
 ### 5.1 Unit Tests
 - `tests/unit/test_pdf_validator.py`:
   - `test_valid_pdf_structural_inspection()`: Confirms clean report on valid sample PDF.
+  - `test_text_only_pdf_passes_without_drawings()`: Asserts text-only PDF passes with zero vector drawings.
+  - `test_expected_diagram_pages_drawing_verification()`: Asserts drawings are checked only on expected diagram pages.
   - `test_corrupt_pdf_hard_failure()`: Confirms `HARD_FAILURE` on truncated/corrupted PDF.
-  - `test_orphan_blank_page_detection()`: Confirms warning on blank trailing page.
-  - `test_vector_drawing_detection()`: Confirms drawings detected on TikZ test PDF.
-  - `test_raster_preview_generation()`: Confirms valid PNG bytes generated for sampled pages.
+  - `test_orphan_blank_page_detection()`: Confirms warning on blank trailing page without hard rejection.
+  - `test_text_anchor_extraction_verification()`: Confirms presence of expected text anchors.
+  - `test_raster_preview_generation_sampled_pages()`: Confirms valid PNG bytes generated for at most 5 sampled pages.
 
 ### 5.2 Negative & Security Tests
 - `test_decompression_bomb_mitigation()`: Limits maximum processed page count to 500 pages.

@@ -72,7 +72,7 @@ class PublicationStyleService:
    - User profile IDs are prefixed with `user:`.
 2. **Metadata Injection & Allowlist Validation:**
    - Maps profile tokens into Quarto metadata: `documentclass`, `fontsize`, `linestretch`, `papersize`, `geometry`, `number-sections`, `number-depth`, `toc`, `toc-depth`, `colorlinks`, `linkcolor`, `urlcolor`, `citecolor`.
-   - Translates `strikethrough_engine = "ulem"` into Quarto YAML / staging preamble configuration deterministically.
+   - Translates `strikethrough_engine = "ulem"` into Quarto YAML / staging preamble configuration deterministically, adhering to maintainer proposal `D-PROP-08` (Option A vs Option B; awaiting maintainer approval).
    - Passes the resulting dictionary through `normalize_quarto_pdf_metadata()` which validates every key against `ALLOWED_ROOT_KEYS_V1`.
 3. **Font Fallback Resolution:**
    - Verifies font availability using system font discovery. If a requested font is missing on the host machine, falls back gracefully to `FreeSerif` / `Vazirmatn` without failing compilation.

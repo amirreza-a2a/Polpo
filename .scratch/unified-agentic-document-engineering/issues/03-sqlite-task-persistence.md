@@ -37,11 +37,11 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
     plan_json TEXT,
     current_step_index INTEGER DEFAULT 0,
     total_steps INTEGER DEFAULT 0,
-    working_copy_id TEXT,
     failure_id TEXT,
     error_message TEXT,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
+    completed_at REAL,
     FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
 );
 
@@ -100,6 +100,11 @@ class IAgentTaskRepository(ABC):
     @abstractmethod
     def reconcile_interrupted_tasks(self) -> List[str]:
         pass
+
+    @abstractmethod
+    def purge_expired_tasks(self, retention_days: int = 30) -> int:
+        """Purges terminal tasks older than retention_days from completed_at."""
+        pass
 ```
 
 ---
@@ -108,15 +113,54 @@ class IAgentTaskRepository(ABC):
 
 1. **Migration Sequence (Finding I):**
    - The file MUST be named `006_agent_task_tables.sql` because existing migrations run through 005 (`005_pipeline2_source_version.sql`).
-2. **Journal Privacy Allowlist (Finding E):**
-   - The `metadata_json` column MUST be filtered against an allowlist before insertion:
-     Allowed keys: `task_id`, `step_index`, `event_type`, `recorded_at`, `duration_ms`, `tool_name`, `input_hash`, `output_hash`, `status`, `sanitized_error_category`, `consent_token_ref`, `approval_token_ref`, `summary`.
-   - Any attempt to persist keys matching `document_text`, `source`, `prompt`, `completion`, `api_key`, `secret` raises `JournalPrivacyViolationError`.
-   - Max size per entry: 8 KB. Tasks capped at 50 journal entries.
-3. **Conservative Startup Recovery (Finding D):**
-   - `reconcile_interrupted_tasks()` scans `agent_tasks` under `BEGIN IMMEDIATE` for active states (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `RUNNING`, `VALIDATING`, `PAUSED`).
-   - Updates their status to `TaskStatus.INTERRUPTED` with `error_message = "Task interrupted by application shutdown"`.
+2. **Complete Persistent-Data Privacy Boundary (Finding A):**
+   - **Default Policy:** Persist lifecycle metadata, not document content or unrestricted model context.
+   - **Field Audit & Policy Across All Tables:**
+
+   | Table | Field | Data Classification | Sensitive Content Possible? | Persistence Policy | Validation & Bounds | Retention |
+   | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+   | `agent_tasks` | `task_id` | System Identifier | No | Canonical primary key | UUID4 format check | 30 days from `completed_at` |
+   | `agent_tasks` | `job_id` | Foreign Key | No | References `jobs(id)` | Positive integer | Cascade with parent job |
+   | `agent_tasks` | `status` | State Enum | No | Current `TaskStatus` | Allowlisted enum | 30 days from `completed_at` |
+   | `agent_tasks` | `task_goal` | Lifecycle Label | **Yes** (if raw request stored) | **Short display label / classification only**. Never store raw user request when containing document fragments. | Sanitized string, max 256 chars | 30 days from `completed_at` |
+   | `agent_tasks` | `plan_json` | Structured Plan | **Yes** (if model emits raw text) | **Strictly validated safe plan schema only**. Allowlisted tool names and arguments; zero document text, prompts, completions, or secrets. | JSON schema validation against `AgentPlanSchema`, max 16 KB | 30 days from `completed_at` |
+   | `agent_tasks` | `current_step_index` | Execution Counter | No | Monotonic counter | `0 <= index <= total_steps` | 30 days from `completed_at` |
+   | `agent_tasks` | `total_steps` | Execution Bound | No | Bounded plan size | `0 <= steps <= 10` | 30 days from `completed_at` |
+   | `agent_tasks` | `working_copy_id` | Ephemeral Scratchpad ID | No | Opaque UUID referencing `.polpo/working_copies/{id}/` | UUID4 format; content ephemeral on disk | 30 days in DB; folder purged on task end |
+   | `agent_tasks` | `failure_id` | Ephemeral Diagnostic ID | No | Opaque UUID referencing `.polpo/staging_failures/{id}/` | UUID4 format; bundle managed by LRU | 30 days in DB; bundle pruned via LRU |
+   | `agent_tasks` | `error_message` | Bounded Diagnostic Category | **Yes** (if raw logs stored) | **Sanitized English error category or bounded summary**. Never store raw traces or paths. | Redacted by `TexLogSanitizer`, max 512 chars | 30 days from `completed_at` |
+   | `agent_tasks` | `created_at`, `updated_at` | Timestamps | No | Epoch modification times | Real/float >= 0 | 30 days from `completed_at` |
+   | `agent_tasks` | `completed_at` | Terminal Timestamp | No | Epoch terminal completion time; baseline for retention window | Real/float >= `created_at` (NULL for active tasks) | 30 days from `completed_at` |
+   | `agent_task_journal` | `entry_id` | Sequence ID | No | Auto-increment primary key | Positive integer | Cascade deleted with task |
+   | `agent_task_journal` | `task_id` | Foreign Key | No | References `agent_tasks(task_id)` | UUID4 with `ON DELETE CASCADE` | Cascade deleted with task |
+   | `agent_task_journal` | `step_index` | Execution Step | No | Step index in plan | Optional integer `0 <= step <= 10` | Cascade deleted with task |
+   | `agent_task_journal` | `event_type` | Audit Event Enum | No | Typed audit event | Allowlisted string enum | Cascade deleted with task |
+   | `agent_task_journal` | `recorded_at` | Timestamp | No | Microsecond epoch timestamp | Real/float >= 0 | Cascade deleted with task |
+   | `agent_task_journal` | `metadata_json` | Strictly Allowlisted Audit Record | **Yes** (if arbitrary keys allowed) | **Strict Allowlist only**. Max 8 KB per entry; max 50 entries per task. Plain content hashes prohibited. | Schema validation against `JournalMetadataAllowlist`, max 8 KB | Cascade deleted with task |
+   | `publication_style_profiles` | `profile_id` | Profile Identifier | No | Key (`builtin:{name}` or `user:{uuid}`) | String, max 64 chars, regex `^(builtin:[a-z0-9_-]+|user:[0-9a-f-]{36})$` | Permanent (built-in) / user-managed |
+   | `publication_style_profiles` | `display_name`, `description` | Presentation Meta | No | Human-readable title and summary | Strings (max 128 / 512 chars) | User-managed |
+   | `publication_style_profiles` | `schema_version`, `is_builtin` | Schema & Type | No | Version and immutability flag | Integers | User-managed |
+   | `publication_style_profiles` | `profile_json` | Declarative Profile Spec | **Yes** (if raw macros injected) | **Strictly validated declarative typesetting JSON**. Prohibit raw LaTeX macros, `header-includes`, shell commands, executable code. | Validated against `PublicationStyleProfileSchema`, max 16 KB | User-managed |
+   | `publication_style_profiles` | `created_at`, `updated_at` | Timestamps | No | Epoch modification times | Real/float >= 0 | User-managed |
+
+   - **Journal Allowlist Keys (`metadata_json`):** `task_id`, `step_index`, `event_type`, `recorded_at`, `duration_ms`, `tool_name`, `step_correlation_id` (opaque UUID; dictionary attack defense), `status`, `sanitized_error_category`, `consent_token_ref` (single-use UUID reference), `approval_token_ref` (single-use UUID reference), `summary` (generic non-sensitive status <= 256 chars; zero document text), `request_disposition`.
+   - **Persistence Denylist:** Complete user requests with source text, full Markdown drafts, working copies, prompts, completions, unvalidated plans, tool args with source text, unredacted compiler diagnostics, `document.tex`, local paths, credentials, unredacted exceptions.
+
+3. **Exhaustive Startup Recovery & Token Invalidation (Finding B):**
+   - `reconcile_interrupted_tasks()` scans `agent_tasks` under `BEGIN IMMEDIATE` across **all non-terminal states**: `CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`.
+   - Transitions matching tasks to `TaskStatus.INTERRUPTED` with `error_message = "Task interrupted by application shutdown"`.
+   - **Token Invalidation:** In-memory authorization tokens expire immediately on process shutdown; persisted journal references are non-reusable audit records. Old tokens cannot authorize subsequent operations upon restart.
+   - **Network Ambiguity:** In-flight network requests interrupted by restart are recorded as `REQUEST_OUTCOME_UNKNOWN`. Zero automated retries; explicit user confirmation required with potential duplicate billing disclosure.
    - Operation is idempotent and returns the list of reconciled `task_id`s.
+
+4. **Task Retention, Purging, and Deletion Semantics (Finding E):**
+   - **Retention Calculation:** 30-day retention calculated strictly from `completed_at` (terminal transition timestamp), NOT from task creation time.
+   - **Protected Active Tasks:** Active or awaiting tasks are never automatically purged.
+   - **Cascade Deletion:** SQLite `ON DELETE CASCADE` automatically purges `agent_task_journal` rows when `agent_tasks` records are deleted.
+   - **Two-Phase Idempotent Filesystem Cleanup:**
+     1. Unlink scratchpad directories (`.polpo/working_copies/{id}/`) and staging failure bundles (`.polpo/staging_failures/{id}/`) using `shutil.rmtree(..., ignore_errors=True)`.
+     2. Delete database records in a SQLite transaction (`BEGIN IMMEDIATE`) with bounded batch limits (`LIMIT 50`).
+     3. Startup reconciliation cleans orphan scratchpad directories whose `working_copy_id` is missing in `agent_tasks`.
 
 ---
 
@@ -125,8 +169,10 @@ class IAgentTaskRepository(ABC):
 - [ ] Migration applies cleanly via `SQLiteMigrationRunner` advancing schema version to 6.
 - [ ] Tasks can be saved, updated, and retrieved by `task_id` with plan steps preserved.
 - [ ] Journal entries append monotonically and reject payloads containing unallowed keys.
-- [ ] Active tasks in `RUNNING` status transition to `INTERRUPTED` upon calling `reconcile_interrupted_tasks()`.
-- [ ] No plaintext secrets or document texts found in stored JSON columns.
+- [ ] Every non-terminal status (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`) transitions to `INTERRUPTED` upon calling `reconcile_interrupted_tasks()`.
+- [ ] Stored `completed_at` timestamp is recorded upon terminal transition and used for 30-day retention calculations.
+- [ ] `purge_expired_tasks()` purges terminal tasks older than 30 days from `completed_at` and cascade-deletes journal records atomically.
+- [ ] Zero plaintext secrets or raw document texts found in stored database columns across `agent_tasks`, `agent_task_journal`, and `publication_style_profiles`.
 
 ---
 
@@ -137,10 +183,21 @@ class IAgentTaskRepository(ABC):
   - `test_migration_006_execution()`: Verifies migration creates tables and indices cleanly.
   - `test_save_and_get_agent_task()`: Round-trip test of `AgentTask` aggregate.
   - `test_journal_allowlist_filtering()`: Confirms non-allowlisted fields are rejected.
-  - `test_reconcile_interrupted_tasks()`: Simulates crash and verifies transition to `INTERRUPTED`.
+  - `test_reconcile_interrupted_tasks_all_states()`: Simulates crash and verifies all 10 non-terminal states transition to `INTERRUPTED`.
+  - `test_purge_expired_tasks_retention()`: Verifies 30-day retention calculated from `completed_at` deletes only expired terminal tasks.
+  - `test_cascade_delete_journal_rows()`: Asserts deleting an `agent_tasks` row atomically deletes all corresponding `agent_task_journal` rows.
 
-### 5.2 Negative & Security Tests
-- `test_reject_secret_leakage_in_journal()`: Verifies that passing credentials or document text raises `JournalPrivacyViolationError`.
+### 5.2 Negative & Security Tests (Verifying Stored Database Values)
+- `tests/integration/test_database_security_policies.py`:
+  - `test_reject_complete_markdown_in_tasks_and_journal()`: Asserts that attempting to persist full Markdown document text in `task_goal`, `metadata_json`, or any table column raises `JournalPrivacyViolationError` and zero document text exists in the database file.
+  - `test_reject_editor_draft_in_database()`: Verifies active in-memory draft buffers are never persisted into SQLite records.
+  - `test_reject_raw_prompt_and_completion_persistence()`: Verifies raw prompts and model completions are rejected and never appear in `agent_tasks.plan_json` or `agent_task_journal.metadata_json`.
+  - `test_reject_unredacted_compiler_diagnostics()`: Verifies compiler logs with local paths are rejected; only sanitized excerpts under 10 KB pass.
+  - `test_reject_api_credentials_persistence()`: Verifies raw API keys, tokens, or passwords raise `JournalPrivacyViolationError` and inspects actual SQLite records to verify zero credential substrings.
+  - `test_reject_sensitive_paths_persistence()`: Verifies local absolute paths (e.g. `/home/...`) are redacted and rejected in stored fields.
+  - `test_reject_oversized_free_text_metadata()`: Verifies `summary` > 256 chars or `metadata_json` > 8 KB is rejected.
+  - `test_reject_unvalidated_tool_arguments_in_plan()`: Verifies `plan_json` with unallowlisted keys or unvalidated tool arguments is rejected.
+  - `test_reject_malicious_style_profile_payload()`: Verifies TeX code injection (`\newcommand`, `\usepackage`, shell commands) in `profile_json` is rejected.
 
 ### 5.3 Concurrency & Persistence Considerations
 - Operations use worker-local SQLite connections with `BEGIN IMMEDIATE` and `PRAGMA busy_timeout = 5000;`.

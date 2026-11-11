@@ -49,46 +49,96 @@ While ADR-006 ([`docs/adr/2026-11-07-adr-006-ai-assisted-latex-repair.md`](docs/
 
 ### 5.1 Real Toolchain Empirical Investigation
 We evaluated the strikethrough failure mechanism using Polpo's real runtime toolchain:
-- **Environment:** Ubuntu 24.04 LTS
+- **Environment:** Ubuntu 24.04 LTS (x86_64, Linux 6.8)
 - **TeX Engine:** XeTeX 3.141592653-2.6-0.999995 (TeX Live 2023/Debian, kpathsea 6.3.5, ICU 74.2, HarfBuzz 8.3.0)
 - **Converter:** Pandoc 3.1.3 (compiled with Lua 5.4)
-- **Typesetting Setup:** `[bidi=default,provide=*]{babel}`, `\babelprovide[main,import]{persian}`, `\babelfont{rm}[Renderer=HarfBuzz,Script=Arabic]{Vazirmatn}`
+- **Quarto Baseline:** Quarto 1.9.38
+- **Typesetting Setup:** `[bidi=default,provide=*]{babel}`, `\babelprovide[main,import]{persian}`, `\babelfont{rm}[Renderer=HarfBuzz,Script=Arabic]{Vazirmatn}`, `resources/templates/polpo_preamble.tex`
 - **Installed Packages:** `soul.sty` (2023-06-14 v3.1, HO), `ulem.sty` (2019-11-18)
 
-### 5.2 Root Cause Analysis
-1. **Pandoc Behavior:** Pandoc translates Markdown `~~...~~` into `\st{...}` and automatically emits `\usepackage{soul}` under XeLaTeX.
-2. **Failure Mechanism in `soul`:** The `soul` package analyzes its arguments by tokenizing input character-by-character and reconstructing hyphenation/syllables through internal box placement (`\SOUL@...`). In a multilingual/bidi document environment:
-   - Pure Persian text (`\st{متن فارسی}`) actually compiles cleanly under `soul` v3.1! The previous claim that `soul` has an inherent incompatibility with Persian text was inaccurate.
+### 5.2 Pandoc 3.1.3 Template Behavior & Macro Ownership Collision
+1. **Pandoc Default LaTeX Template (`pandoc -D latex`):**
+   - Lines 293–303 contain the conditional package inclusion:
+     ```latex
+     $if(strikeout)$
+     $-- also used for underline
+     \ifLuaTeX
+       \usepackage{luacolor}
+       \usepackage[soul]{lua-ul}
+     \else
+       \usepackage{soul}
+     \fi
+     $endif$
+     ```
+   - Pandoc emits `\st{...}` for Markdown `~~...~~` and defines template variable `strikeout=true`.
+   - Under XeLaTeX (`\else` branch), Pandoc unconditionally emits `\usepackage{soul}`.
+   - Pandoc's template injects `$for(header-includes)$` later in the preamble (line 380).
+2. **The Macro Collision Hazard (Finding D):**
+   - When Pandoc loads `\usepackage{soul}`, `soul` defines `\st`.
+   - If a preamble or `header-includes` contains `\newcommand{\st}[1]{\sout{#1}}`, XeLaTeX immediately halts with:
+     ```text
+     ! LaTeX Error: Command \st already defined.
+                     Or name \end... illegal, see p.192 of the manual.
+     ```
+   - Therefore, a naive `\newcommand` is syntactically invalid. Any macro redefinition must use `\renewcommand{\st}[1]{\sout{#1}}` (or `\def\st{\sout}` / `\let\st\sout`), or must prevent Pandoc from emitting `\st` altogether via an AST filter.
+3. **Failure Mechanism of `soul` under Multilingual Babel/HarfBuzz:**
+   - The `soul` package analyzes its arguments by tokenizing input character-by-character and reconstructing hyphenation/syllables through internal box placement (`\SOUL@...`).
+   - In pure English text without Babel/bidi, `soul` compiles cleanly.
+   - Pure Persian text (`\st{متن فارسی}`) without language or font boundaries also compiles cleanly under `soul` v3.1.
    - However, `soul` crashes with `! Package soul Error: Reconstruction failed.` whenever:
-     - An inline language boundary occurs (e.g. English text within Persian main: `\st{متن English}`, `\st{\foreignlanguage{english}{text}}`).
+     - An inline language boundary or direction switch occurs (e.g. `\st{متن English}` or `\st{\foreignlanguage{english}{text}}`).
      - Font changes occur inside strikethrough (e.g. `\st{\textsf{دیگر}}`).
-     - Grouping / nested macros exist inside (e.g. `\st{\textbf{پررنگ}}`).
-3. **Behavior of `ulem`:** The `ulem` package provides `\sout{...}`, which operates at the line/word box level. Because it does not attempt syllable reconstruction, it tolerates font switches, direction changes, and nested commands cleanly.
-4. **Caveats of `ulem`:**
-   - Loading `\usepackage{ulem}` redefines `\emph` and `\em` to underline text! To avoid altering document emphasis, it MUST be loaded with `\usepackage[normalem]{ulem}`.
-   - Like `soul`, inline math inside `\sout{...}` must be placed inside `\mbox{$...$}`.
+     - Grouping or formatting macros exist inside (e.g. `\st{\textbf{پررنگ}}`).
+     - Inline math occurs inside (`\st{$x^2$}`).
+     - Moving arguments are used (headings `\section{\st{...}}`).
+4. **Behavior of `ulem`:**
+   - The `ulem` package provides `\sout{...}`, operating at the word/box level rather than reconstructing syllables. It tolerates language switches, font switches, and nested formatting cleanly.
+   - **Mandatory Caveats of `ulem`:**
+     - Must be loaded with `\usepackage[normalem]{ulem}` to prevent redefining `\emph` and `\em` to underline text.
+     - Inline math inside `\sout{...}` must be placed inside `\mbox{$...$}`.
+     - Headings require `\protect\sout` to survive moving arguments.
 
-### 5.3 Ten-Case Reproducible Regression Matrix
+### 5.3 Ten-Case Empirical Regression Matrix
 
 | # | Test Scenario | Input LaTeX | `soul` v3.1 Result | `ulem` (2019) Result | Controlled Alternative (Lua Filter / Preamble) |
 |---|---|---|---|---|---|
-| 1 | English strikethrough | `\st{English text}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{English text}` |
-| 2 | Persian strikethrough | `\st{متن فارسی}` | ✅ Passes (rc=0) | ✅ Passes (rc=0) | `\sout{متن فارسی}` |
+| 1 | English strikethrough (ambient Persian) | `\st{English text}` | ❌ Fails under Babel bidi | ✅ Passes (rc=0) | `\sout{English text}` |
+| 2 | Pure Persian strikethrough | `\st{متن فارسی}` | ✅ Passes (rc=0) | ✅ Passes (rc=0) | `\sout{متن فارسی}` |
 | 3 | Mixed Persian & English | `\st{متن فارسی English}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن فارسی English}` |
-| 4 | Nested braces & commands | `\st{متن \textbf{پررنگ}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن \textbf{پررنگ}}` |
+| 4 | Nested formatting macros | `\st{متن \textbf{پررنگ}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن \textbf{پررنگ}}` |
 | 5 | Font switch inside | `\st{\textsf{فونت دیگر}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{\textsf{فونت دیگر}}` |
 | 6 | Direction changes | `\st{\foreignlanguage{english}{LTR} متن}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{...}` handles LTR box |
-| 7 | Headings & list items | `\section{\st{عنوان}}`, `\item \st{مورد}` | ❌ Fails in moving argument | ✅ Passes with `\protect\sout` | Pandoc outputs robust nodes |
-| 8 | Inline math | `\st{قبل} $x^2$ \st{بعد}` vs `\st{$x^2$}` | ❌ Fails (`Missing $`) if math inside | ❌ Fails if unboxed | Lua filter boxes math `\mbox{$...$}` |
-| 9 | Quarto PDF Output | `~~متن نمونه~~` in Quarto QMD | ❌ Fails if mixed/nested | ✅ Passes with `ulem` override | Pandoc/Quarto clean build |
-| 10 | Exact installed versions | `soul` v3.1 vs `ulem` 2019-11-18 | Syllable reconstruction bug on switch | Stable word-box underline (`[normalem]`) | Version verified |
+| 7 | Headings & moving arguments | `\section{\st{عنوان}}`, `\item \st{مورد}` | ❌ Fails in moving argument | ✅ Passes with `\protect\sout` | Robust AST translation |
+| 8 | Inline math inside strikeout | `\st{قبل} $x^2$ \st{بعد}` vs `\st{$x^2$}` | ❌ Fails (`Missing $`) if math inside | ❌ Fails if unboxed | Boxed math: `\sout{\mbox{$x^2$}}` |
+| 9 | Quarto PDF Output | `~~متن نمونه~~` in Quarto QMD | ❌ Fails if mixed/nested | ✅ Passes with `ulem` override | Clean Quarto XeLaTeX PDF |
+| 10 | Exact installed versions | `soul` v3.1 vs `ulem` 2019-11-18 | Syllable reconstruction bug on switch | Stable word-box underline (`[normalem]`) | Pinned toolchain verified |
 
-### 5.4 Architectural Decision: Policy on LaTeX Preamble Overrides
-- **No Arbitrary AI Macro Injection:** The AI Agent is strictly prohibited from generating raw TeX macros (`\newcommand`, `\usepackage`) for preamble injection.
-- **Global Application Fix:** Polpo's application template (`resources/templates/polpo_preamble.tex`) will be updated in a future implementation ticket to load `\usepackage[normalem]{ulem}` and define `\newcommand{\st}[1]{\sout{#1}}` natively.
-- **User-Selectable Style Tokens:** If strikethrough engine customization is required at the document level, it must be represented via a typed allowlisted enum in `PublicationStyleProfile`:
-  `strikethrough_engine: "ulem" | "soul" | "default"`.
-- When diagnosing this error, the Agent recommends setting `strikethrough_engine = "ulem"` or files a product defect report.
+### 5.4 Proposed Decision D-PROP-08: Persian Strikethrough Engine Alternatives
+Status: `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`
+
+We evaluate two controlled architectural alternatives without arbitrary AI macro injection:
+
+- **Option A: Controlled Static ULEM Engine (`resources/templates/polpo_preamble.tex`)**
+  - Polpo's static preamble loads `\usepackage[normalem]{ulem}`.
+  - To safely handle Pandoc's template emission of `\usepackage{soul}` and `\st`, the preamble defines:
+    ```latex
+    \AtBeginDocument{%
+      \ifdef{\st}{%
+        \renewcommand{\st}[1]{\sout{#1}}%
+      }{%
+        \newcommand{\st}[1]{\sout{#1}}%
+      }%
+    }
+    ```
+  - Pros: Clean, purely template-owned, zero external filter files, works across all Quarto invocations.
+  - Cons: Requires `\AtBeginDocument` or `\renewcommand` to prevent macro collision with `soul`.
+- **Option B: Controlled Pandoc Lua AST Filter (`filters/strikethrough_ulem.lua`)**
+  - A small, deterministic Pandoc Lua filter intercepts `Strikeout` AST elements before Pandoc's LaTeX writer.
+  - Replaces `pandoc.Strikeout(inlines)` with raw LaTeX `\sout{...}`, preventing Pandoc from setting `strikeout=true` and preventing Pandoc from loading `soul` or emitting `\st`.
+  - Pros: Completely eliminates `soul` package inclusion and macro collisions; can automatically box inline math into `\mbox{$...$}` during AST traversal.
+  - Cons: Requires passing `--lua-filter` in Quarto render options and managing the filter file lifecycle.
+
+**Invariant:** Under both options, the AI Agent CANNOT generate or inject raw TeX macros. The Agent may only recommend setting the typed token `strikethrough_engine: "ulem"` in a `PublicationStyleProfile` or flag a product defect report. Neither option is implemented until the maintainer explicitly approves D-PROP-08.
 
 ---
 
@@ -151,14 +201,16 @@ class PdfValidationPolicy:
     max_pages: int = 500
     allowed_page_variance: float = 0.20
     expected_dimensions: Optional[Tuple[float, float]] = None
-    require_vector_drawings: bool = True
+    require_vector_drawings: bool = False
+    expected_diagram_pages: Set[int] = field(default_factory=set)
 
 @dataclass(frozen=True)
 class PdfInspectionRequest:
     pdf_path: Path
-    source_markdown: str
+    expected_text_anchors: List[str] = field(default_factory=list)
     policy: PdfValidationPolicy = field(default_factory=PdfValidationPolicy)
     baseline_pdf_path: Optional[Path] = None
+    expected_page_count_range: Optional[Tuple[int, int]] = None
     generate_raster_previews: bool = False
 
 @dataclass(frozen=True)
@@ -187,7 +239,7 @@ To balance local diagnostic needs with privacy, five distinct data representatio
 4. **AI Transmission Payload:** Minimal excerpt disclosed to the author in `LaTeXRepairConsentDialog`: only the failing TeX snippet (10 lines), mapped Markdown line, and sanitized compiler message.
 5. **Persistent Task Journal Metadata:** Only non-sensitive audit metadata (hashes, error category, timestamps) recorded in SQLite under migration 006.
 
-### 7.4 Multi-Tier Source Location Mapping
+### 7.4 Multi-Tier Source Location Mapping & Fail-Closed Classification (Finding C)
 
 Pandoc transforms Markdown into LaTeX non-linearly. The system uses a 4-tier mapping algorithm to locate the source coordinate:
 
@@ -211,23 +263,43 @@ flowchart TD
 - **`EXACT_TOKEN` (1.0):** Matches distinctive macro tokens (e.g. `\includegraphics{crop_abc123.png}`, `\begin{tikzpicture}`, `\label{eq:5}`).
 - **`CONTEXTUAL_MATCH` (0.7):** Matches a distinctive phrase surrounding the error, handling common Pandoc transforms (`~~text~~` $\to$ `\st{text}`).
 - **`SECTION_ANCHOR` (0.5):** Scans backward in `document.tex` to find the nearest `\section{...}` heading and maps to the Markdown `# ...` header.
-- **`UNKNOWN` (0.0):** When the error occurs in generated preamble or template code. **Invariant:** The Agent NEVER silently applies a patch when confidence is `UNKNOWN`. It explains the issue and requests user guidance.
+- **`UNKNOWN` (0.0): Fail-Closed Safety Invariant:** When an error cannot be mapped to a source coordinate with confidence, or when the error pattern is unclassified:
+  - `recommended_scope = None`
+  - `classification_confidence = 0.0`
+  - `requires_human_inspection = True`
+  - `automatic_patch_allowed = False`
+  - **The Agent NEVER automatically produces a Markdown patch or modifies documents when confidence is `UNKNOWN`.** The UI displays diagnostic logs directly and asks for human direction.
+- **Disentangling `PACKAGE_MISSING` from `YAML_METADATA`:**
+  - `PACKAGE_MISSING` (e.g. `! LaTeX Error: File 'tcolorbox.sty' not found`):
+    - Failure location: TeX compilation environment / preamble.
+    - Remediation target: `ENVIRONMENT_DEPENDENCY` (system package manager or TeX Live installation).
+    - Policy: The application NEVER silently alters document YAML to fake package presence or remove package references without explicit user direction.
 
-### 7.5 Structural PDF Inspection vs. Optional Visual Inspection (Finding H)
+### 7.5 Structural PDF Inspection vs. Source Preservation & Visual Checks (Finding F, Finding H)
 
-1. **Structural Inspection (PyMuPDF):**
-   - Header integrity (`%PDF-`), valid cross-reference table via `fitz.open()`.
+To eliminate false senses of correctness, PDF validation explicitly separates structural verification from visual quality and semantic correctness:
+
+1. **Structural Inspection (Deterministic PyMuPDF Object Checks):**
+   - Header integrity (`%PDF-`), valid xref table via `fitz.open()`.
    - Page count within variance of baseline ($\pm 20\%$).
    - Page dimensions match target format (A4: $595 \times 842 \pm 2$ pt).
-   - Text content preservation: plain text extracted via `page.get_text()` contains key Markdown anchors.
-   - Vector graphics presence: `page.get_drawings()` returns vector primitives on diagram pages.
+   - Text stream presence: extracted text character count > 0.
+   - Vector drawings: `require_vector_drawings = False` by default. Text-only documents pass cleanly without vector drawings. When `expected_diagram_pages` is non-empty, vector drawing counts are verified strictly on those designated pages.
    - Blank page detection: pages with $< 10$ characters of text and zero vector drawings are flagged.
-2. **Optional Visual Inspection (Raster Previews):**
-   - Generates 150 DPI PNG raster preview of sampled pages (first 3 pages + last page + failing pages).
+2. **Source-Preservation Checks:**
+   - Verifies that bounded `expected_text_anchors` extracted from key document sections appear in the PyMuPDF extracted text stream.
+3. **Optional Visual Inspection (Raster Previews):**
+   - Generates 150 DPI PNG raster previews of sampled pages (first 3 pages + last page + any flagged anomaly pages; maximum 5 pages total).
    - Memory bounded: max 50MB image memory buffer.
-   - Execution timeout: 5.0 seconds.
-3. **Realistic Performance Budget:**
-   - Structural checks: $< 1.5$ seconds for documents under 50 pages on standard desktop hardware (not an absolute 500ms guarantee).
+   - Execution timeout: 5.0 seconds with cooperative thread cancellation check.
+4. **Validation Severity Semantics:**
+   - `HARD_FAILURE`: Corrupt PDF structure, unopenable file, zero pages rendered. Results in `is_valid = False`.
+   - `WARNING`: Low text density, unexpected blank page, missing vector drawings on expected diagram page. Does NOT cause automatic validation rejection unless configured by explicit policy; surfaces in anomaly list for user review.
+   - `INFO`: Page dimensions, text character counts, drawing primitive metrics.
+5. **No Visual or Semantic Quality Guarantees:**
+   - `is_valid = True` proves ONLY that the PDF is structurally well-formed, openable, and non-empty. It does NOT guarantee visual beauty, mathematical accuracy, Persian RTL text correctness, or semantic fidelity.
+6. **Performance Budget:**
+   - Structural checks: $< 1.5$ seconds for documents under 50 pages on reference hardware (Ubuntu 24.04, Core i7/Ryzen 7). This is an empirical benchmark target, not an absolute real-time SLA.
 
 ---
 

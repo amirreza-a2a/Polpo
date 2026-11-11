@@ -30,19 +30,25 @@
 ```python
 class RepairScope(Enum):
     DOCUMENT_MARKUP = "DOCUMENT_MARKUP"        # Markdown syntax, LaTeX math, TikZ diagrams
-    YAML_METADATA = "YAML_METADATA"            # Front-matter options
+    YAML_METADATA = "YAML_METADATA"            # Front-matter options (geometry, lang)
     PUBLICATION_STYLE = "PUBLICATION_STYLE"    # Typed PublicationStyleProfile token adjustment
     PRODUCT_DEFECT_REPORT = "PRODUCT_DEFECT_REPORT" # Polpo template or engine issue
+    ENVIRONMENT_DEPENDENCY = "ENVIRONMENT_DEPENDENCY" # Missing TeX package / system font / binary
+    UNRESOLVED_DIAGNOSTIC = "UNRESOLVED_DIAGNOSTIC"   # Ambiguous or conflicting diagnostic evidence
 
 @dataclass(frozen=True)
 class ErrorClassificationResult:
     category: ErrorCategory
-    recommended_scope: RepairScope
+    recommended_scope: Optional[RepairScope]   # None when UNKNOWN or unresolved!
+    classification_confidence: float          # 0.0 when UNKNOWN
+    requires_human_inspection: bool            # True when UNKNOWN
+    automatic_patch_allowed: bool              # False when UNKNOWN
     suggested_action: str
-    target_identifier: Optional[str] = None     # Package name, font name, or profile key
+    target_identifier: Optional[str] = None    # Package name, font name, or profile key
+    explanation: str = ""
 ```
 
-### 2.2 Foundation PDF Inspection Port Contracts (Finding B)
+### 2.2 Foundation PDF Inspection Port Contracts (Finding B, Finding F)
 ```python
 # Defined in application/ports/pdf_validator_port.py and application/dto/pdf_inspection_dto.py
 
@@ -70,14 +76,16 @@ class PdfValidationPolicy:
     max_pages: int = 500
     allowed_page_variance: float = 0.20
     expected_dimensions: Optional[Tuple[float, float]] = None
-    require_vector_drawings: bool = True
+    require_vector_drawings: bool = False      # Default False: text-only PDFs pass cleanly
+    expected_diagram_pages: Set[int] = field(default_factory=set)
 
 @dataclass(frozen=True)
 class PdfInspectionRequest:
     pdf_path: Path
-    source_markdown: str
+    expected_text_anchors: List[str] = field(default_factory=list) # Minimized text anchors
     policy: PdfValidationPolicy = field(default_factory=PdfValidationPolicy)
     baseline_pdf_path: Optional[Path] = None
+    expected_page_count_range: Optional[Tuple[int, int]] = None
     generate_raster_previews: bool = False
 
 @dataclass(frozen=True)
@@ -85,7 +93,7 @@ class PdfInspectionResult:
     is_valid: bool
     page_summary: PdfPageSummary
     anomalies: List[PdfVisualAnomaly]
-    raster_previews: List[bytes]
+    raster_previews: List[bytes]               # 150 DPI PNG byte buffers if requested
 
 class IPdfInspectionEngine(ABC):
     @abstractmethod
@@ -99,26 +107,39 @@ class IPdfInspectionEngine(ABC):
 ## 3. Detailed Implementation Requirements
 
 1. **Deterministic Classifier Rules (`PdfDiagnosticService.classify_error`):**
-   - `PACKAGE_MISSING`: Matches `! LaTeX Error: File '...sty' not found`. Returns `recommended_scope = YAML_METADATA` (package installation).
-   - `FONT_MISSING`: Matches `fontspec error: "cannot-find-font"`. Returns `recommended_scope = PUBLICATION_STYLE`.
-   - `TEMPLATE_CONFLICT` (Finding A): Matches `Package soul Error: Reconstruction failed.`. Returns `recommended_scope = PUBLICATION_STYLE` with `suggested_action = "set_strikethrough_engine_ulem"` and flags `PRODUCT_DEFECT_REPORT`.
+   - `PACKAGE_MISSING`: Matches `! LaTeX Error: File '...sty' not found`. Returns `recommended_scope = ENVIRONMENT_DEPENDENCY` with failure location in TeX compilation environment/preamble. Action: Prompt user to install package via TinyTeX or system package manager. Prohibits faking or altering front-matter YAML.
+   - `FONT_MISSING`: Matches `fontspec error: "cannot-find-font"`. Returns `recommended_scope = PUBLICATION_STYLE` with `suggested_action = "fallback_standard_font"`.
+   - `TEMPLATE_CONFLICT` (Finding A, Finding D): Matches `Package soul Error: Reconstruction failed.`. Returns `recommended_scope = PUBLICATION_STYLE` with `suggested_action = "set_strikethrough_engine_ulem"` and flags `PRODUCT_DEFECT_REPORT`.
    - `SOURCE_SYNTAX`: Matches `! Undefined control sequence`, `! Missing $ inserted`, `! Extra }`. Returns `recommended_scope = DOCUMENT_MARKUP`.
    - `PANDOC_TRANSFORM`: Matches `pandoc: ...` errors. Returns `recommended_scope = DOCUMENT_MARKUP`.
    - `PRODUCT_DEFECT`: Matches errors inside `polpo_preamble.tex` primitives. Returns `recommended_scope = PRODUCT_DEFECT_REPORT`.
-2. **Foundation Inspection Contract Ownership (Finding B):**
+   - `UNKNOWN` (Finding C): Matches unclassified or ambiguous compiler output. Returns:
+     ```python
+     recommended_scope = None
+     classification_confidence = 0.0
+     requires_human_inspection = True
+     automatic_patch_allowed = False
+     suggested_action = "human_inspection_required"
+     ```
+     **Invariant:** An unknown error NEVER produces an automatic Markdown patch.
+2. **Foundation Inspection Contract Ownership (Finding B, Finding F):**
    - Places `IPdfInspectionEngine`, `PdfInspectionRequest`, and `PdfInspectionResult` in `application/ports/pdf_validator_port.py` and `application/dto/pdf_inspection_dto.py`.
+   - `require_vector_drawings = False` by default: text-only documents are structurally valid without drawings. Drawings are required only when `expected_diagram_pages` is non-empty.
+   - `PdfInspectionRequest` accepts bounded text anchors (`expected_text_anchors`), completely eliminating full `source_markdown` transmission into the inspection port.
    - This decouples repair orchestration (`TICK-ADE-11`) from PyMuPDF implementation (`TICK-ADE-12`).
 
 ---
 
 ## 4. Acceptance Criteria
 
-- [ ] Missing `.sty` errors classified as `PACKAGE_MISSING` and routed to package recovery.
-- [ ] Missing font errors classified as `FONT_MISSING`.
+- [ ] Missing `.sty` errors classified as `PACKAGE_MISSING` and routed to `ENVIRONMENT_DEPENDENCY` (not `YAML_METADATA`).
+- [ ] Missing font errors classified as `FONT_MISSING` and routed to `PUBLICATION_STYLE`.
 - [ ] `Package soul Error: Reconstruction failed.` classified as `TEMPLATE_CONFLICT` recommending typed style token `strikethrough_engine = "ulem"`.
+- [ ] Unknown or unmatched errors produce `recommended_scope = None`, `confidence = 0.0`, `requires_human_inspection = True`, and `automatic_patch_allowed = False`.
+- [ ] `IPdfInspectionEngine` default `require_vector_drawings = False` ensures text-only PDFs pass structural validation.
+- [ ] `PdfInspectionRequest` does not require or accept full `source_markdown`.
 - [ ] Preamble macro definition errors classified as `PRODUCT_DEFECT_REPORT`.
 - [ ] `IPdfInspectionEngine` port and DTO contracts are fully defined and importable in `application/ports/`.
-- [ ] Output provides unambiguous `recommended_scope` preventing destructive edits to author Markdown.
 
 ---
 
@@ -126,10 +147,13 @@ class IPdfInspectionEngine(ABC):
 
 ### 5.1 Unit Tests
 - `tests/unit/test_error_classifier.py`:
+  - `test_categorize_unknown_error_produces_none_scope_and_zero_confidence()`: Verifies unclassified compiler output produces `recommended_scope = None` and `automatic_patch_allowed = False`.
+  - `test_categorize_missing_package_routes_to_environment_dependency()`: Verifies `.sty` missing routes to `ENVIRONMENT_DEPENDENCY`.
   - `test_categorize_soul_reconstruction_failure()`: Mandatory verification of the RTL strikethrough error.
-  - `test_categorize_missing_packages_and_fonts()`: Verifies regex matching.
+  - `test_categorize_missing_fonts()`: Verifies fontspec error matching.
   - `test_categorize_source_syntax_errors()`: Verifies broken formula classification.
   - `test_scope_separation_enforcement()`: Confirms product defects do not recommend document edits.
+  - `test_conflicting_classification_evidence()`: Verifies ambiguous diagnostics return `recommended_scope = None`.
 
 ### 5.2 Negative & Security Tests
 - `test_prevent_classifier_redos()`: Asserts regex execution completes in $< 5$ms on large compiler logs.
@@ -141,7 +165,7 @@ class IPdfInspectionEngine(ABC):
 
 ## 6. Error and Recovery Behavior
 
-- Unmatched errors default safely to `ErrorCategory.UNKNOWN` with `recommended_scope = DOCUMENT_MARKUP` for human inspection.
+- Unmatched or ambiguous errors default strictly to `ErrorCategory.UNKNOWN` with `recommended_scope = None`, `classification_confidence = 0.0`, `requires_human_inspection = True`, and `automatic_patch_allowed = False`. Under no circumstances may an unknown error trigger automatic document modifications.
 
 ---
 

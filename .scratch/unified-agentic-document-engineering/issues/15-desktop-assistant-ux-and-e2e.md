@@ -93,8 +93,11 @@ class AgentController(QObject):
    - Background tasks (Quarto compilation, AI HTTP requests, PDF rasterization) execute on `QThreadPool.globalInstance()`.
    - Results are communicated back to `AgentController` via Qt signals with queued connections (`Qt.QueuedConnection`).
    - The GUI thread remains 100% responsive without frame drops.
-2. **Dependency Wiring (Finding B):**
+2. **Dependency Wiring & Recovery Presentation (Finding B):**
    - Composition root wires concrete `PyMuPdfValidator` (from `TICK-ADE-12`) into `PdfRepairService` (from `TICK-ADE-11`).
+   - If startup recovery transitions tasks to `INTERRUPTED`, `AgentController` exposes an interrupted task notification banner in `AssistantDock.qml`.
+   - Any prior authorization tokens are strictly invalidated; the UI requires fresh plan formulation or task dismissal.
+   - For tasks with `REQUEST_OUTCOME_UNKNOWN`, the UI displays an explicit warning modal highlighting potential duplicate billing and prompts the user to manually trigger a new attempt or dismiss the task.
 3. **End-to-End Acceptance Suite:**
    - Implements `tests/acceptance/test_agentic_document_engineering_e2e.py` testing the complete lifecycle:
      User request $\to$ Plan generation $\to$ Plan approval $\to$ Tool execution $\to$ Scratchpad candidate recompilation $\to$ PyMuPDF validation $\to$ Diff presentation $\to$ User adoption $\to$ Editor buffer update $\to$ OCC Save.
@@ -110,6 +113,7 @@ class AgentController(QObject):
 - [ ] Pre-transmission consent modal appears before external AI requests.
 - [ ] Candidate PDF preview renders side-by-side with original document pages.
 - [ ] Clicking "Apply Changes" updates the editor buffer, marks it dirty, and allows standard `Ctrl+Z` undo.
+- [ ] Startup recovery cleanly presents `INTERRUPTED` task banners; stale tokens cannot authorize actions; unknown network outcomes display billing disclosure warning.
 - [ ] End-to-end acceptance test passes offscreen via `QQuickView.grabWindow()`.
 
 ---

@@ -93,49 +93,57 @@ Infrastructure Adapters (infrastructure/)
 
 ## 3. External Technical Research & Standards Verification
 
-### 3.1 Persian RTL Strikethrough Investigation: `soul` vs. `ulem` (Finding A)
+### 3.1 Persian RTL Strikethrough Investigation: `soul` vs. `ulem` & Pandoc Macro Ownership (Finding A, Finding D)
 - **Primary Sources:**
   - TeX Live 2023 CTAN: *The `soul` package: Hyphenation for letterspacing, underlining, and striking out* (HO, v3.1, 2023-06-14)
   - CTAN: *The `ulem` package: Package for underlining and strikethrough* (Donald Arseneau, 2019-11-18)
   - LaTeX Project / Babel Documentation: *Babel bilingual and multilingual documents* (Javier Bezos)
-  - Pandoc 3.1.3 Default LaTeX Template
-- **Empirical Findings on Host Toolchain (Ubuntu 24.04, TeX Live 2023, XeLaTeX, Pandoc 3.1.3):**
-  1. Pandoc translates `~~strikethrough~~` into `\st{strikethrough}` and loads `\usepackage{soul}` under XeLaTeX.
-  2. `soul` examines arguments token-by-token and rebuilds hyphenation registers through `\SOUL@...` boxes.
-  3. **Disproved Assumption:** The previous assumption that `soul` is inherently incompatible with Persian text was disproved. Under `soul` v3.1, pure Persian text (`\st{متن فارسی}`) compiles with exit code 0!
-  4. **Proven Failure Condition:** `soul` crashes with `! Package soul Error: Reconstruction failed.` when:
-     - An inline language boundary occurs within the strikethrough fragment (e.g. `\st{متن English}`, `\st{\foreignlanguage{english}{text}}`).
+  - Pandoc 3.1.3 Default LaTeX Template (`pandoc -D latex`)
+- **Empirical Findings on Host Toolchain (Ubuntu 24.04 LTS, TeX Live 2023, XeLaTeX, Pandoc 3.1.3, Quarto 1.9.38):**
+  1. **Pandoc Template Sequence:** In Pandoc 3.1.3's default LaTeX template, lines 293–303 load `\usepackage{soul}` when `strikeout` is true under XeLaTeX. Pandoc emits `\st{...}` for `~~...~~`.
+  2. **The Macro Definition Collision Hazard:** Pandoc injects `$for(header-includes)$` at line 380, *after* `\usepackage{soul}`. Because `soul` defines `\st`, any attempt to define `\newcommand{\st}[1]{\sout{#1}}` in `header-includes` or preamble fails with:
+     `! LaTeX Error: Command \st already defined.`
+     Redefining `\st` safely requires either `\renewcommand{\st}[1]{\sout{#1}}` in a controlled preamble hook (Option A) or intercepting the AST with a Pandoc Lua filter before LaTeX generation so Pandoc never emits `\st` or loads `soul` (Option B).
+  3. **Disproved Assumption:** The assumption that `soul` is inherently incompatible with any Persian text was disproved. Under `soul` v3.1, pure Persian text (`\st{متن فارسی}`) without font or language switches compiles with exit code 0!
+  4. **Proven Failure Conditions in `soul`:** `soul` crashes with `! Package soul Error: Reconstruction failed.` whenever:
+     - An inline language boundary or direction switch occurs within the strikethrough fragment (e.g. `\st{متن English}` or `\st{\foreignlanguage{english}{text}}`).
      - Font changes occur inside strikethrough (e.g. `\st{\textsf{دیگر}}`).
-     - Nested macros exist without explicit boxing (`\st{\textbf{پررنگ}}`).
-  5. **`ulem` Behavior:** `ulem`'s `\sout{...}` operates at the line/word box level without syllable tokenization, handling language and font switches cleanly. However, `ulem` MUST be loaded with `\usepackage[normalem]{ulem}` to prevent hijacking `\emph`, and inline math must be wrapped in `\mbox{$...$}`.
+     - Nested formatting macros exist without explicit boxing (`\st{\textbf{پررنگ}}`).
+     - Inline math occurs inside (`\st{$x^2$}`).
+     - Moving arguments are used (headings `\section{\st{...}}`).
+  5. **`ulem` Behavior:** `ulem`'s `\sout{...}` operates at the line/word box level without syllable tokenization, handling language and font switches cleanly. However, `ulem` MUST be loaded with `\usepackage[normalem]{ulem}` to prevent hijacking `\emph`, inline math must be wrapped in `\mbox{$...$}`, and moving arguments require `\protect\sout`.
 - **10-Case Reproducible Regression Matrix:**
 
   | # | Test Scenario | Input LaTeX | `soul` v3.1 Result | `ulem` (2019) Result | Controlled Alternative (Lua Filter / Preamble) |
   |---|---|---|---|---|---|
-  | 1 | English strikethrough | `\st{English text}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{English text}` |
-  | 2 | Persian strikethrough | `\st{متن فارسی}` | ✅ Passes (rc=0) | ✅ Passes (rc=0) | `\sout{متن فارسی}` |
+  | 1 | English strikethrough (ambient Persian) | `\st{English text}` | ❌ Fails under Babel bidi | ✅ Passes (rc=0) | `\sout{English text}` |
+  | 2 | Pure Persian strikethrough | `\st{متن فارسی}` | ✅ Passes (rc=0) | ✅ Passes (rc=0) | `\sout{متن فارسی}` |
   | 3 | Mixed Persian & English | `\st{متن فارسی English}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن فارسی English}` |
-  | 4 | Nested braces & commands | `\st{متن \textbf{پررنگ}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن \textbf{پررنگ}}` |
+  | 4 | Nested formatting macros | `\st{متن \textbf{پررنگ}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن \textbf{پررنگ}}` |
   | 5 | Font switch inside | `\st{\textsf{فونت دیگر}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{\textsf{فونت دیگر}}` |
   | 6 | Direction changes | `\st{\foreignlanguage{english}{LTR} متن}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{...}` handles LTR box |
-  | 7 | Headings & list items | `\section{\st{عنوان}}`, `\item \st{مورد}` | ❌ Fails in moving argument | ✅ Passes with `\protect\sout` | Pandoc outputs robust nodes |
-  | 8 | Inline math | `\st{قبل} $x^2$ \st{بعد}` vs `\st{$x^2$}` | ❌ Fails (`Missing $`) if math inside | ❌ Fails if unboxed | Lua filter boxes math `\mbox{$...$}` |
-  | 9 | Quarto PDF Output | `~~متن نمونه~~` in Quarto QMD | ❌ Fails if mixed/nested | ✅ Passes with `ulem` override | Pandoc/Quarto clean build |
-  | 10 | Exact installed versions | `soul` v3.1 vs `ulem` 2019-11-18 | Syllable reconstruction bug on switch | Stable word-box underline (`[normalem]`) | Version verified |
-- **Architectural Policy:** Zero arbitrary AI-generated macro injection into preambles. Global template fix in `polpo_preamble.tex`; document style options exposed strictly as typed tokens (`strikethrough_engine: "ulem"`).
+  | 7 | Headings & moving arguments | `\section{\st{عنوان}}`, `\item \st{مورد}` | ❌ Fails in moving argument | ✅ Passes with `\protect\sout` | Robust AST translation |
+  | 8 | Inline math inside strikeout | `\st{قبل} $x^2$ \st{بعد}` vs `\st{$x^2$}` | ❌ Fails (`Missing $`) if math inside | ❌ Fails if unboxed | Boxed math: `\sout{\mbox{$x^2$}}` |
+  | 9 | Quarto PDF Output | `~~متن نمونه~~` in Quarto QMD | ❌ Fails if mixed/nested | ✅ Passes with `ulem` override | Clean Quarto XeLaTeX PDF |
+  | 10 | Exact installed versions | `soul` v3.1 vs `ulem` 2019-11-18 | Syllable reconstruction bug on switch | Stable word-box underline (`[normalem]`) | Pinned toolchain verified |
 
-### 3.2 PDF Quality Inspection & Structural vs. Visual Separation (Finding H)
+- **Architectural Policy:** Zero arbitrary AI-generated macro injection into preambles. Document style options exposed strictly as typed tokens (`strikethrough_engine: "ulem"`). Decision `D-PROP-08` remains `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`.
+
+### 3.2 PDF Quality Inspection & Structural vs. Visual Separation (Finding F, Finding H)
 - **Primary Sources:**
   - PyMuPDF Documentation: *Document, Page, and Rect API* ([https://pymupdf.readthedocs.io/](https://pymupdf.readthedocs.io/))
 - **Findings:**
   A successful exit code from XeLaTeX (`returncode == 0`) does NOT prove document correctness. Common silent failures include:
   1. Overfull `\hbox` creating text overflowing off the page margin.
-  2. Accidental page-count explosion (e.g. unconstrained TikZ diagrams or oversized images pushing content onto blank trailing pages).
-  3. Corrupted font glyphs (empty squares or missing characters when a font lacks glyph coverage).
-  4. Missing vector graphics.
-- **Structural vs Visual Separation:**
-  - Fast structural inspection via PyMuPDF object models (`fitz.open()`, `doc.page_count`, `page.rect`, `page.get_text()`, `page.get_drawings()`) runs in $< 1.5$ seconds for documents under 50 pages.
-  - Optional visual inspection generates 150 DPI raster preview PNGs with strict memory limits (50MB) and page sampling.
+  2. Accidental page-count explosion (e.g. unconstrained TikZ diagrams pushing content onto blank trailing pages).
+  3. Corrupted font glyphs (missing characters when a font lacks glyph coverage).
+  4. Missing vector graphics on diagram pages.
+- **Structural vs Visual Separation & Contract Minimization:**
+  - Fast structural inspection via PyMuPDF object models (`fitz.open()`, `doc.page_count`, `page.rect`, `page.get_text()`, `page.get_drawings()`) runs in $< 1.5$ seconds for documents under 50 pages on reference hardware.
+  - **Vector Drawing Default:** `require_vector_drawings = False` by default. Text-only PDFs must not fail validation. Vector presence is asserted only on explicitly designated `expected_diagram_pages`.
+  - **Input Minimization:** The inspection request does NOT accept full `source_markdown: str`. It accepts bounded `expected_text_anchors: List[str]` and structural geometry expectations.
+  - **No Quality Guarantee Invariant:** Structural passing (`is_valid = True`) does NOT guarantee visual beauty, mathematical accuracy, Persian RTL text correctness, or semantic fidelity.
+  - Optional visual inspection generates 150 DPI raster preview PNGs with strict memory limits (50MB), page sampling (max 5 pages), and a 5.0-second execution timeout.
 
 ### 3.3 PySide6 / Qt Concurrency & GUI Responsiveness
 - **Primary Sources:**
@@ -201,19 +209,33 @@ In accordance with Clean Architecture and Domain-Driven Design, the following te
 
 ## 5. Decision Register
 
-| Decision | Selected option | Evidence | ADR | Tickets | Status |
+### 5.1 Confirmed Maintainer Directives
+
+| Decision | Selected Option | Evidence | ADR | Tickets | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **D-USER-01** (Unified Assistant Scope) | Single unified desktop AI assistant coordinating all document engineering tools through a shared state machine and tool registry. | Clean Architecture desktop-first rules ([`AGENTS.md`](AGENTS.md)); shared UX, unified settings, and reusable orchestrator. | [ADR-007](docs/adr/2026-11-09-adr-007-unified-agent-orchestration-and-tool-governance.md) | `TICK-ADE-01`, `TICK-ADE-04`, `TICK-ADE-15` | Confirmed (Directive) |
 | **D-USER-02** (Supervised Agent Autonomy) | Supervised autonomy: autonomous plan generation and scratchpad experimentation gated by explicit plan approval, pre-transmission consent, high-risk approval, and interactive patch review before editor adoption. | Prevents unconsented data egress and silent canonical commits; ensures author maintains continuous control over document evolution. | [ADR-007](docs/adr/2026-11-09-adr-007-unified-agent-orchestration-and-tool-governance.md) | `TICK-ADE-01`, `TICK-ADE-02`, `TICK-ADE-04`, `TICK-ADE-15` | Confirmed (Directive) |
 | **D-USER-03** (Document vs System Repair) | Strict taxonomy separating document markup fixes, YAML metadata choices, publication style tokens, and product defect reports; absolute prohibition on AI macro generation. | Empirical root cause analysis of Pandoc/XeLaTeX preambles; prevents masking product-level template defects with brittle document hacks; protects global preambles against accidental corruption. | [ADR-009](docs/adr/2026-11-09-adr-009-quarto-export-failure-diagnostics-and-ai-pdf-repair.md) | `TICK-ADE-10`, `TICK-ADE-11` | Confirmed (Directive) |
-| **D-PROP-01** (Tool Invocation Strategy) | Provider-neutral structured JSON schema planning via `RateLimitedAIExecutor` rather than vendor-native tool calling SDKs. | Enforces Clean Architecture isolation ([`AGENTS.md`](AGENTS.md) Rule 6.2); avoids vendor lock-in; ensures fallback across all configured providers. | [ADR-007](docs/adr/2026-11-09-adr-007-unified-agent-orchestration-and-tool-governance.md) | `TICK-ADE-02`, `TICK-ADE-04` | Proposed (Recommended) |
-| **D-PROP-02** (Working Copy & Snapshot) | `TaskInputSnapshot` freezes active editor draft; `AgentWorkingCopy` scratchpad tracks changes with three-way conflict handling and contextual `PatchAnchor` hashing. | Prevents stale canonical disk reads; protects uncommitted user typing, undo stack, and OCC invariants; zero silent disk writes. | [ADR-008](docs/adr/2026-11-09-adr-008-agent-working-copy-patch-and-occ-safety.md) | `TICK-ADE-05`, `TICK-ADE-06`, `TICK-ADE-07` | Proposed (Recommended) |
-| **D-PROP-03** (Staging Failure Retention) | Extract structured `DiagnosticBundle` (bounded logs + intermediate `document.tex` excerpt) before purging ephemeral staging directory. | Staging directories are deleted in `finally: shutil.rmtree()`; without pre-purge capture, `document.tex` error coordinates are permanently lost. | [ADR-009](docs/adr/2026-11-09-adr-009-quarto-export-failure-diagnostics-and-ai-pdf-repair.md) | `TICK-ADE-08` | Proposed (Recommended) |
-| **D-PROP-04** (Source Mapping Strategy) | Multi-tier source location mapper (`EXACT_TOKEN` $\to$ `CONTEXTUAL_MATCH` $\to$ `SECTION_ANCHOR` $\to$ `UNKNOWN`); ambiguous `UNKNOWN` halts automated patching. | Pandoc transforms Markdown into LaTeX non-linearly (e.g. `~~...~~` $\to$ `\st{...}`); naive line number translation points to wrong source coordinates. | [ADR-009](docs/adr/2026-11-09-adr-009-quarto-export-failure-diagnostics-and-ai-pdf-repair.md) | `TICK-ADE-09`, `TICK-ADE-10` | Proposed (Recommended) |
-| **D-PROP-05** (Publication Style System) | Four distinct visual identity scopes; strictly typed schema without raw TeX; built-in immutable JSON assets in `resources/styles/` with SQLite user overrides under migration `006_agent_task_tables.sql`. | Prevents arbitrary LaTeX macro injection; guarantees cross-platform reproducibility and clean font fallback. | [ADR-010](docs/adr/2026-11-09-adr-010-publication-style-profile-system.md) | `TICK-ADE-13`, `TICK-ADE-14` | Proposed (Recommended) |
-| **D-PROP-06** (Persistence & Recovery Model) | Dedicated SQLite tables in `polpot.db` under migration `006_agent_task_tables.sql`; strict privacy allowlist (no document text/credentials); active tasks transition to `INTERRUPTED` on startup; no automated replay on `OUTCOME_UNKNOWN`. | Prevents duplicate API billing and privacy violations in SQLite journal; ensures crash recovery without background side effects. | [ADR-007](docs/adr/2026-11-09-adr-007-unified-agent-orchestration-and-tool-governance.md) | `TICK-ADE-01`, `TICK-ADE-03` | Proposed (Recommended) |
-| **D-PROP-07** (Inspection Port Ownership) | Decouple `IPdfInspectionEngine` foundational port into `application/ports/` before repair orchestrator (`TICK-ADE-10`); mock doubles in `TICK-ADE-11`; PyMuPDF implementation in `TICK-ADE-12`. | Resolves circular interface dependency; ensures DAG is 100% acyclic and topologically executable. | [ADR-009](docs/adr/2026-11-09-adr-009-quarto-export-failure-diagnostics-and-ai-pdf-repair.md) | `TICK-ADE-10`, `TICK-ADE-11`, `TICK-ADE-12` | Proposed (Recommended) |
-| **D-PROP-08** (Persian RTL Strikethrough Engine) | Static engine selection using `ulem` (`[normalem]` and boxed math) for Persian RTL documents; zero arbitrary AI macro injection into preambles. | Empirical 10-case regression matrix on Ubuntu 24.04 (XeLaTeX, Pandoc 3.1.3, `soul` v3.1 fails on language/font/group boundaries while `ulem` passes). | [ADR-009](docs/adr/2026-11-09-adr-009-quarto-export-failure-diagnostics-and-ai-pdf-repair.md) | `TICK-ADE-10`, `TICK-ADE-14` | Proposed (Recommended) |
+
+### 5.2 Four Open Architectural Decisions (Awaiting Explicit Maintainer Approval)
+
+All four decisions below remain explicitly unresolved and require formal maintainer sign-off. Neither option has been adopted as an irrevocable architectural fact.
+
+| Decision ID | Decision Statement | Option A | Option B | Recommendation | Evidence | Affected ADR | Affected Tickets | Implementation Consequence | Status | Maintainer Approval |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **`D-PROP-01`** | **Tool Invocation Strategy:** How should the orchestrator structure tool execution requests across heterogeneous AI providers? | **Option A:** Provider-neutral structured JSON planning via existing `RateLimitedAIExecutor`. | **Option B:** Provider-native function calling encapsulated inside infrastructure adapters. | **Option A** (Recommended for provider portability & fallback simplicity, but Option B is architecturally viable within infrastructure). | Zero vendor SDK coupling in application layer; works uniformly across Gemini, OpenAI, Anthropic, and custom endpoints without adapter drift. | [ADR-007](docs/adr/2026-11-09-adr-007-unified-agent-orchestration-and-tool-governance.md) | `TICK-ADE-02`, `TICK-ADE-04` | Option A requires JSON schema prompt engineering; Option B requires per-provider function-call mapping in `infrastructure/ai/`. | `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL` | PENDING |
+| **`D-PROP-02`** | **Task Persistence Architecture:** Where and how should Agent task state, execution history, and journals be persisted? | **Option A:** Dedicated tables (`agent_tasks`, `agent_task_journal`, `publication_style_profiles`) in canonical `polpot.db` under Migration 006. | **Option B:** Separate SQLite database (`agent_tasks.db`) decoupled from main application database. | **Option A** (Recommended for transactional foreign key integrity with `jobs(id)` and unified backup/migration runner). | Preserves SQLite WAL concurrency; leverages existing `SQLiteMigrationRunner`; enforces `ON DELETE CASCADE` when parent jobs are deleted. | [ADR-007](docs/adr/2026-11-09-adr-007-unified-agent-orchestration-and-tool-governance.md) | `TICK-ADE-01`, `TICK-ADE-03` | Option A integrates with migration 006; Option B requires dual-database connection management and cross-database referential integrity checks. | `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL` | PENDING |
+| **`D-PROP-06`** | **Publication Profile Packaging & Storage:** How should standard publication style profiles be stored, versioned, and customized? | **Option A:** Version-controlled built-in JSON assets in `resources/styles/` plus SQLite storage for user-customized overrides. | **Option B:** Database-seeded built-ins inserted directly into SQLite `publication_style_profiles` during migration. | **Option A** (Recommended for immutable git versioning of default styles and clean separation of user customizations). | Built-in profiles cannot be corrupted or accidentally edited; user overrides take precedence by UUID/key; migrations remain simple. | [ADR-010](docs/adr/2026-11-09-adr-010-publication-style-profile-system.md) | `TICK-ADE-13`, `TICK-ADE-14` | Option A requires a file-loader asset resolver in `PublicationStyleService`; Option B requires database seeding logic in migration scripts. | `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL` | PENDING |
+| **`D-PROP-08`** | **Persian RTL Strikethrough Engine:** How should strikethrough typography in bilingual Persian/RTL documents be reconciled with Pandoc and XeLaTeX? | **Option A:** Controlled static ULEM engine in `polpo_preamble.tex` with `[normalem]` and `\renewcommand{\st}[1]{\sout{#1}}`. | **Option B:** Controlled Pandoc Lua AST filter (`--lua-filter`) intercepting `Strikeout` AST elements before LaTeX writing. | **Option A or B** (Both are experimentally sound; maintainer must decide between static preamble ownership vs Lua filter asset). | Pandoc 3.1.3 default template emits `\usepackage{soul}` under XeLaTeX. Naive `\newcommand{\st}` fails with `Command \st already defined`. Both options resolve the collision. | [ADR-009](docs/adr/2026-11-09-adr-009-quarto-export-failure-diagnostics-and-ai-pdf-repair.md) | `TICK-ADE-10`, `TICK-ADE-11`, `TICK-ADE-14` | Option A touches static preamble with macro redefinition; Option B introduces a Lua filter script into Quarto export pipeline. | `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL` | PENDING |
+
+### 5.3 Supporting Architecture Consensus Proposals
+
+| Decision ID | Summary | Recommendation & Contract | Affected ADR | Affected Tickets | Status |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **`D-PROP-03`** | **Staging Failure Retention:** Extract structured `DiagnosticBundle` before purging ephemeral staging directory. | Bounded capture (100 lines / 10KB + intermediate `document.tex` snippet) stored in ephemeral LRU cache before `finally: shutil.rmtree()`. | [ADR-009](docs/adr/2026-11-09-adr-009-quarto-export-failure-diagnostics-and-ai-pdf-repair.md) | `TICK-ADE-08` | Architectural Consensus |
+| **`D-PROP-04`** | **Source Mapping Strategy:** Multi-tier mapping algorithm translating intermediate TeX errors to canonical Markdown coordinates. | 4-tier confidence mapper (`EXACT_TOKEN` $\to$ `CONTEXTUAL_MATCH` $\to$ `SECTION_ANCHOR` $\to$ `UNKNOWN`). Ambiguous `UNKNOWN` halts automated patching fail-closed. | [ADR-009](docs/adr/2026-11-09-adr-009-quarto-export-failure-diagnostics-and-ai-pdf-repair.md) | `TICK-ADE-09`, `TICK-ADE-10` | Architectural Consensus |
+| **`D-PROP-05`** | **Working Copy & Snapshot:** Freeze editor draft at task creation and isolate experimental mutations. | `TaskInputSnapshot` captures active buffer text; `AgentWorkingCopy` scratchpad tracks changes; line-based patch engine enforces three-way OCC safety. | [ADR-008](docs/adr/2026-11-09-adr-008-agent-working-copy-patch-and-occ-safety.md) | `TICK-ADE-05`, `TICK-ADE-06`, `TICK-ADE-07` | Architectural Consensus |
+| **`D-PROP-07`** | **Inspection Port Ownership:** Decouple `IPdfInspectionEngine` foundational port into `application/ports/` before repair orchestrator. | Places `IPdfInspectionEngine` and DTOs in `application/ports/` (`TICK-ADE-10`); mock doubles in `TICK-ADE-11`; PyMuPDF implementation in `TICK-ADE-12`. | [ADR-009](docs/adr/2026-11-09-adr-009-quarto-export-failure-diagnostics-and-ai-pdf-repair.md) | `TICK-ADE-10`, `TICK-ADE-11`, `TICK-ADE-12` | Architectural Consensus |
 
 ---
 
