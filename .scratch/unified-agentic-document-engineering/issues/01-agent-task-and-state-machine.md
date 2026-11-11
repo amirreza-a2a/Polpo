@@ -1,112 +1,184 @@
 # TICK-ADE-01: Core Domain Agent Task Aggregate, Plan Model & Lifecycle Policy
 
 - **Ticket ID:** `TICK-ADE-01`
+- **Title:** Core Domain Agent Task Aggregate, Plan Model & Lifecycle Policy
 - **Milestone:** Milestone A (Agent Foundations)
 - **Priority:** P1 (Blocker for Milestone A)
 - **Status:** Proposed (Awaiting Maintainer Approval)
-- **Authoritative ADR:** ADR-007 (Unified Agent Orchestration & Tool Governance)
+- **Scope:** Define pure core domain entities, value objects, and deterministic state machine transition policies in `core/entities/agent_task.py` and `core/policies/agent_task_policy.py`.
+- **Explicit Non-Goals:**
+  - No SQLite persistence or SQL execution (handled in `TICK-ADE-03`).
+  - No AI provider network calls or tool execution (handled in `TICK-ADE-02` and `TICK-ADE-04`).
+  - No PySide6/Qt signals, QObject models, or QML imports.
+- **Prerequisites:** Authoritative directives D-USER-01 and D-USER-02; ADR-007 approval.
+- **Dependencies (Blocked By):** None (Foundational ticket).
+- **Unblocks:** `TICK-ADE-02`, `TICK-ADE-03`, `TICK-ADE-05`, `TICK-ADE-08`.
 
 ---
 
-## 1. Objective
+## 1. Existing Source-Code Integration Points
 
-Define the core domain entities and state transition policies governing the Agent Task lifecycle, multi-step execution plans, and task checkpoints in `core/entities/agent_task.py` and `core/policies/agent_task_policy.py`.
-
----
-
-## 2. User Value
-
-Establishes transparent, predictable, and supervised task execution. Authors can see the complete multi-step plan before execution begins, monitor step progress, and trust that the assistant cannot transition into unapproved or uncontrolled states.
+- `core/entities/job.py`: Architectural reference for domain aggregate dataclasses and monotonic watermark tracking.
+- `core/policies/job_state_policy.py`: Architectural precedent for pure deterministic state transition policies and transition validation.
+- `core/exceptions/domain_exceptions.py`: Base `DomainError` hierarchy; must be extended with `InvalidStateTransitionError` and `AgentTaskBudgetExceededError`.
 
 ---
 
-## 3. Scope
+## 2. Proposed Domain Interfaces & DTOs
 
-- Implement pure Python dataclasses in `core/entities/agent_task.py`:
-  - `TaskStatus` enum (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `PAUSED`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`, `COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`, `INTERRUPTED`).
-  - `PlanStepStatus` enum (`PENDING`, `IN_PROGRESS`, `COMPLETED`, `FAILED`, `SKIPPED`).
-  - `ToolCall` value object: `tool_name: str`, `arguments: Dict[str, Any]`, `call_id: str`.
-  - `PlanStep` entity: `step_index: int`, `tool_name: str`, `arguments: Dict[str, Any]`, `rationale: str`, `status: PlanStepStatus`, `output: Optional[Dict[str, Any]]`.
-  - `AgentPlan` entity: `plan_id: str`, `task_goal: str`, `assessed_scope: str`, `steps: List[PlanStep]`, `created_at: float`.
-  - `AgentTask` aggregate root: `task_id: str`, `job_id: int`, `status: TaskStatus`, `plan: Optional[AgentPlan]`, `current_step_index: int`, `working_copy_id: Optional[str]`, `error_message: Optional[str]`, `created_at: float`, `updated_at: float`.
-- Implement `AgentTaskPolicy` in `core/policies/agent_task_policy.py`:
-  - `validate_transition(current_status: TaskStatus, new_status: TaskStatus) -> bool`: Enforces valid state transitions according to ADR-007. Raises `InvalidStateTransitionError` on illegal moves.
-  - `is_terminal(status: TaskStatus) -> bool`: Identifies terminal states (`COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`).
-  - `can_execute_step(task: AgentTask) -> bool`: Enforces that execution is permitted only in `RUNNING` or `VALIDATING` states.
+```python
+class TaskStatus(Enum):
+    CREATED = "CREATED"
+    CONTEXT_GATHERING = "CONTEXT_GATHERING"
+    PLANNING = "PLANNING"
+    AWAITING_PLAN_APPROVAL = "AWAITING_PLAN_APPROVAL"
+    RUNNING = "RUNNING"
+    AWAITING_CONSENT = "AWAITING_CONSENT"
+    AWAITING_ACTION_APPROVAL = "AWAITING_ACTION_APPROVAL"
+    PAUSED = "PAUSED"
+    VALIDATING = "VALIDATING"
+    AWAITING_FINAL_APPROVAL = "AWAITING_FINAL_APPROVAL"
+    COMPLETED = "COMPLETED"
+    REJECTED = "REJECTED"
+    CANCELLED = "CANCELLED"
+    FAILED = "FAILED"
+    INTERRUPTED = "INTERRUPTED"
+
+class PlanStepStatus(Enum):
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    SKIPPED = "SKIPPED"
+
+@dataclass(frozen=True)
+class ToolCall:
+    call_id: str
+    tool_name: str
+    arguments: Dict[str, Any]
+
+@dataclass
+class PlanStep:
+    step_index: int
+    tool_name: str
+    arguments: Dict[str, Any]
+    rationale: str
+    status: PlanStepStatus = PlanStepStatus.PENDING
+    output: Optional[Dict[str, Any]] = None
+
+@dataclass
+class AgentPlan:
+    plan_id: str
+    task_goal: str
+    assessed_scope: str
+    steps: List[PlanStep]
+    created_at: float
+
+@dataclass
+class AgentTask:
+    task_id: str
+    job_id: int
+    status: TaskStatus
+    task_goal: str
+    plan: Optional[AgentPlan] = None
+    current_step_index: int = 0
+    working_copy_id: Optional[str] = None
+    failure_id: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: float = field(default_factory=time.time)
+    updated_at: float = field(default_factory=time.time)
+```
 
 ---
 
-## 4. Explicit Non-Goals
+## 3. Detailed Implementation Requirements
 
-- No SQLite persistence or SQL statements (handled in `TICK-ADE-03`).
-- No tool execution or AI HTTP requests (handled in `TICK-ADE-02` and `TICK-ADE-04`).
-- No PySide6/Qt signals or QML imports.
-
----
-
-## 5. Codebase References
-
-- `core/entities/job.py` (Existing domain job entity pattern).
-- `core/policies/job_state_policy.py` (Existing state transition policy pattern).
-- `core/exceptions/domain_exceptions.py` (Base `DomainError` hierarchy).
-
----
-
-## 6. Proposed Files & Components
-
-- Create: `core/entities/agent_task.py`
-- Create: `core/policies/agent_task_policy.py`
-- Modify: `core/exceptions/domain_exceptions.py` (Add `InvalidStateTransitionError`, `AgentTaskBudgetExceededError`)
-- Create: `tests/unit/test_agent_task_policy.py`
+1. **State Machine Invariants (`AgentTaskPolicy`):**
+   - Valid forward paths:
+     - `CREATED` $\to$ `CONTEXT_GATHERING`, `CANCELLED`, `INTERRUPTED`.
+     - `CONTEXT_GATHERING` $\to$ `PLANNING`, `FAILED`, `CANCELLED`, `INTERRUPTED`.
+     - `PLANNING` $\to$ `AWAITING_PLAN_APPROVAL`, `FAILED`, `CANCELLED`, `INTERRUPTED`.
+     - `AWAITING_PLAN_APPROVAL` $\to$ `RUNNING` (upon explicit human approval), `REJECTED`, `CANCELLED`, `INTERRUPTED`.
+     - `RUNNING` $\to$ `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `FAILED`, `CANCELLED`, `INTERRUPTED`.
+     - `AWAITING_CONSENT` $\to$ `RUNNING` (upon consent granted), `CANCELLED`, `INTERRUPTED`.
+     - `AWAITING_ACTION_APPROVAL` $\to$ `RUNNING` (upon action approval), `CANCELLED`, `INTERRUPTED`.
+     - `PAUSED` $\to$ `RUNNING` (resume), `CANCELLED`, `INTERRUPTED`.
+     - `VALIDATING` $\to$ `AWAITING_FINAL_APPROVAL` (candidate verified), `RUNNING` (bounded replan), `FAILED`, `CANCELLED`, `INTERRUPTED`.
+     - `AWAITING_FINAL_APPROVAL` $\to$ `COMPLETED` (adoption), `REJECTED`, `CANCELLED`, `INTERRUPTED`.
+     - `INTERRUPTED` $\to$ `CANCELLED`.
+   - Terminal states (`COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`) are strictly immutable; transitions out of them raise `InvalidStateTransitionError`.
+2. **Budget Enforcement:**
+   - Tasks reject plans where `len(steps) > MAX_TASK_STEPS = 10` by raising `AgentTaskBudgetExceededError`.
 
 ---
 
-## 7. Domain & Architectural Constraints
-
-- **Rule 6.1 Compliance:** `core/` must have zero imports of PySide6, Qt, SQLite, or vendor AI SDKs.
-- **Rule 14 Compliance:** Cooperative cancellation must transition to `CANCELLED` cleanly without raising unexpected exceptions.
-
----
-
-## 8. Detailed Implementation Requirements
-
-1. `AgentTaskPolicy.validate_transition` must enforce:
-   - `CREATED` can only transition to `CONTEXT_GATHERING`, `CANCELLED`, or `INTERRUPTED`.
-   - `PLANNING` can only transition to `AWAITING_PLAN_APPROVAL`, `FAILED`, `CANCELLED`, or `INTERRUPTED`.
-   - `AWAITING_PLAN_APPROVAL` can only transition to `RUNNING` (on approval), `REJECTED`, `CANCELLED`, or `INTERRUPTED`.
-   - Terminal states (`COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`) cannot transition to any other state.
-   - Any active state can transition to `INTERRUPTED` on startup recovery.
-2. Step budgets: Tasks must reject plans exceeding `MAX_TASK_STEPS = 10`.
-
----
-
-## 9. Acceptance Criteria
+## 4. Acceptance Criteria
 
 - [ ] `AgentTask` aggregate initializes with `CREATED` status and empty step list.
-- [ ] Attempting an invalid transition (e.g. `CREATED` $\to$ `COMPLETED`) raises `InvalidStateTransitionError`.
-- [ ] Transition from `AWAITING_PLAN_APPROVAL` to `RUNNING` succeeds only when plan is populated.
-- [ ] `AgentTaskPolicy.is_terminal()` returns `True` strictly for `COMPLETED`, `REJECTED`, `CANCELLED`, and `FAILED`.
-- [ ] Zero imports of `PySide6`, `Qt`, or `sqlite3` in `core/entities/agent_task.py` and `core/policies/agent_task_policy.py`.
+- [ ] Transitioning from `CREATED` directly to `COMPLETED` raises `InvalidStateTransitionError`.
+- [ ] Transitioning from `AWAITING_PLAN_APPROVAL` to `RUNNING` succeeds only when a valid `AgentPlan` is attached.
+- [ ] Any active non-terminal status cleanly transitions to `INTERRUPTED` on simulated restart reconciliation.
+- [ ] `AgentTaskPolicy.is_terminal()` returns `True` exclusively for `COMPLETED`, `REJECTED`, `CANCELLED`, and `FAILED`.
+- [ ] AST check confirms zero imports of `PySide6`, `Qt`, or `sqlite3` in `core/entities/agent_task.py` and `core/policies/agent_task_policy.py`.
 
 ---
 
-## 10. Required Tests
+## 5. Test Specifications
 
-- Unit tests in `tests/unit/test_agent_task_policy.py` verifying:
-  - All valid state transitions succeed and update `updated_at`.
-  - All invalid transitions raise `InvalidStateTransitionError`.
-  - Terminal state immutability.
-  - Step budget exhaustion checks.
+### 5.1 Unit Tests
+- `tests/unit/test_agent_task_policy.py`:
+  - `test_valid_lifecycle_transitions()`: Verifies step-by-step advance from `CREATED` through `COMPLETED`.
+  - `test_illegal_transition_rejection()`: Verifies illegal jumps raise `InvalidStateTransitionError`.
+  - `test_terminal_state_immutability()`: Asserts that no state transitions are permitted out of terminal states.
+  - `test_budget_exceeded_rejection()`: Verifies that plans with $> 10$ steps raise `AgentTaskBudgetExceededError`.
+
+### 5.2 Negative & Security Tests
+- `test_secret_prohibition_in_entities()`: Ensures task goals, rationale strings, and tool argument dictionaries reject assignment of detected secret keys.
+
+### 5.3 Concurrency & Persistence Considerations
+- Pure domain models are immutable or thread-confined; transitions mutate `updated_at` timestamps deterministically.
 
 ---
 
-## 11. Security Requirements
+## 6. Error and Recovery Behavior
 
-- Plaintext API keys or credentials must never be assigned to `task_goal`, `arguments`, or step metadata.
+- Invalid transitions leave entity state completely unchanged and raise `InvalidStateTransitionError`.
+- Any active non-terminal state supports deterministic transition to `INTERRUPTED` to support conservative restart recovery (Finding D).
 
 ---
 
-## 12. Completion Evidence & Follow-up
+## 7. Observability & Audit Requirements
 
-- Unit test execution evidence passing 100% in repository test suite.
-- Unblocks: `TICK-ADE-02`, `TICK-ADE-03`, `TICK-ADE-05`.
+- Every successful state transition updates `updated_at` with high-resolution epoch time.
+- Emits structured domain event `AgentTaskStateChangedEvent(task_id, old_status, new_status, timestamp)` for application-layer logging.
+
+---
+
+## 8. Documentation Updates
+
+- Document domain models in `CONTEXT.md` Section 2.
+- Verify consistency with ADR-007.
+
+---
+
+## 9. Required Project Skills
+
+- `domain-modeling`: Establishing ubiquitous domain concepts and entity boundaries.
+- `tdd`: Implementing unit tests test-first for `AgentTaskPolicy`.
+
+---
+
+## 10. Verification Commands
+
+```bash
+pytest tests/unit/test_agent_task_policy.py -v
+python3 -c "import ast; tree = ast.parse(open('core/entities/agent_task.py').read()); assert not any('PySide6' in ast.dump(n) or 'sqlite3' in ast.dump(n) for n in ast.walk(tree))"
+```
+
+---
+
+## 11. Definition of Done
+
+- All code and unit tests merged to feature branch.
+- 100% unit tests pass with zero warnings.
+- Clean Architecture AST verification script passes.

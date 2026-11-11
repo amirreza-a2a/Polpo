@@ -1,106 +1,147 @@
-# TICK-ADE-14: Style Profile SQLite Persistence & Staging Metadata Barrier Injection
+# TICK-ADE-14: Style Profile SQLite Persistence, Staging Metadata Injection & Font Resolution
 
 - **Ticket ID:** `TICK-ADE-14`
+- **Title:** Style Profile SQLite Persistence, Staging Metadata Injection & Font Resolution
 - **Milestone:** Milestone E (Publication Style System)
 - **Priority:** P2
 - **Status:** Proposed (Awaiting Maintainer Approval)
-- **Blocked By:** `TICK-ADE-13`
-- **Authoritative ADR:** ADR-010 (Publication Style Profile System & Rendering Governance)
+- **Scope:** Implement `PublicationStyleService` in `application/services/publication_style_service.py` to persist user-customized publication styles in SQLite table `publication_style_profiles` (migration `006_agent_task_tables.sql`), load built-in profiles, resolve system font fallbacks, and inject validated profile settings into the Quarto ephemeral staging workspace.
+- **Explicit Non-Goals:**
+  - No editing of `resources/templates/polpo_preamble.tex` on disk.
+  - No direct SQL execution from presentation controllers.
+  - No injecting unallowlisted metadata keys or raw LaTeX fragments.
+- **Prerequisites:** `TICK-ADE-03` and `TICK-ADE-13` completed; ADR-010 approved.
+- **Dependencies (Blocked By):** `TICK-ADE-03`, `TICK-ADE-13`.
+- **Unblocks:** `TICK-ADE-15`.
 
 ---
 
-## 1. Objective
+## 1. Existing Source-Code Integration Points
 
-Implement `PublicationStyleService` in `application/services/publication_style_service.py` to persist user-customized publication styles in SQLite, load built-in profiles, and inject validated profile settings into the Quarto ephemeral staging workspace.
-
----
-
-## 2. User Value
-
-Authors can save custom publication styles and apply them reliably across documents. Staging injection ensures that custom typography and geometry are compiled faithfully without breaking barrier isolation or existing preambles.
+- `application/services/metadata_normalizer.py`: Validation against `ALLOWED_ROOT_KEYS_V1`.
+- `infrastructure/pdf/staging_workspace.py`: Staging session creation and metadata injection hook.
+- `infrastructure/persistence/sqlite/migrations/006_agent_task_tables.sql`: Persistence table definition.
+- `resources/styles/*.json`: Built-in profile JSON sources.
 
 ---
 
-## 3. Scope
+## 2. Proposed Component Implementation
 
-- Extend SQLite persistence in `infrastructure/persistence/sqlite/style_profile_repository.py`:
-  - Table `publication_style_profiles`: `profile_id TEXT PRIMARY KEY`, `display_name TEXT`, `description TEXT`, `schema_version INTEGER`, `is_builtin INTEGER`, `profile_json TEXT`, `created_at REAL`, `updated_at REAL`.
-- Implement `PublicationStyleService` in `application/services/publication_style_service.py`:
-  - `list_profiles() -> Sequence[PublicationStyleProfile]`: Combines built-in profiles and custom SQLite profiles.
-  - `get_profile(profile_id: str) -> Optional[PublicationStyleProfile]`
-  - `save_custom_profile(profile: PublicationStyleProfile) -> None`: Validates schema and saves to SQLite.
-  - `delete_custom_profile(profile_id: str) -> bool`: Deletes custom profile (built-in profiles cannot be deleted).
-  - `inject_profile_into_metadata(profile: PublicationStyleProfile, target_metadata: Dict[str, Any]) -> Dict[str, Any]`: Maps profile tokens (`fontsize`, `geometry`, `linestretch`, `colorlinks`, etc.) into metadata allowlist keys.
-- Update `QuartoPdfExportService` and `StagingWorkspaceManager` to consume the effective profile during staging creation.
+```python
+# application/services/publication_style_service.py
 
----
+class PublicationStyleService:
+    def __init__(
+        self,
+        style_repo: IStyleProfileRepository,
+        builtin_styles_dir: Path,
+    ):
+        ...
 
-## 4. Explicit Non-Goals
+    def list_profiles(self) -> Sequence[PublicationStyleProfile]:
+        ...
 
-- No editing of `resources/templates/polpo_preamble.tex` on disk.
-- No direct SQL execution from controllers.
+    def get_profile(self, profile_id: str) -> Optional[PublicationStyleProfile]:
+        ...
 
----
+    def save_custom_profile(self, profile: PublicationStyleProfile) -> None:
+        ...
 
-## 5. Codebase References
+    def delete_custom_profile(self, profile_id: str) -> bool:
+        ...
 
-- `application/services/metadata_normalizer.py` (`normalize_quarto_pdf_metadata`).
-- `infrastructure/pdf/staging_workspace.py` (`create_session`).
-- `resources/styles/*.json` (Built-in profile sources).
+    def get_effective_profile(self, job_id: int, metadata: Dict[str, Any]) -> PublicationStyleProfile:
+        ...
 
----
-
-## 6. Proposed Files & Components
-
-- Create: `infrastructure/persistence/sqlite/style_profile_repository.py`
-- Create: `application/services/publication_style_service.py`
-- Modify: `application/services/quarto_pdf_export_service.py`
-- Create: `tests/integration/test_publication_style_service.py`
-
----
-
-## 7. Domain & Architectural Constraints
-
-- **Rule 8 & 9 Compliance:** Database mutations are transactional under `BEGIN IMMEDIATE`.
-- **D-USER-03 Compliance:** User profile modifications remain local to SQLite and do not alter product files.
+    def inject_profile_into_metadata(
+        self,
+        profile: PublicationStyleProfile,
+        target_metadata: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        ...
+```
 
 ---
 
-## 8. Detailed Implementation Requirements
+## 3. Detailed Implementation Requirements
 
-1. When `inject_profile_into_metadata()` is invoked, the resulting dictionary must be validated against `ALLOWED_ROOT_KEYS_V1`.
-2. Built-in profile IDs are prefixed with `builtin:` and are read-only. Calling `save_custom_profile()` or `delete_custom_profile()` on a `builtin:` ID raises `ImmutableBuiltinProfileError`.
-3. Custom profile IDs are prefixed with `user:`.
+1. **SQLite Persistence (Finding I):**
+   - Implements `IStyleProfileRepository` in `infrastructure/persistence/sqlite/style_profile_repository.py`.
+   - Uses table `publication_style_profiles` defined in migration `006_agent_task_tables.sql`.
+   - Built-in profile IDs are prefixed with `builtin:` and are read-only; attempts to delete them raise `ImmutableBuiltinProfileError`.
+   - User profile IDs are prefixed with `user:`.
+2. **Metadata Injection & Allowlist Validation:**
+   - Maps profile tokens into Quarto metadata: `documentclass`, `fontsize`, `linestretch`, `papersize`, `geometry`, `number-sections`, `number-depth`, `toc`, `toc-depth`, `colorlinks`, `linkcolor`, `urlcolor`, `citecolor`.
+   - Translates `strikethrough_engine = "ulem"` into Quarto YAML / staging preamble configuration deterministically.
+   - Passes the resulting dictionary through `normalize_quarto_pdf_metadata()` which validates every key against `ALLOWED_ROOT_KEYS_V1`.
+3. **Font Fallback Resolution:**
+   - Verifies font availability using system font discovery. If a requested font is missing on the host machine, falls back gracefully to `FreeSerif` / `Vazirmatn` without failing compilation.
 
 ---
 
-## 9. Acceptance Criteria
+## 4. Acceptance Criteria
 
-- [ ] `list_profiles()` returns all 4 built-in profiles plus saved custom profiles.
-- [ ] Custom profiles persist across SQLite connections and application restarts.
-- [ ] Attempting to delete a built-in profile raises `ImmutableBuiltinProfileError`.
+- [ ] `list_profiles()` returns all 4 built-in profiles plus saved custom profiles from SQLite.
+- [ ] Custom profiles persist across SQLite connections and application restarts under migration 006.
+- [ ] Attempting to delete or overwrite a built-in profile raises `ImmutableBuiltinProfileError`.
 - [ ] Staging workspace injects profile geometry and typography cleanly into `_quarto.yml` and `document.qmd`.
+- [ ] Missing fonts fall back gracefully to `FreeSerif` / `Vazirmatn`.
 - [ ] Quarto PDF compilation with injected profile compiles cleanly under XeLaTeX.
 
 ---
 
-## 10. Required Tests
+## 5. Test Specifications
 
-- Integration tests in `tests/integration/test_publication_style_service.py` verifying:
-  - Custom profile CRUD in SQLite.
-  - Immutability of built-in profiles.
-  - Metadata injection and verification through `normalize_quarto_pdf_metadata()`.
-  - Full candidate compilation under an injected profile.
+### 5.1 Integration Tests
+- `tests/integration/test_publication_style_service.py`:
+  - `test_custom_profile_crud_in_sqlite()`: Verifies persistence in migration 006 table.
+  - `test_builtin_profile_immutability()`: Confirms rejection of deletion.
+  - `test_metadata_injection_allowlist_compliance()`: Validates injected keys against `ALLOWED_ROOT_KEYS_V1`.
+  - `test_font_fallback_resolution()`: Confirms fallback when font is absent.
+  - `test_full_compilation_with_injected_academic_profile()`: Verifies real XeLaTeX build.
+
+### 5.2 Negative & Security Tests
+- `test_reject_unallowlisted_profile_keys()`: Asserts arbitrary keys injected into profile JSON are rejected.
+
+### 5.3 Concurrency & Persistence Considerations
+- Database mutations executed under `BEGIN IMMEDIATE` transactions.
 
 ---
 
-## 11. Security Requirements
+## 6. Error and Recovery Behavior
 
-- Disallow profile JSON containing shell execution or macro redirectional parameters.
+- If a document references a deleted or unavailable profile, falls back to `builtin:academic` with a warning log.
 
 ---
 
-## 12. Completion Evidence & Follow-up
+## 7. Observability & Audit Requirements
 
-- Integration test execution evidence passing 100%.
-- Completes Milestone E; unblocks Milestone F (`TICK-ADE-15`).
+- Logs profile resolution and fallback decisions.
+
+---
+
+## 8. Documentation Updates
+
+- Document profile persistence and injection in ADR-010.
+
+---
+
+## 9. Required Project Skills
+
+- `codebase-design`: Clean service contracts and repository boundaries.
+- `tdd`: Integration testing of style profile persistence and injection.
+
+---
+
+## 10. Verification Commands
+
+```bash
+pytest tests/integration/test_publication_style_service.py -v
+```
+
+---
+
+## 11. Definition of Done
+
+- All integration tests pass with 100% coverage.
+- Custom profile SQLite persistence and Quarto staging injection fully verified.

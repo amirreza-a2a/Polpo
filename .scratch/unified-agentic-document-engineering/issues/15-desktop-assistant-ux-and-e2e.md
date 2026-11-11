@@ -1,99 +1,107 @@
 # TICK-ADE-15: Desktop Assistant Review Dock QML, Split Candidate Preview & E2E Suite
 
 - **Ticket ID:** `TICK-ADE-15`
+- **Title:** Desktop Assistant Review Dock QML, Split Candidate Preview & E2E Suite
 - **Milestone:** Milestone F (Desktop Assistant UX & Capabilities)
-- **Priority:** P1 (Capstone Ticket)
+- **Priority:** P1 (Capstone Integration Ticket)
 - **Status:** Proposed (Awaiting Maintainer Approval)
-- **Blocked By:** `TICK-ADE-07`, `TICK-ADE-12`, `TICK-ADE-14`
-- **Authoritative ADR:** ADR-007, ADR-008, ADR-009, ADR-010
+- **Scope:** Implement the native Qt/QML presentation layer (`AgentController`, `AssistantDock.qml`, plan review card, execution timeline, diff viewer, split candidate PDF preview) and the comprehensive end-to-end integration and verification suite for the Polpo Unified Agentic Document Engineering System.
+- **Explicit Non-Goals:**
+  - No business logic, persistence, or SQL inside QML or Qt controllers.
+  - No remote network calls outside configured AI providers.
+  - No GUI thread blocking during Quarto compilation or PDF rasterization.
+- **Prerequisites:** `TICK-ADE-07`, `TICK-ADE-11`, `TICK-ADE-12`, and `TICK-ADE-14` completed; all ADRs approved.
+- **Dependencies (Blocked By):** `TICK-ADE-07`, `TICK-ADE-11`, `TICK-ADE-12`, `TICK-ADE-14`.
+- **Unblocks:** None (Capstone ticket completing the system).
 
 ---
 
-## 1. Objective
+## 1. Existing Source-Code Integration Points
 
-Implement the native Qt/QML presentation layer (`AgentController`, `AssistantDock.qml`, diff viewer, split candidate PDF preview) and the comprehensive end-to-end integration and verification suite for the Polpo Unified Agentic Document Engineering System.
-
----
-
-## 2. User Value
-
-Unifies all document intelligence capabilities into an elegant, reactive desktop experience inside the Review Workspace. Authors can submit document requests, review transparent plans, inspect side-by-side candidate diffs, preview compiled PDFs, and apply verified changes with a single click.
+- `interfaces/desktop/qml/views/ReviewWorkspaceView.qml`: Primary review workspace hosting viewer, editor, and the new assistant dock.
+- `interfaces/desktop/controllers/export_controller.py`: Presentation controller patterns and signal routing.
+- `interfaces/desktop/controllers/markdown_editor_controller.py`: In-memory draft buffer and atomic patch application.
+- `infrastructure/pdf/mupdf_validator.py`: Concrete PyMuPDF validator wired into `PdfRepairService` (Finding B).
 
 ---
 
-## 3. Scope
+## 2. Proposed Presentation Components & Signals
 
-- Implement `AgentController` in `interfaces/desktop/controllers/agent_controller.py`:
-  - QObject presentation controller managing `QThreadPool` worker dispatching.
-  - Exposes reactive properties: `isBusy: bool`, `taskStatus: str`, `planSteps: QVariantList`, `currentStepIndex: int`, `hasActiveProposal: bool`, `candidatePdfPath: str`, `unifiedDiff: str`, `validationPassed: bool`.
-  - Exposes QML slots:
-    - `@Slot(int, str)` `startTask(jobId, prompt)`
-    - `@Slot(str)` `approvePlan(taskId)`
-    - `@Slot(str, str)` `rejectPlan(taskId, reason)`
-    - `@Slot(str)` `pauseTask(taskId)`
-    - `@Slot(str)` `resumeTask(taskId)`
-    - `@Slot(str)` `cancelTask(taskId)`
-    - `@Slot(str, str)` `grantConsent(taskId, token)`
-    - `@Slot(str)` `applyProposal(taskId)`
-    - `@Slot(str)` `rejectProposal(taskId)`
-  - Signals: `taskStateChanged`, `planReady`, `consentRequired`, `actionApprovalRequired`, `proposalReady`, `taskCompleted`, `taskFailed`.
-- Implement native QML components under `interfaces/desktop/qml/components/assistant/`:
-  - `AssistantDock.qml`: Collapsible drawer docked in `ReviewWorkspaceView.qml`.
-  - `PlanReviewCard.qml`: Displays ordered plan steps with status badges and "Approve Plan" / "Reject Plan" buttons.
-  - `ExecutionTimelineView.qml`: Streaming step progress with pause/cancel controls.
-  - `DiffInspectorView.qml`: Side-by-side visual diff of proposed Markdown changes.
-  - `CandidatePdfPreview.qml`: Split-view raster preview comparing original PDF with candidate PDF.
-- Build E2E test suite in `tests/acceptance/test_agentic_document_engineering_e2e.py`:
-  - Tests complete workflow: Request $\to$ Plan $\to$ Tool Execution $\to$ Candidate Recompilation $\to$ Editor Buffer Adoption $\to$ OCC Save.
+### 2.1 Controller Contract (`interfaces/desktop/controllers/agent_controller.py`)
+```python
+class AgentController(QObject):
+    # Reactive Properties
+    isBusyChanged = Signal(bool)
+    taskStatusChanged = Signal(str)
+    planReady = Signal()
+    consentRequired = Signal(str, str)          # payload_summary, consent_token
+    actionApprovalRequired = Signal(str, str)   # action_description, approval_token
+    proposalReady = Signal(str, str, bool)      # unified_diff, candidate_pdf_path, validation_passed
+    taskCompleted = Signal(str)
+    taskFailed = Signal(str, str)
 
----
+    # Slots
+    @Slot(int, str)
+    def startTask(self, job_id: int, user_prompt: str) -> None:
+        ...
 
-## 4. Explicit Non-Goals
+    @Slot(str)
+    def approvePlan(self, task_id: str) -> None:
+        ...
 
-- No business logic or SQL inside QML or Qt controllers.
-- No remote network calls outside configured AI providers.
+    @Slot(str, str)
+    def rejectPlan(self, task_id: str, reason: str) -> None:
+        ...
 
----
+    @Slot(str)
+    def pauseTask(self, task_id: str) -> None:
+        ...
 
-## 5. Codebase References
+    @Slot(str)
+    def resumeTask(self, task_id: str) -> None:
+        ...
 
-- `interfaces/desktop/qml/views/ReviewWorkspaceView.qml` (Primary workspace container).
-- `interfaces/desktop/controllers/export_controller.py` (Presentation controller patterns).
-- `interfaces/desktop/controllers/markdown_editor_controller.py` (Editor integration).
+    @Slot(str)
+    def cancelTask(self, task_id: str) -> None:
+        ...
 
----
+    @Slot(str, str)
+    def grantConsent(self, task_id: str, consent_token: str) -> None:
+        ...
 
-## 6. Proposed Files & Components
+    @Slot(str)
+    def applyProposal(self, task_id: str) -> None:
+        ...
 
-- Create: `interfaces/desktop/controllers/agent_controller.py`
-- Create: `interfaces/desktop/qml/components/assistant/AssistantDock.qml`
-- Create: `interfaces/desktop/qml/components/assistant/PlanReviewCard.qml`
-- Create: `interfaces/desktop/qml/components/assistant/ExecutionTimelineView.qml`
-- Create: `interfaces/desktop/qml/components/assistant/DiffInspectorView.qml`
-- Create: `interfaces/desktop/qml/components/assistant/CandidatePdfPreview.qml`
-- Modify: `interfaces/desktop/qml/views/ReviewWorkspaceView.qml` (Add AssistantDock)
-- Create: `tests/acceptance/test_agentic_document_engineering_e2e.py`
+    @Slot(str)
+    def rejectProposal(self, task_id: str) -> None:
+        ...
+```
 
----
-
-## 7. Domain & Architectural Constraints
-
-- **Rule 6.3 Compliance:** `AgentController` must not directly import `sqlite3`, `keyring`, or vendor SDKs; it interacts strictly with application services.
-- **Rule 6.4 Compliance:** QML interacts exclusively with explicitly registered QObject controllers.
-- **Rule 12 Compliance:** Heavy operations (Quarto compilation, AI HTTP requests, PDF rasterization) must never execute on the Qt GUI thread.
-
----
-
-## 8. Detailed Implementation Requirements
-
-1. Background workers execute via `QThreadPool.globalInstance()`. Communication back to `AgentController` uses Qt signals with queued connections (`Qt.QueuedConnection`).
-2. When `planReady` is emitted, `AssistantDock.qml` automatically expands the plan review card with smooth animation.
-3. The diff inspector highlights additions in green (`theme.success`) and deletions in red (`theme.error`), using semantic palette tokens.
-4. Clean shutdown: `AgentController.shutdown()` terminates running workers cooperatively and disconnects signals.
+### 2.2 QML View Architecture
+- `interfaces/desktop/qml/components/assistant/AssistantDock.qml`: Dockable drawer containing Chat, Plan, Timeline, and Proposals.
+- `PlanReviewCard.qml`: Reactive view of `plan.steps` with "Approve Plan" / "Reject Plan" actions.
+- `ExecutionTimelineView.qml`: Step-by-step progress indicator with pause/cancel controls.
+- `DiffInspectorView.qml`: Side-by-side visual diff of proposed changes using semantic theme palette.
+- `CandidatePdfPreview.qml`: Dual-canvas preview comparing original and candidate PDFs.
 
 ---
 
-## 9. Acceptance Criteria
+## 3. Detailed Implementation Requirements
+
+1. **Worker Offloading & GUI Responsiveness:**
+   - Background tasks (Quarto compilation, AI HTTP requests, PDF rasterization) execute on `QThreadPool.globalInstance()`.
+   - Results are communicated back to `AgentController` via Qt signals with queued connections (`Qt.QueuedConnection`).
+   - The GUI thread remains 100% responsive without frame drops.
+2. **Dependency Wiring (Finding B):**
+   - Composition root wires concrete `PyMuPdfValidator` (from `TICK-ADE-12`) into `PdfRepairService` (from `TICK-ADE-11`).
+3. **End-to-End Acceptance Suite:**
+   - Implements `tests/acceptance/test_agentic_document_engineering_e2e.py` testing the complete lifecycle:
+     User request $\to$ Plan generation $\to$ Plan approval $\to$ Tool execution $\to$ Scratchpad candidate recompilation $\to$ PyMuPDF validation $\to$ Diff presentation $\to$ User adoption $\to$ Editor buffer update $\to$ OCC Save.
+
+---
+
+## 4. Acceptance Criteria
 
 - [ ] Assistant dock opens and closes smoothly inside `ReviewWorkspaceView.qml`.
 - [ ] User can submit a request; plan steps appear reactively in `PlanReviewCard.qml`.
@@ -106,24 +114,57 @@ Unifies all document intelligence capabilities into an elegant, reactive desktop
 
 ---
 
-## 10. Required Tests
+## 5. Test Specifications
 
-- Acceptance & integration tests in `tests/acceptance/test_agentic_document_engineering_e2e.py` verifying:
-  - Full happy path E2E execution with mock AI executor and headless Qt quick view.
-  - User plan rejection workflow.
-  - Cooperative cancellation between steps.
-  - Full candidate PDF preview generation.
-  - Editor buffer OCC save integrity after applying changes.
+### 5.1 Acceptance Tests
+- `tests/acceptance/test_agentic_document_engineering_e2e.py`:
+  - `test_full_supervised_agent_e2e_workflow()`: Tests full cycle from prompt to OCC save.
+  - `test_plan_rejection_e2e()`: Tests user rejection cleanly halts task.
+  - `test_cooperative_cancellation_e2e()`: Tests user cancellation cleanly terminates background execution.
+  - `test_split_candidate_preview_rendering()`: Verifies offscreen scene graph rendering.
+
+### 5.2 Negative & Security Tests
+- `test_prevent_html_injection_in_qml_diff()`: Asserts special characters (`<`, `>`, `&`) are escaped before QML rendering.
+
+### 5.3 Concurrency & Threading Tests
+- `test_gui_thread_not_blocked_during_quarto_compilation()`: Asserts Qt event loop processes events during background compilation.
 
 ---
 
-## 11. Security Requirements
+## 6. Error and Recovery Behavior
 
-- Disallow HTML injection in QML text elements; use plain text format or escape strings before rendering in delegates.
+- Controller handles service errors cleanly, emitting `taskFailed(taskId, errorMessage)` and restoring UI state without freezing.
 
 ---
 
-## 12. Completion Evidence & Follow-up
+## 7. Observability & Audit Requirements
 
-- E2E acceptance test suite passing 100%.
-- Completes Milestone F; system ready for final maintainer review and release qualification.
+- Controller logs UI interactions and signal dispatches.
+
+---
+
+## 8. Documentation Updates
+
+- Document full user interaction workflow in user guide and ADR-007.
+
+---
+
+## 9. Required Project Skills
+
+- `verification-before-completion`: Verifying complete E2E workflow.
+- `tdd`: Acceptance test suite development with headless Qt.
+
+---
+
+## 10. Verification Commands
+
+```bash
+pytest tests/acceptance/test_agentic_document_engineering_e2e.py -v
+```
+
+---
+
+## 11. Definition of Done
+
+- All acceptance tests pass with 100% coverage.
+- Full desktop assistant UI and end-to-end integration verified.

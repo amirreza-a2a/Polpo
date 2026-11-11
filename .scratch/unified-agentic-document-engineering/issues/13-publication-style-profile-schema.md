@@ -1,113 +1,164 @@
 # TICK-ADE-13: Publication Style Profile Domain Schema, Built-in Templates & Validation
 
 - **Ticket ID:** `TICK-ADE-13`
+- **Title:** Publication Style Profile Domain Schema, Built-in Templates & Validation
 - **Milestone:** Milestone E (Publication Style System)
 - **Priority:** P2
 - **Status:** Proposed (Awaiting Maintainer Approval)
-- **Blocked By:** None (can start in parallel with Milestone A/B)
-- **Authoritative ADR:** ADR-010 (Publication Style Profile System & Rendering Governance)
+- **Scope:** Implement the declarative `PublicationStyleProfile` domain entity, typed typography/geometry schemas, 4-scope visual separation, and the 4 standard built-in profile definitions (`Academic`, `Technical Report`, `Textbook`, `Minimal Article`) in `core/entities/publication_style_profile.py` and `resources/styles/`.
+- **Explicit Non-Goals:**
+  - No unrestricted raw LaTeX injection fields in the profile schema (Finding F).
+  - No SQLite persistence (handled in `TICK-ADE-14`).
+  - No deferred features (custom headers/footers, callout theme packages, custom syntax highlighting).
+- **Prerequisites:** `TICK-ADE-05` completed; ADR-010 approved.
+- **Dependencies (Blocked By):** `TICK-ADE-05`.
+- **Unblocks:** `TICK-ADE-14`.
 
 ---
 
-## 1. Objective
+## 1. Existing Source-Code Integration Points
 
-Implement the declarative `PublicationStyleProfile` domain entity, typed typography/geometry schemas, and the 4 standard built-in profile definitions (`Academic`, `Technical Report`, `Textbook`, `Minimal Article`) in `core/entities/publication_style_profile.py` and `resources/styles/`.
-
----
-
-## 2. User Value
-
-Enables authors to choose and apply publication-grade typography, margins, headers, and color schemes suited for academic papers, engineering reports, or textbooks with reproducible vector quality.
+- `application/services/metadata_normalizer.py`: Versioned YAML allowlist keys (`ALLOWED_ROOT_KEYS_V1`).
+- `resources/templates/polpo_preamble.tex`: Base typesetting preamble compatibility.
 
 ---
 
-## 3. Scope
+## 2. Proposed Domain Interfaces & DTOs
 
-- Implement pure Python dataclasses in `core/entities/publication_style_profile.py`:
-  - `TypographyConfig`: `mainfont: str`, `sansfont: str`, `monofont: str`, `mathfont: Optional[str]`, `fontsize: str`, `linestretch: float`.
-  - `GeometryConfig`: `papersize: str`, `margin_top: str`, `margin_bottom: str`, `margin_left: str`, `margin_right: str`.
-  - `ColorSchemeConfig`: `colorlinks: bool`, `linkcolor: str`, `urlcolor: str`, `citecolor: str`.
-  - `SectionConfig`: `number_sections: bool`, `number_depth: int`, `toc: bool`, `toc_depth: int`, `toc_title: str`.
-  - `PublicationStyleProfile` aggregate: `profile_id: str`, `version: str`, `schema_version: int`, `display_name: str`, `description: str`, `is_builtin: bool`, `typography: TypographyConfig`, `geometry: GeometryConfig`, `colors: ColorSchemeConfig`, `sections: SectionConfig`, `documentclass: str`, `classoptions: Tuple[str, ...]`.
-- Author 4 standard built-in profile JSON resource files under `resources/styles/`:
-  - `academic.json`: A4, `scrartcl`, tight margins ($2\text{ cm}$), numbered sections, high-contrast links.
-  - `technical_report.json`: A4, `scrreprt`, $2.5\text{ cm}$ margins, table of contents, shaded code blocks.
-  - `textbook.json`: A4, `scrbook`, $3\text{ cm}$ outer reading margins, large headers.
-  - `minimal.json`: A4, `article`, clean unnumbered sections, monochrome links.
-- Implement strict schema validator in `core/policies/style_profile_policy.py`:
-  - Validates font size strings (`10pt`, `11pt`, `12pt`).
-  - Validates linestretch bounds ($1.0 \le v \le 1.6$).
-  - Validates margin dimension strings (e.g. `^\d+(?:\.\d+)?(?:cm|mm|in|pt)$`).
-  - Validates documentclass allowlist (`scrartcl`, `article`, `report`, `scrreprt`, `book`, `scrbook`).
+```python
+@dataclass(frozen=True)
+class TypographyConfig:
+    mainfont: str
+    sansfont: str
+    monofont: str
+    mathfont: Optional[str]
+    fontsize: str                      # "10pt", "11pt", "12pt"
+    linestretch: float                 # 1.0 to 1.6
+    strikethrough_engine: str          # "ulem", "soul", "default"
 
----
+@dataclass(frozen=True)
+class GeometryConfig:
+    papersize: str                     # "a4", "letter"
+    margin_top: str
+    margin_bottom: str
+    margin_left: str
+    margin_right: str
 
-## 4. Explicit Non-Goals
+@dataclass(frozen=True)
+class ColorSchemeConfig:
+    colorlinks: bool
+    linkcolor: str
+    urlcolor: str
+    citecolor: str
 
-- No unrestricted raw LaTeX injection fields in the profile schema (all settings must be declarative and typed).
-- No SQLite persistence (handled in `TICK-ADE-14`).
+@dataclass(frozen=True)
+class SectionConfig:
+    number_sections: bool
+    number_depth: int                  # 1 to 4
+    toc: bool
+    toc_depth: int                     # 1 to 3
+    toc_title: str
 
----
-
-## 5. Codebase References
-
-- `application/services/metadata_normalizer.py` (Allowlist schema keys).
-- `resources/templates/polpo_preamble.tex` (Base preamble compatibility).
-
----
-
-## 6. Proposed Files & Components
-
-- Create: `core/entities/publication_style_profile.py`
-- Create: `core/policies/style_profile_policy.py`
-- Create: `resources/styles/academic.json`
-- Create: `resources/styles/technical_report.json`
-- Create: `resources/styles/textbook.json`
-- Create: `resources/styles/minimal.json`
-- Create: `tests/unit/test_publication_style_profile.py`
-
----
-
-## 7. Domain & Architectural Constraints
-
-- **Rule 6.1 Compliance:** `core/entities/` and `core/policies/` remain 100% free of Qt, SQLite, or network dependencies.
-- **D-USER-03 Compliance:** The profile schema must remain distinct from desktop application themes (`ThemePalette`).
-
----
-
-## 8. Detailed Implementation Requirements
-
-1. Schema validation must reject non-whitelisted document classes or negative margin values.
-2. Built-in profiles must have `is_builtin = True` and be marked immutable.
-3. Loading profiles from JSON must validate the `schema_version == 1` header.
+@dataclass(frozen=True)
+class PublicationStyleProfile:
+    profile_id: str                    # "builtin:academic", "user:custom_report_v1"
+    version: str                       # "1.0.0"
+    schema_version: int                # 1
+    display_name: str
+    description: str
+    is_builtin: bool
+    typography: TypographyConfig
+    geometry: GeometryConfig
+    colors: ColorSchemeConfig
+    sections: SectionConfig
+    documentclass: str                 # "scrartcl", "article", "report", "scrreprt", "book", "scrbook"
+    classoptions: Tuple[str, ...]
+```
 
 ---
 
-## 9. Acceptance Criteria
+## 3. Detailed Implementation Requirements
+
+1. **Four-Scope Separation (Finding F):**
+   - Strictly isolates Scope 2 (Publication Theme) from Scope 1 (Application Theme), Scope 3 (Content Style), and Scope 4 (Product Template).
+2. **Strict Schema Validation (`core/policies/style_profile_policy.py`):**
+   - Font sizes: strictly allowlisted (`"10pt"`, `"11pt"`, `"12pt"`).
+   - Linestretch: bounded ($1.0 \le v \le 1.6$).
+   - Margin dimensions: regex `^\d+(\.\d+)?(cm|mm|in|pt)$`, bounded between $1.0\text{ cm}$ and $5.0\text{ cm}$.
+   - Documentclass: allowlisted enum (`"scrartcl"`, `"article"`, `"report"`, `"scrreprt"`, `"book"`, `"scrbook"`).
+   - Class options: allowlisted tokens (`"DIV=12"`, `"parskip=half"`, `"twocolumn"`, `"oneside"`, `"twoside"`).
+   - Strikethrough engine: typed enum (`"ulem"`, `"soul"`, `"default"`).
+3. **Four Built-in JSON Assets under `resources/styles/`:**
+   - `academic.json`: A4, `scrartcl`, $2.0\text{ cm}$ margins, numbered sections, high-contrast links, strikethrough: `ulem`.
+   - `technical_report.json`: A4, `scrreprt`, $2.5\text{ cm}$ margins, table of contents, strikethrough: `ulem`.
+   - `textbook.json`: A4, `scrbook`, $3.0\text{ cm}$ margins, large headings, strikethrough: `ulem`.
+   - `minimal.json`: A4, `article`, clean unnumbered sections, monochrome links, strikethrough: `ulem`.
+
+---
+
+## 4. Acceptance Criteria
 
 - [ ] All 4 standard built-in profile JSON files parse cleanly and pass schema validation.
-- [ ] Attempting to construct a profile with invalid margins (e.g. `"negative"`) raises `InvalidStyleProfileError`.
+- [ ] Constructing a profile with invalid margins (e.g. `"negative"`) raises `InvalidStyleProfileError`.
+- [ ] Attempting to inject raw TeX commands (`\usepackage`, `\newcommand`) is rejected by the schema validator.
 - [ ] Profile serialization to and from JSON is completely lossless.
-- [ ] Zero Qt or SQLite imports in `core/entities/publication_style_profile.py`.
+- [ ] AST check confirms zero imports of `PySide6`, `Qt`, or `sqlite3` in `core/entities/publication_style_profile.py`.
 
 ---
 
-## 10. Required Tests
+## 5. Test Specifications
 
-- Unit tests in `tests/unit/test_publication_style_profile.py` verifying:
-  - Validation of all 4 built-in profiles.
-  - Rejection of invalid fontsize, linestretch, documentclass, and margin formats.
-  - Correct JSON serialization and deserialization.
+### 5.1 Unit Tests
+- `tests/unit/test_publication_style_profile.py`:
+  - `test_builtin_profiles_validation()`: Validates all 4 shipped JSON profiles.
+  - `test_reject_invalid_font_size()`: Asserts `"14pt"` raises error.
+  - `test_reject_invalid_margin_syntax()`: Asserts non-dimension strings raise error.
+  - `test_reject_unallowlisted_documentclass()`: Asserts `"standalone"` raises error.
+  - `test_json_roundtrip_fidelity()`: Confirms lossless serialization.
+
+### 5.2 Negative & Security Tests
+- `test_reject_raw_tex_macro_injection()`: Ensures profiles cannot contain arbitrary LaTeX macro strings.
+
+### 5.3 Concurrency & Persistence Considerations
+- Pure domain entities; immutable once instantiated.
 
 ---
 
-## 11. Security Requirements
+## 6. Error and Recovery Behavior
 
-- Prevent arbitrary macro execution by strictly disallowing unvalidated raw TeX strings in profile definitions.
+- Validation failures raise `InvalidStyleProfileError` with detailed field paths explaining the violation.
 
 ---
 
-## 12. Completion Evidence & Follow-up
+## 7. Observability & Audit Requirements
 
-- Unit test execution evidence passing 100%.
-- Unblocks: `TICK-ADE-14`.
+- Built-in profile files are validated at application test time; hashes are checked for tampering.
+
+---
+
+## 8. Documentation Updates
+
+- Document 4-scope visual separation and schema in ADR-010.
+
+---
+
+## 9. Required Project Skills
+
+- `domain-modeling`: Establishing profile domain entities.
+- `tdd`: Test-first implementation of schema validation.
+
+---
+
+## 10. Verification Commands
+
+```bash
+pytest tests/unit/test_publication_style_profile.py -v
+python3 -c "import json, glob; [json.load(open(f)) for f in glob.glob('resources/styles/*.json')]; print('All style JSONs valid')"
+```
+
+---
+
+## 11. Definition of Done
+
+- All unit tests pass with 100% coverage.
+- All 4 built-in JSON profiles authored and validated.

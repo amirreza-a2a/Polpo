@@ -1,105 +1,146 @@
-# TICK-ADE-06: Raw Line-Based Document Patch Service & Collision Disambiguation
+# TICK-ADE-06: Raw Line-Based Document Patch Service, Contextual Anchors & Collision Disambiguation
 
 - **Ticket ID:** `TICK-ADE-06`
+- **Title:** Raw Line-Based Document Patch Service, Contextual Anchors & Collision Disambiguation
 - **Milestone:** Milestone B (Working Copy & Patch Architecture)
 - **Priority:** P1
 - **Status:** Proposed (Awaiting Maintainer Approval)
-- **Blocked By:** `TICK-ADE-05`
-- **Authoritative ADR:** ADR-008 (Agent Working Copy, Isolated Patch Lifecycle & OCC Safety)
+- **Scope:** Implement `DocumentPatch`, `PatchAnchor`, `PatchSet`, and `DocumentPatchService` in `core/entities/document_patch.py` and `application/services/document_patch_service.py`, enabling line-based text transformations, contextual anchor verification, duplicate fragment disambiguation, and unified diff generation without lossy AST serialization.
+- **Explicit Non-Goals:**
+  - No AST-to-text re-serialization (CommonMark AST is strictly read-only; text manipulation operates on raw string lines).
+  - No relying on line numbers alone without anchor verification (Finding C).
+  - No modification of canonical files on disk.
+- **Prerequisites:** `TICK-ADE-05` completed; ADR-008 approved.
+- **Dependencies (Blocked By):** `TICK-ADE-05`.
+- **Unblocks:** `TICK-ADE-07`, `TICK-ADE-11`.
 
 ---
 
-## 1. Objective
+## 1. Existing Source-Code Integration Points
 
-Implement `DocumentPatch`, `PatchSet`, and `DocumentPatchService` in `core/entities/document_patch.py` and `application/services/document_patch_service.py`, enabling line-based text transformations, duplicate fragment disambiguation, and unified diff generation without lossy AST serialization.
-
----
-
-## 2. User Value
-
-Authors receive clear, granular side-by-side or unified diffs of proposed changes. Even if a formula or diagram appears multiple times in a document, line coordinates guarantee that the exact intended location is modified without ambiguous replacements.
+- `core/markdown/merge.py`: Existing diff3 and line-matching algorithms.
+- `application/dto/latex_repair_dto.py`: Existing fragment replacement contract.
+- `application/services/latex_repair_service.py`: Disambiguation precedent for formula replacements.
 
 ---
 
-## 3. Scope
+## 2. Proposed Domain Interfaces & DTOs
 
-- Define domain entities in `core/entities/document_patch.py`:
-  - `PatchScope` enum (`SOURCE_LINE_RANGE`, `RAW_BLOCK_TOKEN`, `METADATA_FIELD`, `STYLE_PROFILE`).
-  - `DocumentPatch` value object: `patch_id: str`, `scope: PatchScope`, `target_start_line: int`, `target_end_line: int`, `original_text: str`, `replacement_text: str`, `change_summary: str`, `preserved_invariants: Tuple[str, ...]`.
-  - `PatchSet` aggregate: `set_id: str`, `working_copy_id: str`, `patches: List[DocumentPatch]`, `created_at: float`.
-- Implement `DocumentPatchService` in `application/services/document_patch_service.py`:
-  - `apply_patch(base_text: str, patch: DocumentPatch) -> Tuple[str, bool, Optional[str]]`: Replaces lines `[target_start_line, target_end_line]`, verifying that existing lines match `patch.original_text`.
-  - `apply_patch_set(base_text: str, patch_set: PatchSet) -> Tuple[str, bool, Optional[str]]`: Applies multiple non-overlapping patches in reverse line order (bottom-up) to preserve line indices.
-  - `generate_unified_diff(original_text: str, modified_text: str) -> str`: Produces clean unified diff string using Python's standard `difflib.unified_diff`.
-  - `detect_overlaps(patches: Sequence[DocumentPatch]) -> bool`: Verifies that no two patches share overlapping line intervals.
+```python
+class PatchScope(Enum):
+    SOURCE_LINE_RANGE = "SOURCE_LINE_RANGE"
+    RAW_BLOCK_TOKEN = "RAW_BLOCK_TOKEN"
+    METADATA_FIELD = "METADATA_FIELD"
+    STYLE_PROFILE = "STYLE_PROFILE"
 
----
+@dataclass(frozen=True)
+class PatchAnchor:
+    context_before: str                  # 2 lines immediately preceding target
+    target_lines: str                    # Expected verbatim target lines
+    context_after: str                   # 2 lines immediately following target
+    target_sha256: str                   # SHA-256 of expected target_lines
 
-## 4. Explicit Non-Goals
+@dataclass(frozen=True)
+class DocumentPatch:
+    patch_id: str
+    scope: PatchScope
+    target_start_line: int              # 1-indexed start line in snapshot text
+    target_end_line: int                # 1-indexed end line in snapshot text
+    anchor: PatchAnchor                 # Contextual verification anchor
+    original_text: str                  # Expected original text fragment
+    replacement_text: str               # Proposed replacement text
+    change_summary: str                 # Human-readable rationale (English)
+    preserved_invariants: Tuple[str, ...]
 
-- No AST-to-text re-serialization (CommonMark AST is strictly read-only; text manipulation operates on raw string lines).
-- No modification of files on disk.
-
----
-
-## 5. Codebase References
-
-- `core/markdown/merge.py` (Existing diff3 and line-matching algorithms).
-- `application/dto/latex_repair_dto.py` (Existing fragment replacement contract).
-- `application/services/latex_repair_service.py` (Disambiguation precedent).
-
----
-
-## 6. Proposed Files & Components
-
-- Create: `core/entities/document_patch.py`
-- Create: `application/services/document_patch_service.py`
-- Create: `tests/unit/test_document_patch_service.py`
-
----
-
-## 7. Domain & Architectural Constraints
-
-- **Format Preservation Invariant ([CONTEXT.md](file:///home/amirreza-a2a/DevelopPOlpo/PolpoT/CONTEXT.md) Section 3.4):** Plain text is the canonical source of truth. Patches must preserve original newline styles (`\n` vs `\r\n`) and trailing whitespace outside the targeted replacement range.
+@dataclass(frozen=True)
+class PatchSet:
+    set_id: str
+    working_copy_id: str
+    patches: List[DocumentPatch]
+    created_at: float
+```
 
 ---
 
-## 8. Detailed Implementation Requirements
+## 3. Detailed Implementation Requirements
 
-1. When applying multiple patches in a `PatchSet`, sort patches descending by `target_start_line` before applying. This prevents line additions or deletions in earlier patches from invalidating line numbers of later patches.
-2. If `patch.original_text` does not match the actual text at `[target_start_line, target_end_line]`, reject the patch with `PatchTargetMismatchError`.
-3. If two patches have overlapping line spans (e.g. `10-15` and `12-18`), reject the set with `OverlappingPatchError`.
+1. **Contextual Anchor Verification (Finding C):**
+   - Applying a patch verifies that lines at `[target_start_line, target_end_line]` match `anchor.target_lines` and `anchor.target_sha256`.
+   - If line coordinates drifted due to prior human typing, uses `context_before` and `context_after` to re-anchor the target location.
+   - If identical fragments occur in multiple places, the anchor bounding lines disambiguate the target. If ambiguous, raises `AmbiguousPatchAnchorError`.
+2. **Bottom-Up Application:**
+   - Multi-hunk patch sets sort patches descending by `target_start_line` before applying to preserve earlier line indices.
+3. **Overlapping Patch Detection:**
+   - Detects if any two patches within a `PatchSet` share overlapping line intervals. If detected, rejects set with `OverlappingPatchError`.
+4. **Unified Diff Generation:**
+   - Uses standard `difflib.unified_diff` to emit standard Git-compatible diffs for presentation in UI.
 
 ---
 
-## 9. Acceptance Criteria
+## 4. Acceptance Criteria
 
-- [ ] Line-based replacements apply cleanly and preserve surrounding document whitespace.
-- [ ] Bottom-up application of multi-hunk patch sets modifies all target regions accurately.
+- [ ] Line-based replacements apply cleanly and preserve surrounding document whitespace and line endings (`\n` vs `\r\n`).
+- [ ] Contextual anchors disambiguate identical formulas appearing at multiple locations.
+- [ ] Multi-patch sets apply bottom-up without line offset corruption.
 - [ ] Overlapping patches within a single set are detected and rejected.
-- [ ] Original text mismatch raises `PatchTargetMismatchError` without modifying the text.
-- [ ] `generate_unified_diff()` emits standard Git-compatible unified diff syntax.
+- [ ] Original text mismatch raises `PatchTargetMismatchError` without modifying source text.
+- [ ] `generate_unified_diff()` emits clean unified diff text.
 
 ---
 
-## 10. Required Tests
+## 5. Test Specifications
 
-- Unit tests in `tests/unit/test_document_patch_service.py` verifying:
-  - Single line replacement, multi-line replacement, insertions, and deletions.
-  - Multi-patch sets applied bottom-up across distant document lines.
-  - Detection and rejection of overlapping patch intervals.
-  - Rejection when original text has changed.
-  - Preservation of CRLF and LF line endings.
+### 5.1 Unit Tests
+- `tests/unit/test_document_patch_service.py`:
+  - `test_single_and_multi_line_patch_application()`: Basic replacements.
+  - `test_contextual_anchor_disambiguation()`: Verifies correct hunk selected among identical tokens.
+  - `test_bottom_up_patch_set_application()`: Multi-hunk distant replacements.
+  - `test_detect_and_reject_overlapping_patches()`: Rejection of colliding intervals.
+  - `test_line_ending_preservation()`: Confirms CRLF and LF preservation.
+
+### 5.2 Negative & Security Tests
+- `test_reject_control_characters_in_replacement()`: Ensures replacements containing null bytes (`\0`) are rejected.
+
+### 5.3 Concurrency & Persistence Considerations
+- Pure text manipulation in memory; zero disk writes.
 
 ---
 
-## 11. Security Requirements
+## 6. Error and Recovery Behavior
 
-- Patch replacements must reject null bytes (`\0`) and control characters that corrupt text editors.
+- Verification failures abort patch application completely, returning `(original_text, False, error_reason)` cleanly.
 
 ---
 
-## 12. Completion Evidence & Follow-up
+## 7. Observability & Audit Requirements
 
-- Unit test execution evidence passing 100%.
-- Unblocks: `TICK-ADE-07`, `TICK-ADE-11`.
+- Returns detailed failure reasons in `PatchApplicationResult`.
+
+---
+
+## 8. Documentation Updates
+
+- Document stable anchor model in ADR-008.
+
+---
+
+## 9. Required Project Skills
+
+- `codebase-design`: Clean patch data structures.
+- `tdd`: Test-driven patch engine implementation.
+
+---
+
+## 10. Verification Commands
+
+```bash
+pytest tests/unit/test_document_patch_service.py -v
+python3 -c "import ast; tree = ast.parse(open('application/services/document_patch_service.py').read()); assert not any('PySide6' in ast.dump(n) or 'sqlite3' in ast.dump(n) for n in ast.walk(tree))"
+```
+
+---
+
+## 11. Definition of Done
+
+- All unit tests pass with 100% coverage.
+- Anchor verification and diff generator fully verified.

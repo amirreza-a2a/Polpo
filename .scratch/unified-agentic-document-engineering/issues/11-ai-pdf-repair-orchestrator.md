@@ -1,108 +1,147 @@
 # TICK-ADE-11: AI PDF Repair Orchestration Service & Bounded Self-Correction Loop
 
 - **Ticket ID:** `TICK-ADE-11`
+- **Title:** AI PDF Repair Orchestration Service & Bounded Self-Correction Loop
 - **Milestone:** Milestone D (AI-Assisted PDF Repair)
 - **Priority:** P1 (Blocker for Milestone D)
 - **Status:** Proposed (Awaiting Maintainer Approval)
-- **Blocked By:** `TICK-ADE-04`, `TICK-ADE-06`, `TICK-ADE-10`
-- **Authoritative ADR:** ADR-009 (Quarto PDF Failure Diagnostics & AI PDF Repair)
+- **Scope:** Implement `PdfRepairService` in `application/services/pdf_repair_service.py` to orchestrate end-to-end AI-assisted PDF repair, including pre-transmission consent disclosure, candidate patch generation across appropriate scopes, isolated scratchpad recompilation, candidate inspection via `IPdfInspectionEngine`, and bounded self-correction.
+- **Explicit Non-Goals:**
+  - No unbounded retry loops (strictly at most 2 total AI generation attempts per user request).
+  - No silent modification of canonical files on disk.
+  - No generating arbitrary raw LaTeX macros for preamble injection (Finding A, Finding F).
+- **Prerequisites:** `TICK-ADE-04`, `TICK-ADE-06`, and `TICK-ADE-10` completed; ADR-009 approved.
+- **Dependencies (Blocked By):** `TICK-ADE-04`, `TICK-ADE-06`, `TICK-ADE-10`.
+- **Unblocks:** `TICK-ADE-15`.
 
 ---
 
-## 1. Objective
+## 1. Existing Source-Code Integration Points
 
-Implement `PdfRepairService` in `application/services/pdf_repair_service.py` to orchestrate end-to-end AI-assisted PDF repair, including consent disclosure, candidate patch generation across appropriate scopes, isolated scratchpad recompilation, and bounded self-correction.
-
----
-
-## 2. User Value
-
-Enables authors to repair complex whole-document PDF compilation failures with a single guided workflow. The assistant proposes minimal, verified fixes and proves they compile before asking the author to apply them.
+- `application/services/latex_repair_service.py`: Reference for bounded retries and same-pipeline candidate validation.
+- `application/services/quarto_pdf_export_service.py`: Quarto compilation execution.
+- `application/services/document_patch_service.py`: Line-based patch application with stable anchors.
+- `application/ports/pdf_validator_port.py`: Abstract foundation contract `IPdfInspectionEngine` (defined in `TICK-ADE-10`, Finding B).
 
 ---
 
-## 3. Scope
+## 2. Proposed Application Interfaces & DTOs
 
-- Implement `PdfRepairService` in `application/services/pdf_repair_service.py`:
-  - `diagnose_and_repair(request: PdfRepairRequest) -> PdfRepairProposal`:
-    1. Gathers `DiagnosticBundle` from `PdfDiagnosticService`.
-    2. Builds minimal prompt context (failing snippet + sanitized diagnostic, respecting data minimization).
-    3. Prompts AI provider via `RateLimitedAIExecutor` using `prompts/repair/quarto_repair_v1.txt`.
-    4. Parses structured machine-readable JSON repair candidate (`repaired_snippet`, `patch_scope`, `rationale`).
-    5. Applies patch candidate to an `AgentWorkingCopy`.
-    6. Recompiles the full candidate document via `QuartoPdfAdapter` in isolated staging.
-    7. Validates candidate PDF via `IPdfInspectionEngine` (TICK-ADE-12).
-    8. If compilation fails, executes bounded retry (`max_retries = 1`) incorporating new compiler error.
-    9. Returns verified `PdfRepairProposal` containing unified diff, candidate PDF path, and verification evidence.
+```python
+@dataclass(frozen=True)
+class PdfRepairRequest:
+    task_id: str
+    job_id: int
+    working_copy_id: str
+    failure_id: str
+    diagnostic_bundle: DiagnosticBundle
 
----
+@dataclass(frozen=True)
+class PdfRepairConsentPayload:
+    task_id: str
+    failing_snippet: str
+    mapped_markdown_line: Optional[int]
+    sanitized_error_excerpt: str
+    target_scope: RepairScope
 
-## 4. Explicit Non-Goals
-
-- No unbounded retry loops (strictly at most 2 total AI generation attempts per user request).
-- No silent modification of canonical files on disk.
-
----
-
-## 5. Codebase References
-
-- `application/services/latex_repair_service.py` (Pattern for bounded retries and same-pipeline validation).
-- `application/services/quarto_pdf_export_service.py` (Quarto export execution).
-- `application/services/document_patch_service.py` (Patch application).
-
----
-
-## 6. Proposed Files & Components
-
-- Create: `prompts/repair/quarto_repair_v1.txt`
-- Create: `application/services/pdf_repair_service.py`
-- Create: `application/dto/pdf_repair_dto.py`
-- Create: `tests/unit/test_pdf_repair_service.py`
+@dataclass(frozen=True)
+class PdfRepairProposal:
+    task_id: str
+    working_copy_id: str
+    patch_set: PatchSet
+    validation_passed: bool
+    candidate_pdf_path: Optional[str]
+    unified_diff: str
+    rationale: str
+    attempts_used: int
+```
 
 ---
 
-## 7. Domain & Architectural Constraints
+## 3. Detailed Implementation Requirements
 
-- **D-USER-02 & D-USER-03 Compliance:** Pre-transmission consent must be obtained; candidate validation must use the full Quarto toolchain; scopes must not conflate document and product fixes.
-- **Rule 6.2 Compliance:** `application/services/pdf_repair_service.py` remains free of Qt and vendor SDK imports.
+1. **Inspection Port Ownership (Finding B):**
+   - `PdfRepairService` accepts `IPdfInspectionEngine` via dependency injection.
+   - It depends ONLY on the already-defined abstract contract in `application/ports/pdf_validator_port.py`. It does NOT depend on a later ticket or concrete PyMuPDF adapter. Unit tests inject a test double/mock.
+2. **Minimal Prompt Context & Pre-Transmission Consent (Finding G):**
+   - Discloses `PdfRepairConsentPayload` before dispatching external model requests.
+   - Builds prompt using `prompts/repair/quarto_repair_v1.txt`.
+3. **Zero Arbitrary Macro Injection (Finding A, Finding F):**
+   - If `error_category == TEMPLATE_CONFLICT` (e.g. `soul` in RTL), the service instructs the model to emit a publication style token override (`strikethrough_engine = "ulem"`), NOT arbitrary `\newcommand` or `\usepackage` lines.
+4. **Candidate Recompilation & Bounded Loop:**
+   - Applies candidate patch to `AgentWorkingCopy`.
+   - Recompiles full candidate PDF in `.pdf_staging/`.
+   - Inspects candidate PDF via `IPdfInspectionEngine.inspect_pdf()`.
+   - If compilation fails, executes at most one bounded retry (`max_retries = 1`) passing the new compiler error.
+   - If second attempt fails, returns `PdfRepairProposal(validation_passed=False)`.
 
 ---
 
-## 8. Detailed Implementation Requirements
-
-1. The prompt payload must be disclosed to the caller via `PdfRepairConsentPayload` so the UI can present it before network dispatch.
-2. If `error_category == TEMPLATE_CONFLICT` (e.g. `soul` in RTL), the service instructs the model to emit a publication style override (loading `ulem`) rather than modifying the author's Markdown text.
-3. Candidate recompilation must enforce the 60-second execution timeout and `-no-shell-escape`.
-
----
-
-## 9. Acceptance Criteria
+## 4. Acceptance Criteria
 
 - [ ] AI prompt context is minimized to failing fragment and sanitized compiler error.
-- [ ] Candidate patch is applied to `AgentWorkingCopy` and compiled through actual Quarto/XeLaTeX.
+- [ ] Candidate patch is applied to `AgentWorkingCopy` and recompiled through actual Quarto/XeLaTeX.
 - [ ] If first candidate fails compilation, second attempt receives the new compiler error.
 - [ ] If second attempt fails, returns `PdfRepairProposal(validation_passed=False)` without infinite loop.
-- [ ] Recompilation success produces valid candidate PDF and unified diff.
+- [ ] Candidate PDF is verified via `IPdfInspectionEngine`.
+- [ ] No raw LaTeX macros are injected into preambles.
+- [ ] AST check confirms zero imports of `PySide6`, `Qt`, `sqlite3`, or vendor AI SDKs in `application/services/pdf_repair_service.py`.
 
 ---
 
-## 10. Required Tests
+## 5. Test Specifications
 
-- Unit tests in `tests/unit/test_pdf_repair_service.py` verifying:
-  - Successful candidate repair on first attempt.
-  - Successful candidate repair on second attempt after self-correction.
-  - Terminal failure handling after 2 failed attempts.
-  - Data minimization (entire document is not sent when fragment suffices).
+### 5.1 Unit Tests
+- `tests/unit/test_pdf_repair_service.py`:
+  - `test_repair_success_first_attempt()`: First candidate compiles and passes mock inspection.
+  - `test_repair_success_second_attempt()`: First candidate fails, second attempt self-corrects and succeeds.
+  - `test_repair_terminal_failure_after_two_attempts()`: Verifies bounded exit after 2 failed attempts.
+  - `test_template_conflict_uses_typed_style_override()`: Confirms `soul` conflict emits typed token override rather than macro injection.
+  - `test_data_minimization_disclosure()`: Confirms consent payload exposes minimal excerpt.
+
+### 5.2 Negative & Security Tests
+- `test_reject_arbitrary_preamble_macro_injection()`: Ensures repair proposals containing `\newcommand` or `\usepackage` are rejected by safety policy before compilation.
+
+### 5.3 Concurrency & Persistence Considerations
+- Recompilation executed within isolated staging directories under timeout governance (60s).
 
 ---
 
-## 11. Security Requirements
+## 6. Error and Recovery Behavior
 
-- Verify candidate output for forbidden commands (`\write18`, `\catcode`, path traversals) before compiling.
+- Recompilation timeouts or subprocess crashes are handled gracefully, recording the failure in candidate status.
 
 ---
 
-## 12. Completion Evidence & Follow-up
+## 7. Observability & Audit Requirements
 
-- Unit test execution evidence passing 100%.
-- Unblocks: `TICK-ADE-12`, `TICK-ADE-15`.
+- Emits step progress events tracking repair generation, compilation duration, and validation metrics.
+
+---
+
+## 8. Documentation Updates
+
+- Document repair orchestration and scope enforcement in ADR-009.
+
+---
+
+## 9. Required Project Skills
+
+- `codebase-design`: Clean dependency injection of inspection port.
+- `tdd`: Test-driven repair loop with mock AI executor and mock inspection engine.
+
+---
+
+## 10. Verification Commands
+
+```bash
+pytest tests/unit/test_pdf_repair_service.py -v
+python3 -c "import ast; tree = ast.parse(open('application/services/pdf_repair_service.py').read()); assert not any('PySide6' in ast.dump(n) or 'fitz' in ast.dump(n) for n in ast.walk(tree))"
+```
+
+---
+
+## 11. Definition of Done
+
+- All unit tests pass with 100% coverage.
+- Bounded self-correction loop and macro safety verified.
