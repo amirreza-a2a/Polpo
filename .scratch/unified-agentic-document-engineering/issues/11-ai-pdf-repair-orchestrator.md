@@ -67,12 +67,12 @@ class PdfRepairProposal:
    - Discloses `PdfRepairConsentPayload` before dispatching external model requests.
    - Builds prompt using `prompts/repair/quarto_repair_v1.txt`.
 3. **Zero Arbitrary Macro Injection & Fail-Closed Unknowns (Finding A, Finding C, Finding D):**
-   - If `error_category == TEMPLATE_CONFLICT` (e.g. `soul` in RTL), the service instructs the model to emit a publication style token override (`strikethrough_engine = "ulem"`), governed by maintainer proposal `D-PROP-08`, NOT arbitrary `\newcommand` or `\usepackage` lines.
+   - If `error_category == TEMPLATE_CONFLICT` (e.g. `soul` in RTL), the service instructs the model to emit a publication style token override (`strikethrough_engine = "ulem"`), governed by maintainer proposal `D-PROP-08` (Status: `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`), NOT arbitrary `\newcommand` or `\usepackage` lines. If D-PROP-08 is unapproved, routes to product defect reporting.
    - If `error_category == UNKNOWN` or `recommended_scope is None`, the repair orchestrator immediately halts automated patch generation, sets `validation_passed = False`, and yields raw diagnostic evidence to the user for human inspection.
 4. **Candidate Recompilation & Bounded Loop:**
    - Applies candidate patch to `AgentWorkingCopy`.
    - Recompiles full candidate PDF in `.pdf_staging/`.
-   - Inspects candidate PDF via `IPdfInspectionEngine.inspect_pdf()` using minimized `expected_text_anchors` (without full `source_markdown`).
+   - Inspects candidate PDF via `IPdfInspectionEngine.inspect_pdf()` using bounded `expected_text_anchors: Tuple[str, ...]` (without full `source_markdown`).
    - If compilation fails, executes at most one bounded retry (`max_retries = 1`) passing the new compiler error.
    - If second attempt fails, returns `PdfRepairProposal(validation_passed=False)`.
 

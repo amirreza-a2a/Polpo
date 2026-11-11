@@ -76,6 +76,14 @@ class AgentController(QObject):
     @Slot(str)
     def rejectProposal(self, task_id: str) -> None:
         ...
+
+    @Slot(str)
+    def restartTask(self, task_id: str) -> None:
+        ...
+
+    @Slot(str)
+    def dismissTask(self, task_id: str) -> None:
+        ...
 ```
 
 ### 2.2 QML View Architecture

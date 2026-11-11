@@ -39,16 +39,18 @@ class PyMuPdfValidator(IPdfInspectionEngine):
 
 ## 3. Detailed Implementation Requirements
 
-1. **Structural PDF Inspection (Finding F, Finding H):**
+1. **Structural PDF Inspection (Finding E, Finding F, Finding H):**
    - Header & Integrity: Verifies `%PDF-` header and successful opening with `fitz.open(request.pdf_path)`. If corrupted, records `HARD_FAILURE` and sets `is_valid = False`.
+   - Page Count Bound: Enforces `max_pages = 500` bound against decompression bombs.
    - Page Dimensions: Verifies page dimensions match expected format (e.g. A4: $595 \times 842 \pm 2$ pt). Flags deviations as `WARNING`.
-   - Text Content Extraction: Extracts text via `page.get_text()` and checks for presence of bounded `request.expected_text_anchors` (does NOT require full source markdown).
+   - Text Content Extraction: Extracts text via `page.get_text()` and checks for presence of bounded `request.expected_text_anchors: Tuple[str, ...]` (max 10 anchors, max 128 chars each, max 2 KB total; does NOT require full source markdown).
    - Blank Page Detection: Flags pages with $< 10$ characters of text and zero vector drawings as `WARNING` (blank page indicator).
-   - Vector Graphics Detection: `require_vector_drawings = False` by default. Text-only documents are structurally valid with zero drawings. Verifies `len(page.get_drawings()) > 0` ONLY on pages specified in `request.policy.expected_diagram_pages`; flags missing drawings on those pages as `WARNING`.
+   - Vector Graphics Detection: `require_vector_drawings = False` by default. Text-only documents are structurally valid with zero drawings. Verifies `len(page.get_drawings()) > 0` ONLY on pages specified in `request.policy.expected_diagram_pages: Tuple[int, ...]`; flags missing drawings on those pages as `WARNING`, not automatic hard rejection.
    - Structural vs Semantic Scope: Explicitly documents that `is_valid = True` proves structural well-formedness and readability only; it does NOT imply visual beauty, mathematical correctness, Persian RTL text correctness, or semantic fidelity.
 2. **Optional Visual Preview Generation:**
    - If `request.generate_raster_previews` is `True`, renders 150 DPI page preview PNGs for sampled pages (first 3 pages + last page + any page with an anomaly; max 5 pages total).
    - Enforces 50MB image memory buffer cap and 5.0-second execution timeout with cooperative cancellation checks.
+   - Generated buffers returned as immutable `raster_previews: Tuple[bytes, ...]`.
 3. **Realistic Performance Target:**
    - Structural checks complete in $< 1.5$ seconds for documents under 50 pages on reference hardware (Ubuntu 24.04, Core i7/Ryzen 7). This benchmark is a quality objective, not an absolute real-time guarantee.
 

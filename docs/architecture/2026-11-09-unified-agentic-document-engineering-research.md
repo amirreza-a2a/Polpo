@@ -92,34 +92,35 @@ Infrastructure Adapters (infrastructure/)
 ### 2.5 Persistent-Data Privacy Boundary & Field Audit (Finding A)
 In accordance with [`AGENTS.md`](AGENTS.md) Rules 10 and 11, persistent storage across all proposed tables enforces strict metadata allowlists, size bounds, and retention policies. Complete user requests with source text, full Markdown drafts, working copies, raw prompts, completions, and plain content hashes are strictly prohibited from persistence.
 
-| Table | Field | Data Classification | Sensitive Content Possible? | Persistence Policy | Validation & Bounds | Retention |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `agent_tasks` | `task_id` | System Identifier | No | Canonical primary key | UUID4 format string | 30 days from `completed_at` |
-| `agent_tasks` | `job_id` | Foreign Key | No | References parent `jobs(id)` | Positive integer | Cascade with parent job |
-| `agent_tasks` | `status` | State Machine Enum | No | Current `TaskStatus` | Allowlisted enum string | 30 days from `completed_at` |
-| `agent_tasks` | `task_goal` | Bounded Lifecycle Label | **Yes** (if raw request stored) | **Short display label / classification only**. Never store raw user requests containing document fragments or private text. | Sanitized string, max 256 chars | 30 days from `completed_at` |
-| `agent_tasks` | `plan_json` | Validated Structured Metadata | **Yes** (if model emits raw text) | **Strictly validated safe plan schema only**. Allowlisted tool names, rationales, and typed arguments; zero prompts, completions, document fragments, or secrets. | JSON schema validation against `AgentPlanSchema`, max 16 KB | 30 days from `completed_at` |
-| `agent_tasks` | `current_step_index` | Execution Counter | No | Monotonic step counter | `0 <= index <= total_steps` | 30 days from `completed_at` |
-| `agent_tasks` | `total_steps` | Execution Bound | No | Bounded plan size | `0 <= steps <= 10` | 30 days from `completed_at` |
-| `agent_tasks` | `working_copy_id` | Ephemeral Scratchpad ID | No | Opaque UUID referencing `.polpo/working_copies/{id}/` | UUID4 format; content strictly ephemeral on disk | 30 days in DB; folder purged on task end |
-| `agent_tasks` | `failure_id` | Ephemeral Diagnostic ID | No | Opaque UUID referencing `.polpo/staging_failures/{id}/` | UUID4 format; bundle managed by LRU (max 5) | 30 days in DB; bundle pruned via LRU |
-| `agent_tasks` | `error_message` | Bounded Diagnostic Category | **Yes** (if raw logs stored) | **Sanitized English error category or bounded summary**. Never store unredacted stack traces, system paths, or source text. | Redacted by `TexLogSanitizer`, max 512 chars | 30 days from `completed_at` |
-| `agent_tasks` | `created_at` | Timestamp | No | Epoch creation time | Real/float >= 0 | 30 days from `completed_at` |
-| `agent_tasks` | `updated_at` | Timestamp | No | Epoch last update time | Real/float >= `created_at` | 30 days from `completed_at` |
-| `agent_tasks` | `completed_at` | Terminal Timestamp | No | Epoch terminal or interrupted transition time; baseline for retention window | Real/float >= `created_at` (NULL for active tasks) | 30 days from `completed_at` |
-| `agent_task_journal` | `entry_id` | Sequence ID | No | Auto-increment primary key | Positive integer | Cascade deleted with task |
-| `agent_task_journal` | `task_id` | Foreign Key | No | References `agent_tasks(task_id)` | UUID4 with `ON DELETE CASCADE` | Cascade deleted with task |
-| `agent_task_journal` | `step_index` | Execution Step | No | Step index in plan | Optional integer `0 <= step <= 10` | Cascade deleted with task |
-| `agent_task_journal` | `event_type` | Audit Event Enum | No | Typed audit event | Allowlisted string enum | Cascade deleted with task |
-| `agent_task_journal` | `recorded_at` | Timestamp | No | Microsecond epoch timestamp | Real/float >= 0 | Cascade deleted with task |
-| `agent_task_journal` | `metadata_json` | Strictly Allowlisted Audit Record | **Yes** (if arbitrary keys allowed) | **Strict Allowlist only**. Max 8 KB per entry; max 50 entries per task. Plain content hashes prohibited (replaced by opaque correlation IDs). | Schema validation against `JournalMetadataAllowlist`, max 8 KB | Cascade deleted with task |
-| `publication_style_profiles` | `profile_id` | Profile Identifier | No | Key (`builtin:{name}` or `user:{uuid}`) | String, max 64 chars, regex `^(builtin:[a-z0-9_-]+|user:[0-9a-f-]{36})$` | Permanent (built-in) / user-managed |
-| `publication_style_profiles` | `display_name` | Presentation Meta | No | Human-readable title | String, max 128 chars | User-managed |
-| `publication_style_profiles` | `description` | Presentation Meta | No | Human-readable summary | String, max 512 chars | User-managed |
-| `publication_style_profiles` | `schema_version` | Schema Version | No | Schema compatibility version | Integer >= 1 | User-managed |
-| `publication_style_profiles` | `is_builtin` | Immutability Flag | No | Built-in profile protection | 1 (true) or 0 (false) | Permanent |
-| `publication_style_profiles` | `profile_json` | Declarative Profile Spec | **Yes** (if raw macros injected) | **Strictly validated declarative typesetting JSON**. Prohibit raw LaTeX macros, `header-includes`, shell commands, executable code. | Validated against `PublicationStyleProfileSchema`, max 16 KB | User-managed |
-| `publication_style_profiles` | `created_at`, `updated_at` | Timestamps | No | Epoch modification times | Real/float >= 0 | User-managed |
+| Table | Field | SQL Type & Nullability | Default | Key Role | Data Classification | Sensitive Content Possible? | Persistence Policy | Validation & Size Bounds | Retention & Deletion |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `agent_tasks` | `task_id` | `TEXT NOT NULL` | None | Primary Key | System Identifier | No | Persisted primary key | Canonical UUID4 format string (36 chars) | 30 days from `completed_at` |
+| `agent_tasks` | `job_id` | `INTEGER NOT NULL` | None | Foreign Key | Parent Job Reference | No | References parent `jobs(id)` | Valid positive integer; `ON DELETE CASCADE` | Cascade deleted with parent job |
+| `agent_tasks` | `status` | `TEXT NOT NULL` | None | None | State Machine Enum | No | Current `TaskStatus` string | Allowlisted enum string only (max 32 chars) | 30 days from `completed_at` |
+| `agent_tasks` | `task_goal` | `TEXT NOT NULL` | None | None | Bounded Lifecycle Label | **Yes** (if raw request stored) | **Allowlisted task category or bounded generic display label only** (e.g. `PDF_EXPORT_REPAIR`, `STYLE_PROFILE_APPLY`). Never store raw user requests or document fragments. | Sanitized string, max 256 chars, no control chars or private path substrings | 30 days from `completed_at` |
+| `agent_tasks` | `plan_json` | `TEXT` | `NULL` | None | Validated Structured Metadata | **Yes** (if model emits raw text) | **Metadata-only persistence: NULL or strictly bounded step metadata only** (step index, allowlisted tool names, risk tiers). Ephemeral plans hold full rationale. Prohibited: prompts, completions, document fragments, credentials. | Schema validation against `AgentPlanMetadataSchema`, max 16 KB | 30 days from `completed_at` |
+| `agent_tasks` | `current_step_index` | `INTEGER` | `0` | None | Execution Counter | No | Monotonic step counter | Integer `0 <= index <= total_steps` | 30 days from `completed_at` |
+| `agent_tasks` | `total_steps` | `INTEGER` | `0` | None | Execution Bound | No | Bounded plan size | Integer `0 <= steps <= 10` | 30 days from `completed_at` |
+| `agent_tasks` | `working_copy_id` | `TEXT` | `NULL` | None | Ephemeral Scratchpad ID | No | Opaque UUID referencing `.polpo/working_copies/{id}/` | Canonical UUID4 format string; disk content strictly ephemeral | 30 days in DB; folder purged on completion/restart |
+| `agent_tasks` | `failure_id` | `TEXT` | `NULL` | None | Ephemeral Diagnostic ID | No | Opaque UUID referencing `.polpo/staging_failures/{id}/` | Canonical UUID4 format string; diagnostic bundle managed by LRU | 30 days in DB; bundle pruned via LRU (max 5) |
+| `agent_tasks` | `error_message` | `TEXT` | `NULL` | None | Bounded Diagnostic Category | **Yes** (if raw logs stored) | **Sanitized English error category or typed error code only** (e.g. `PACKAGE_MISSING:soul`, `LATEX_SYNTAX_ERROR`). Prohibited: unredacted stack traces, local system paths, source text. | Redacted by `TexLogSanitizer`, max 512 chars | 30 days from `completed_at` |
+| `agent_tasks` | `created_at` | `REAL NOT NULL` | None | None | Timestamp | No | Epoch creation time | Real/float >= 0 | 30 days from `completed_at` |
+| `agent_tasks` | `updated_at` | `REAL NOT NULL` | None | None | Timestamp | No | Epoch last update time | Real/float >= `created_at` | 30 days from `completed_at` |
+| `agent_tasks` | `completed_at` | `REAL` | `NULL` | None | Terminal Timestamp | No | Epoch terminal or interrupted transition time; baseline for retention | Real/float >= `created_at` (NULL for active tasks; set once on terminal/interrupted; never reset on repeated restart) | 30 days from `completed_at` |
+| `agent_task_journal` | `entry_id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | Auto | Primary Key | Sequence ID | No | Auto-increment primary key | Positive integer | Cascade deleted with task |
+| `agent_task_journal` | `task_id` | `TEXT NOT NULL` | None | Foreign Key | Parent Task Reference | No | References `agent_tasks(task_id)` | UUID4 format; `ON DELETE CASCADE` | Cascade deleted with task |
+| `agent_task_journal` | `step_index` | `INTEGER` | `NULL` | None | Execution Step | No | Step index in plan | Optional integer `0 <= step <= 10` | Cascade deleted with task |
+| `agent_task_journal` | `event_type` | `TEXT NOT NULL` | None | None | Audit Event Enum | No | Typed audit event | Allowlisted string enum | Cascade deleted with task |
+| `agent_task_journal` | `metadata_json` | `TEXT NOT NULL` | None | None | Allowlisted Audit Record | **Yes** (if arbitrary keys allowed) | **Strict Allowlist only**. Contains typed classifications, bounded summaries (max 256 chars), and opaque non-authorizing references. Prohibited: document hashes, raw source text, secrets. | Schema validation against `JournalMetadataAllowlist`, max 8 KB | Cascade deleted with task |
+| `agent_task_journal` | `recorded_at` | `REAL NOT NULL` | None | None | Timestamp | No | Microsecond epoch timestamp | Real/float >= 0 | Cascade deleted with task |
+| `publication_style_profiles` | `profile_id` | `TEXT PRIMARY KEY` | None | Primary Key | Profile Identifier | No | Key (`builtin:{name}` or `user:{uuid}`) | String, max 64 chars, regex `^(builtin:[a-z0-9_-]+|user:[0-9a-f-]{36})$` | Permanent (built-in) / user-managed |
+| `publication_style_profiles` | `display_name` | `TEXT NOT NULL` | None | None | Presentation Name | **Yes** (user title) | Human-readable profile title | String, max 128 chars, sanitized | User-managed |
+| `publication_style_profiles` | `description` | `TEXT` | `NULL` | None | Presentation Summary | **Yes** (user summary) | Optional presentation summary | String, max 512 chars, sanitized | User-managed |
+| `publication_style_profiles` | `schema_version` | `INTEGER NOT NULL` | `1` | None | Schema Evolution | No | Schema compatibility version | Positive integer (default 1) | User-managed |
+| `publication_style_profiles` | `is_builtin` | `INTEGER NOT NULL` | `0` | None | Immutability Flag | No | Built-in profile protection | 1 (true) or 0 (false) | Permanent (built-in) / user-managed |
+| `publication_style_profiles` | `profile_json` | `TEXT NOT NULL` | None | None | Declarative Profile Spec | **Yes** (if raw macros injected) | **Strictly validated declarative typesetting JSON**. Prohibit raw LaTeX macros, `header-includes`, shell commands, executable code. | Validated against `PublicationStyleProfileSchema`, max 16 KB | User-managed |
+| `publication_style_profiles` | `created_at` | `REAL NOT NULL` | None | None | Timestamp | No | Epoch creation time | Real/float >= 0 | User-managed |
+| `publication_style_profiles` | `updated_at` | `REAL NOT NULL` | None | None | Timestamp | No | Epoch modification time | Real/float >= `created_at` | User-managed |
 
 ---
 
@@ -149,24 +150,25 @@ In accordance with [`AGENTS.md`](AGENTS.md) Rules 10 and 11, persistent storage 
   | # | Test Scenario | Input LaTeX / QMD | `soul` v3.1 Result | `ulem` (2019) Result | Controlled Alternative (Lua Filter / Preamble) |
   |---|---|---|---|---|---|
   | 1 | English-only strikethrough (standard English document) | `\st{English text}` (ambient English, no Babel bidi) | ✅ Passes (rc=0, clean PDF) | ✅ Passes (rc=0) | `\st{English text}` / `\sout{English text}` |
-  | 2 | Persian-only strikethrough (ambient Persian) | `\st{متن فارسی}` (single language, no switch) | ✅ Passes (rc=0) | ✅ Passes (rc=0) | `\sout{متن فارسی}` |
+  | 2 | Persian-only strikethrough (ambient Persian) | `\st{متن فارسی}` (single language, no switch) | ✅ Passes (rc=0, clean PDF) | ✅ Passes (rc=0) | `\sout{متن فارسی}` |
   | 3 | Mixed Persian & English text | `\st{متن فارسی English}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن فارسی English}` |
   | 4 | Nested braces | `\st{{متن داخل آکولاد}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{{متن داخل آکولاد}}` |
   | 5 | Nested formatting macros | `\st{متن \textbf{پررنگ}}`, `\st{\emph{تأکید}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن \textbf{پررنگ}}` |
   | 6 | Font switch inside | `\st{\textsf{فونت دیگر}}`, `\st{\texttt{کد}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{\textsf{فونت دیگر}}` |
-  | 7 | Babel language switches | `\st{\foreignlanguage{english}{English text}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{\foreignlanguage{english}{English text}}` |
-  | 8 | Direction changes | `\st{\textenglish{LTR} متن}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{...}` handles LTR/RTL box boundary |
-  | 9 | Headings & moving arguments | `\section{\st{عنوان سرفصل}}` | ❌ Fails in moving argument | ✅ Passes with `\protect\sout` | Protected macro or AST translation |
+  | 7 | Babel language switches | `\st{\foreignlanguage{english}{English text}}` | ❌ Fails (`Reconstruction failed`) | ❌ Fails unboxed (`Extra }`); ✅ Passes with `\mbox` | `\sout{\mbox{\foreignlanguage{english}{English text}}}` |
+  | 8 | Direction changes | `\st{\foreignlanguage{english}{LTR} متن}` | ❌ Fails (`Reconstruction failed`) | ❌ Fails unboxed (`Extra }`); ✅ Passes with `\mbox` | `\sout{\mbox{...}}` handles LTR/RTL box boundary |
+  | 9 | Headings & moving arguments | `\section{\st{عنوان سرفصل}}` | ❌ Fails in moving argument | ✅ Passes with `\protect\sout` | Protected macro `\protect\sout` or AST translation |
   | 10 | List items | `\begin{itemize}\item \st{مورد فهرست}\end{itemize}` | ✅ Passes pure Persian; ❌ Fails if mixed/nested | ✅ Passes (rc=0) | `\sout{مورد فهرست}` |
-  | 11 | Inline math inside strikeout | `\st{$x^2$}` vs `\st{قبل} $x^2$ \st{بعد}` | ❌ Fails (`Missing $` / `Reconstruction failed`) | ❌ Fails if unboxed; ✅ Passes boxed | Boxed math: `\sout{\mbox{$x^2$}}` or uncrossed math |
-  | 12 | Quarto-generated PDF output | `~~متن فارسی نمونه~~` / `~~mixed English~~` | ❌ Fails if mixed/nested under XeLaTeX | ✅ Passes with `ulem` override | Clean Quarto XeLaTeX PDF |
+  | 11 | Inline math inside strikeout | `\st{$x^2$}` vs `\st{قبل} $x^2$ \st{بعد}` | ❌ Fails (`\SOUL@addmath has extra }`) | ❌ Fails unboxed (`Missing $`); ✅ Passes boxed | Boxed math: `\sout{\mbox{$x^2$}}` or uncrossed math |
+  | 12 | Quarto-generated PDF output | `~~متن فارسی نمونه~~` / `~~mixed English~~` | ✅ Passes pure Persian; ❌ Fails mixed English (`Reconstruction failed`) | ✅ Passes with `ulem` override | Clean Quarto XeLaTeX PDF |
 
   *Toolchain metadata:* Ubuntu 24.04 LTS, TeX Live 2023, XeTeX 3.141592653-2.6-0.999995, Pandoc 3.1.3, Quarto 1.9.38, Babel Persian 3.90, `soul` v3.1 (2023-06-14), `ulem` (2019-11-18).
-  *Empirical note on English-only behavior:* `soul` does NOT fail on English-only text in standard documents. The failure occurs specifically under ambient Persian Babel bidi or when language/directional tokens cross the strikethrough boundary.
+  *Empirical note on English-only and Persian-only behavior:* `soul` v3.1 compiles cleanly for pure English and pure Persian without language or font transitions. The failure (`Package soul Error: Reconstruction failed`) reproduces specifically when language boundaries (mixed Persian-English), direction changes, font switches, nested braces, or inline math cross the strikethrough boundary under Babel bidi.
+  *Empirical note on `ulem` behavior:* While `ulem` handles mixed script and nested formatting cleanly, unboxed `\foreignlanguage` grouping triggers `! Extra }, or forgotten \endgroup` and unboxed math triggers `! Missing $ inserted`, requiring explicit `\mbox{...}` protection (automatically provided in Option B via AST traversal).
 
 - **Architectural Policy:** Zero arbitrary AI-generated macro injection into preambles. Document style options exposed strictly as typed tokens (`strikethrough_engine: "ulem"`). Decision `D-PROP-08` remains `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`.
 
-### 3.2 PDF Quality Inspection & Structural vs. Visual Separation (Finding F, Finding H)
+### 3.2 PDF Quality Inspection & Structural vs. Visual Separation (Finding E, Finding F, Finding H)
 - **Primary Sources:**
   - PyMuPDF Documentation: *Document, Page, and Rect API* ([https://pymupdf.readthedocs.io/](https://pymupdf.readthedocs.io/))
 - **Findings:**
@@ -175,12 +177,12 @@ In accordance with [`AGENTS.md`](AGENTS.md) Rules 10 and 11, persistent storage 
   2. Accidental page-count explosion (e.g. unconstrained TikZ diagrams pushing content onto blank trailing pages).
   3. Corrupted font glyphs (missing characters when a font lacks glyph coverage).
   4. Missing vector graphics on diagram pages.
-- **Structural vs Visual Separation & Contract Minimization:**
-  - Fast structural inspection via PyMuPDF object models (`fitz.open()`, `doc.page_count`, `page.rect`, `page.get_text()`, `page.get_drawings()`) runs in $< 1.5$ seconds for documents under 50 pages on reference hardware.
-  - **Vector Drawing Default:** `require_vector_drawings = False` by default. Text-only PDFs must not fail validation. Vector presence is asserted only on explicitly designated `expected_diagram_pages`.
-  - **Input Minimization:** The inspection request does NOT accept full `source_markdown: str`. It accepts bounded `expected_text_anchors: List[str]` and structural geometry expectations.
+- **Structural vs Visual Separation & Canonical DTO Contract (Finding E):**
+  - Fast structural inspection via PyMuPDF object models (`fitz.open()`, `doc.page_count`, `page.rect`, `page.get_text()`, `page.get_drawings()`) runs in $< 1.5$ seconds for documents under 50 pages on reference hardware, capped at `max_pages = 500`.
+  - **Vector Drawing Default:** `require_vector_drawings = False` by default. Text-only PDFs pass cleanly with zero vector drawings. When `expected_diagram_pages: Tuple[int, ...]` is non-empty, vector presence is asserted on those designated pages; missing drawings produce `WARNING`, not automatic hard failure.
+  - **Input Minimization & Privacy:** The inspection request does NOT accept full `source_markdown: str`. It accepts bounded `expected_text_anchors: Tuple[str, ...]` (max 10 anchors, max 128 chars each, max 2 KB total; local memory only; never persisted in DB; never sent to AI automatically).
   - **No Quality Guarantee Invariant:** Structural passing (`is_valid = True`) does NOT guarantee visual beauty, mathematical accuracy, Persian RTL text correctness, or semantic fidelity.
-  - Optional visual inspection generates 150 DPI raster preview PNGs with strict memory limits (50MB), page sampling (max 5 pages), and a 5.0-second execution timeout.
+  - Optional visual inspection generates 150 DPI raster preview PNGs with strict bounds: maximum 5 sampled pages, 50MB image memory cap, and a 5.0-second execution timeout. Buffer lifetime is ephemeral in RAM.
 
 ### 3.3 PySide6 / Qt Concurrency & GUI Responsiveness
 - **Primary Sources:**

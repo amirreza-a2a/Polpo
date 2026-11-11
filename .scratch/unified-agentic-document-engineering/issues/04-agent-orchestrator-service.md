@@ -99,10 +99,12 @@ class AgentOrchestrationService:
    - If `AWAITING_CONSENT` or `AWAITING_ACTION_APPROVAL`, transitions task and yields control.
    - Authorization tokens are strictly single-use and in-memory; invalid on process restart.
    - Checks cancellation flag between steps (`task.is_cancelled()`).
-3. **Unknown Network Outcome Invariant (Finding B, Finding D):**
-   - If an external AI request times out or disconnects before a response is received, the step outcome is marked `REQUEST_OUTCOME_UNKNOWN`.
+3. **Durable Write-Ahead Dispatch & Unknown Network Outcome Invariant (Finding B, Section 4):**
+   - Before dispatching an external AI request or executing a non-idempotent consequential tool, the orchestrator persists a minimal `DISPATCH_INTENT` journal event under `BEGIN IMMEDIATE`.
+   - If an external AI request times out, disconnects, or the process terminates before a response is received, the step outcome is marked `REQUEST_OUTCOME_UNKNOWN` (or `TOOL_ACTION_OUTCOME_UNKNOWN`).
    - The orchestrator NEVER automatically repeats the request and NEVER silently advances the provider fallback chain.
    - It transitions task to `INTERRUPTED` or `PAUSED`, records disposition code safely without storing prompt/response text, and requires explicit user instruction with potential duplicate billing disclosure.
+   - User Restart creates a **brand-new `AgentTask`** with fresh `task_id`, fresh editor snapshot, and fresh authorization, preserving the interrupted task for audit.
 4. **Journal Audit Logging (Finding A, Finding E):**
    - Appends entries to `agent_task_journal` via `task_repo` using only allowlisted fields.
    - Replaces plain content hashes with opaque `step_correlation_id` (UUID4).

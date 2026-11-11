@@ -138,7 +138,7 @@ To ensure the system remains 100% implementable and safe, the initial release sc
 - **Document Class & Layout:**
   - `documentclass`: strictly enumerated allowlist (`"scrartcl"`, `"article"`, `"report"`, `"scrreprt"`, `"book"`, `"scrbook"`).
   - `classoptions`: enumerated allowlisted tokens (`"DIV=12"`, `"parskip=half"`, `"twocolumn"`, `"oneside"`, `"twoside"`).
-  - `strikethrough_engine`: typed configuration token (`"ulem"`, `"soul"`, `"default"`).
+  - `strikethrough_engine`: typed configuration token (`"default"`, `"soul"`, or proposed `"ulem"` awaiting explicit maintainer approval of D-PROP-08).
 
 #### Capabilities Explicitly Deferred to Future Releases:
 - Arbitrary raw LaTeX `header-includes` fragments (strictly forbidden).
@@ -251,23 +251,23 @@ We evaluate two architectural options for packaging and storing publication styl
 
 1. **`builtin:academic` (Academic Paper):**
    - Documentclass: `scrartcl` (KOMA-Script article).
-   - Font: `FreeSerif` / `Vazirmatn`, size: `10pt`, linestretch: `1.15`, strikethrough: `ulem`.
+   - Font: `FreeSerif` / `Vazirmatn`, size: `10pt`, linestretch: `1.15`, strikethrough: `"default"` (proposal `"ulem"` subject to explicit maintainer approval of D-PROP-08).
    - Geometry: A4, tight academic margins ($2.0\text{ cm}$).
    - Numbered sections enabled (`number_sections: true`, depth 3).
    - High-contrast citations (`citecolor: #26a269`, `linkcolor: #1a5fb4`).
 2. **`builtin:technical_report` (Technical & Engineering Report):**
    - Documentclass: `scrreprt`.
-   - Font: `FreeSerif` / `Vazirmatn`, size: `11pt`, linestretch: `1.25`, strikethrough: `ulem`.
+   - Font: `FreeSerif` / `Vazirmatn`, size: `11pt`, linestretch: `1.25`, strikethrough: `"default"`.
    - Geometry: A4, comfortable margins ($2.5\text{ cm}$).
    - Table of contents enabled (`toc: true`).
 3. **`builtin:textbook` (Educational & Course Lesson):**
    - Documentclass: `scrbook`.
-   - Font: `FreeSerif` / `Vazirmatn`, size: `12pt`, linestretch: `1.3`, strikethrough: `ulem`.
+   - Font: `FreeSerif` / `Vazirmatn`, size: `12pt`, linestretch: `1.3`, strikethrough: `"default"`.
    - Geometry: A4, wide reading margins ($3.0\text{ cm}$ outer for marginal notes).
    - Large headings, colored links.
 4. **`builtin:minimal` (Minimalist Clean Document):**
    - Documentclass: `article`.
-   - Font: `FreeSerif`, size: `11pt`, linestretch: `1.2`, strikethrough: `ulem`.
+   - Font: `FreeSerif`, size: `11pt`, linestretch: `1.2`, strikethrough: `"default"`.
    - Monochrome links (`colorlinks: false`).
    - Clean unnumbered sections, compact margins.
 

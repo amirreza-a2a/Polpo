@@ -103,20 +103,21 @@ We evaluated the strikethrough failure mechanism using Polpo's real runtime tool
 | # | Test Scenario | Input LaTeX / QMD | `soul` v3.1 Result | `ulem` (2019) Result | Controlled Alternative (Lua Filter / Preamble) |
 |---|---|---|---|---|---|
 | 1 | English-only strikethrough (standard English document) | `\st{English text}` (ambient English, no Babel bidi) | ✅ Passes (rc=0, clean PDF) | ✅ Passes (rc=0) | `\st{English text}` / `\sout{English text}` |
-| 2 | Persian-only strikethrough (ambient Persian) | `\st{متن فارسی}` (single language, no switch) | ✅ Passes (rc=0) | ✅ Passes (rc=0) | `\sout{متن فارسی}` |
+| 2 | Persian-only strikethrough (ambient Persian) | `\st{متن فارسی}` (single language, no switch) | ✅ Passes (rc=0, clean PDF) | ✅ Passes (rc=0) | `\sout{متن فارسی}` |
 | 3 | Mixed Persian & English text | `\st{متن فارسی English}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن فارسی English}` |
 | 4 | Nested braces | `\st{{متن داخل آکولاد}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{{متن داخل آکولاد}}` |
 | 5 | Nested formatting macros | `\st{متن \textbf{پررنگ}}`, `\st{\emph{تأکید}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن \textbf{پررنگ}}` |
 | 6 | Font switch inside | `\st{\textsf{فونت دیگر}}`, `\st{\texttt{کد}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{\textsf{فونت دیگر}}` |
-| 7 | Babel language switches | `\st{\foreignlanguage{english}{English text}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{\foreignlanguage{english}{English text}}` |
-| 8 | Direction changes | `\st{\textenglish{LTR} متن}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{...}` handles LTR/RTL box boundary |
-| 9 | Headings & moving arguments | `\section{\st{عنوان سرفصل}}` | ❌ Fails in moving argument | ✅ Passes with `\protect\sout` | Protected macro or AST translation |
+| 7 | Babel language switches | `\st{\foreignlanguage{english}{English text}}` | ❌ Fails (`Reconstruction failed`) | ❌ Fails unboxed (`Extra }`); ✅ Passes with `\mbox` | `\sout{\mbox{\foreignlanguage{english}{English text}}}` |
+| 8 | Direction changes | `\st{\foreignlanguage{english}{LTR} متن}` | ❌ Fails (`Reconstruction failed`) | ❌ Fails unboxed (`Extra }`); ✅ Passes with `\mbox` | `\sout{\mbox{...}}` handles LTR/RTL box boundary |
+| 9 | Headings & moving arguments | `\section{\st{عنوان سرفصل}}` | ❌ Fails in moving argument | ✅ Passes with `\protect\sout` | Protected macro `\protect\sout` or AST translation |
 | 10 | List items | `\begin{itemize}\item \st{مورد فهرست}\end{itemize}` | ✅ Passes pure Persian; ❌ Fails if mixed/nested | ✅ Passes (rc=0) | `\sout{مورد فهرست}` |
-| 11 | Inline math inside strikeout | `\st{$x^2$}` vs `\st{قبل} $x^2$ \st{بعد}` | ❌ Fails (`Missing $` / `Reconstruction failed`) | ❌ Fails if unboxed; ✅ Passes boxed | Boxed math: `\sout{\mbox{$x^2$}}` or uncrossed math |
-| 12 | Quarto-generated PDF output | `~~متن فارسی نمونه~~` / `~~mixed English~~` | ❌ Fails if mixed/nested under XeLaTeX | ✅ Passes with `ulem` override | Clean Quarto XeLaTeX PDF |
+| 11 | Inline math inside strikeout | `\st{$x^2$}` vs `\st{قبل} $x^2$ \st{بعد}` | ❌ Fails (`\SOUL@addmath has extra }`) | ❌ Fails unboxed (`Missing $`); ✅ Passes boxed | Boxed math: `\sout{\mbox{$x^2$}}` or uncrossed math |
+| 12 | Quarto-generated PDF output | `~~متن فارسی نمونه~~` / `~~mixed English~~` | ✅ Passes pure Persian; ❌ Fails mixed English (`Reconstruction failed`) | ✅ Passes with `ulem` override | Clean Quarto XeLaTeX PDF |
 
 *Note on toolchain versions:* Ubuntu 24.04 LTS, TeX Live 2023, XeTeX 3.141592653-2.6-0.999995, Pandoc 3.1.3, Quarto 1.9.38, Babel Persian 3.90, `soul` v3.1 (2023-06-14), `ulem` (2019-11-18).
-*Empirical note on English-only behavior:* `soul` does NOT fail on English-only text in standard documents. The failure occurs specifically under ambient Persian Babel bidi or when language/directional tokens cross the strikethrough boundary.
+*Empirical note on English-only and Persian-only behavior:* `soul` v3.1 compiles cleanly for pure English and pure Persian without language or font transitions. The failure (`Package soul Error: Reconstruction failed`) reproduces specifically when language boundaries (mixed Persian-English), direction changes, font switches, nested braces, or inline math cross the strikethrough boundary under Babel bidi.
+*Empirical note on `ulem` behavior:* While `ulem` handles mixed script and nested formatting cleanly, unboxed `\foreignlanguage` grouping triggers `! Extra }, or forgotten \endgroup` and unboxed math triggers `! Missing $ inserted`, requiring explicit `\mbox{...}` protection (automatically provided in Option B via AST traversal).
 
 ### 5.4 Proposed Decision D-PROP-08: Persian Strikethrough Engine Alternatives
 Status: `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`
@@ -177,19 +178,19 @@ Infrastructure Layer (infrastructure/)
  └── pdf/mupdf_validator.py               ──> PyMuPdfValidator (implements IPdfInspectionEngine)
 ```
 
-### 7.2 Foundation PDF Inspection Contract (Finding B)
+### 7.2 Foundation PDF Inspection Contract (Finding B, Finding E)
 
 Defined in `application/ports/pdf_validator_port.py` and `application/dto/pdf_inspection_dto.py`:
 
 ```python
 class AnomalySeverity(Enum):
     HARD_FAILURE = "HARD_FAILURE"        # Corrupt file, 0 pages, rendering crash
-    WARNING = "WARNING"                  # Orphan blank page, dimensions variance, low text density
+    WARNING = "WARNING"                  # Orphan blank page, dimensions variance, low text density, missing expected diagram
     INFO = "INFO"                        # Vector drawing metrics, page count delta
 
 @dataclass(frozen=True)
 class PdfVisualAnomaly:
-    anomaly_type: str                    # "CORRUPT_STRUCTURE", "BLANK_PAGE", "OVERFLOW_BOUNDS"
+    anomaly_type: str                    # "CORRUPT_STRUCTURE", "BLANK_PAGE", "OVERFLOW_BOUNDS", "MISSING_DIAGRAM"
     severity: AnomalySeverity
     page_number: int
     message: str
@@ -207,12 +208,12 @@ class PdfValidationPolicy:
     allowed_page_variance: float = 0.20
     expected_dimensions: Optional[Tuple[float, float]] = None
     require_vector_drawings: bool = False
-    expected_diagram_pages: Set[int] = field(default_factory=set)
+    expected_diagram_pages: Tuple[int, ...] = ()
 
 @dataclass(frozen=True)
 class PdfInspectionRequest:
     pdf_path: Path
-    expected_text_anchors: List[str] = field(default_factory=list)
+    expected_text_anchors: Tuple[str, ...] = ()
     policy: PdfValidationPolicy = field(default_factory=PdfValidationPolicy)
     baseline_pdf_path: Optional[Path] = None
     expected_page_count_range: Optional[Tuple[int, int]] = None
@@ -222,8 +223,8 @@ class PdfInspectionRequest:
 class PdfInspectionResult:
     is_valid: bool
     page_summary: PdfPageSummary
-    anomalies: List[PdfVisualAnomaly]
-    raster_previews: List[bytes]         # 150 DPI PNG byte buffers if requested
+    anomalies: Tuple[PdfVisualAnomaly, ...]
+    raster_previews: Tuple[bytes, ...]   # 150 DPI PNG byte buffers if requested
 
 class IPdfInspectionEngine(ABC):
     @abstractmethod
@@ -246,6 +247,13 @@ To balance local diagnostic needs with privacy, five distinct data representatio
 
 ### 7.4 Multi-Tier Source Location Mapping & Fail-Closed Classification (Finding C)
 
+The classification contract explicitly decouples four independent outputs to eliminate conflation between compiler errors and document edits:
+1. **`ErrorCategory`:** What kind of failure occurred (`PACKAGE_MISSING`, `FONT_MISSING`, `TEMPLATE_CONFLICT`, `SOURCE_SYNTAX`, `PANDOC_TRANSFORM`, `PRODUCT_DEFECT`, `UNKNOWN`).
+2. **`SourceMappingEvidence`:** Where the error originated and how confident the location match is (`EXACT_TOKEN` = 1.0, `CONTEXTUAL_MATCH` = 0.7, `SECTION_ANCHOR` = 0.5, `UNKNOWN` = 0.0).
+3. **`RemediationScope`:** Which architectural subsystem is the responsible target for repair (`DOCUMENT_MARKUP`, `PUBLICATION_STYLE`, `PRODUCT_TEMPLATE`, `ENVIRONMENT_DEPENDENCY`, or `None`).
+4. **`RemediationRiskTier`:** The governance level and user approval required (`READ_ONLY`, `ISOLATED_MUTATION`, `EXTERNAL_TRANSMISSION`, `CONSEQUENTIAL_SYSTEM`, `CANONICAL_ADOPTION`).
+
+#### Source Mapping Algorithm:
 Pandoc transforms Markdown into LaTeX non-linearly. The system uses a 4-tier mapping algorithm to locate the source coordinate:
 
 ```mermaid
@@ -265,44 +273,76 @@ flowchart TD
     T4 --> M4[Set mapped_line = None<br/>Confidence = UNKNOWN (0.0)<br/>UI shows TeX snippet directly]
 ```
 
-- **`EXACT_TOKEN` (1.0):** Matches distinctive macro tokens (e.g. `\includegraphics{crop_abc123.png}`, `\begin{tikzpicture}`, `\label{eq:5}`).
-- **`CONTEXTUAL_MATCH` (0.7):** Matches a distinctive phrase surrounding the error, handling common Pandoc transforms (`~~text~~` $\to$ `\st{text}`).
-- **`SECTION_ANCHOR` (0.5):** Scans backward in `document.tex` to find the nearest `\section{...}` heading and maps to the Markdown `# ...` header.
+- **`EXACT_TOKEN` (1.0):** Matches distinctive macro tokens (e.g. `\includegraphics{crop_abc123.png}`, `\begin{tikzpicture}`, `\label{eq:5}`). Authorizes targeted document patch generation.
+- **`CONTEXTUAL_MATCH` (0.7):** Matches a distinctive phrase surrounding the error, handling common Pandoc transforms (`~~text~~` $\to$ `\st{text}`). Authorizes document patch generation after surrounding context verification.
+- **`SECTION_ANCHOR` (0.5):** Scans backward in `document.tex` to find the nearest `\section{...}` heading and maps to the Markdown `# ...` header. **Insufficient for automatic exact patch generation;** surfaces heading coordinate for human inspection.
 - **`UNKNOWN` (0.0): Fail-Closed Safety Invariant:** When an error cannot be mapped to a source coordinate with confidence, or when the error pattern is unclassified:
   - `recommended_scope = None`
   - `classification_confidence = 0.0`
   - `requires_human_inspection = True`
   - `automatic_patch_allowed = False`
   - **The Agent NEVER automatically produces a Markdown patch or modifies documents when confidence is `UNKNOWN`.** The UI displays diagnostic logs directly and asks for human direction.
-- **Disentangling `PACKAGE_MISSING` from `YAML_METADATA`:**
-  - `PACKAGE_MISSING` (e.g. `! LaTeX Error: File 'tcolorbox.sty' not found`):
-    - Failure location: TeX compilation environment / preamble.
-    - Remediation target: `ENVIRONMENT_DEPENDENCY` (system package manager or TeX Live installation).
-    - Policy: The application NEVER silently alters document YAML to fake package presence or remove package references without explicit user direction.
 
-### 7.5 Four-Category PDF Inspection vs. Visual and Semantic Quality (Finding F, Finding H)
+#### Disentangling Error Categories from Source Markup Mutation (Finding C):
+1. **`PANDOC_TRANSFORM` is NOT automatically `DOCUMENT_MARKUP`:**
+   - A Pandoc transformation error can originate from user Markdown syntax, an application Lua filter error, Quarto front-matter metadata, an unsupported YAML option, a Pandoc writer bug, or an external toolchain issue.
+   - `PANDOC_TRANSFORM` maps to `DOCUMENT_MARKUP` **only if** source mapping establishes `EXACT_TOKEN` or `CONTEXTUAL_MATCH` pointing to an identifiable Markdown construct.
+   - If the error is caused by template interactions, filters, or YAML metadata, it routes to `PRODUCT_TEMPLATE`, `PUBLICATION_STYLE`, or `ENVIRONMENT_DEPENDENCY`.
+   - If ambiguous or unmapped, it yields `recommended_scope = None` and `automatic_patch_allowed = False`.
+2. **LaTeX Syntax Errors Require Confident Source Evidence:**
+   - Errors such as `! Undefined control sequence`, `! Missing $ inserted`, or `! Extra }` do not automatically prove malformed source Markdown. They frequently stem from macro package collisions, ambient RTL bidi boundary issues, or preamble macro definitions.
+   - Unless `PdfDiagnosticService` maps the error via `EXACT_TOKEN` or `CONTEXTUAL_MATCH` directly to a math formula or diagram in the author's Markdown, `recommended_scope` remains `None`, preventing automatic document modification.
+3. **`soul` Reconstruction Errors (`TEMPLATE_CONFLICT`):**
+   - Matches `! Package soul Error: Reconstruction failed.`.
+   - Originates from `soul`'s syllable-reconstruction engine colliding with Babel Persian bidi font/direction boundaries.
+   - Under no circumstances does this error trigger a source-text mutation of user Markdown.
+   - It routes to `PUBLICATION_STYLE` (proposing typed token `strikethrough_engine = "ulem"` subject to explicit maintainer approval of D-PROP-08) or flags a `PRODUCT_TEMPLATE` defect report.
+4. **`PACKAGE_MISSING` vs YAML Metadata:**
+   - Matches `! LaTeX Error: File '...sty' not found`.
+   - Failure location: TeX compilation environment / preamble.
+   - Remediation target: `ENVIRONMENT_DEPENDENCY` (prompts user to install the missing package via system package manager or TinyTeX).
+   - Policy: The application NEVER alters document YAML or Markdown to fake package presence or delete package requirements.
+5. **`FONT_MISSING` vs Profile Silent Mutation:**
+   - Matches `fontspec error: "cannot-find-font"`.
+   - Remediation target: `PUBLICATION_STYLE` with `suggested_action = "fallback_standard_font"`.
+   - Policy: The application NEVER silently mutates the user's publication style profile without explicit human confirmation.
+
+### 7.5 Four-Category PDF Inspection vs. Visual and Semantic Quality (Finding E, Finding F, Finding H)
 
 To eliminate false senses of correctness, PDF validation explicitly defines four distinct validation categories and separates structural verification from visual quality and semantic correctness:
 
 1. **Category 1: Structural Validation (Deterministic PyMuPDF Object Checks):**
    - Header integrity (`%PDF-`), valid xref table via `fitz.open()`.
-   - Page count within variance of baseline ($\pm 20\%$).
+   - Page count within variance of baseline ($\pm 20\%$) and within `max_pages` bound (default 500).
    - Page dimensions match target format (A4: $595 \times 842 \pm 2$ pt).
    - Text stream presence: extracted text character count > 0.
-   - Vector drawings: `require_vector_drawings = False` by default. Text-only documents pass cleanly without vector drawings. When `expected_diagram_pages` is non-empty, vector drawing counts are verified strictly on those designated pages.
-   - Blank page detection: pages with $< 10$ characters of text and zero vector drawings are flagged.
-2. **Category 2: Source-Preservation Checks:**
-   - Verifies that bounded `expected_text_anchors` extracted from key document sections appear in the PyMuPDF extracted text stream (does NOT transmit or inspect full source Markdown).
-3. **Category 3: Visual Anomaly Detection (Raster Previews):**
-   - Generates 150 DPI PNG raster previews of sampled pages (first 3 pages + last page + any flagged anomaly pages; maximum 5 pages total).
-   - Memory bounded: max 50MB image memory buffer; byte buffers are dropped promptly after UI consumption.
-   - Execution timeout: 5.0 seconds with cooperative thread cancellation check.
+   - **Vector Drawing Interaction & Severity:**
+     - `require_vector_drawings = False` by default. Text-only documents pass structural validation cleanly with zero vector drawings.
+     - When `expected_diagram_pages` is non-empty (e.g. `(3, 5)`), `PyMuPdfValidator` checks `len(page.get_drawings()) > 0` strictly on those specified pages.
+     - Missing vector drawings on an expected diagram page produce a `WARNING`, NOT an automatic `HARD_FAILURE`.
+     - *Distinction:* `page.get_drawings()` verifies the presence of vector path primitives. It does **NOT** prove semantic diagram correctness, label legibility, or TikZ rendering fidelity.
+   - Blank page detection: pages with $< 10$ characters of text and zero vector drawings are flagged as `WARNING`.
+2. **Category 2: Source-Preservation Checks (Text Anchors):**
+   - Verifies that bounded `expected_text_anchors` appear in the extracted text stream.
+   - **Text Anchor Privacy & Bounds:**
+     - Maximum 10 anchors per inspection request.
+     - Maximum 128 characters per anchor; maximum 2 KB aggregate byte size.
+     - Anchors reside strictly in short-lived local in-memory inspection requests.
+     - Anchors are **never persisted** in SQLite database tables or task journals.
+     - Anchors are **never transmitted** to external cloud AI providers automatically; any external transmission requires explicit user payload disclosure and consent.
+3. **Category 3: Visual Anomaly Detection (Bounded Raster Previews):**
+   - Optional 150 DPI PNG raster preview generation for key sampled pages:
+     - Sampled pages: first 3 pages + last page + any flagged anomaly pages; **maximum 5 pages total**.
+     - Resolution: 150 DPI; maximum pixel dimensions $1240 \times 1754$ px (A4 @ 150 DPI).
+     - Memory bounds: maximum 10 MB per page image; maximum **50 MB aggregate buffer cap**.
+     - Execution timeout: **5.0 seconds** with cooperative thread cancellation check.
+     - Buffer lifetime: ephemeral byte buffers allocated in RAM; dropped immediately following UI consumption.
 4. **Category 4: Semantic Correctness (Explicitly Out-of-Scope / Unsupported):**
    - Structural and raster inspection CANNOT prove mathematical correctness, semantic fidelity, absence of subtle layout overflow, Persian typography aesthetics, or translation accuracy.
    - **`is_valid = True` proves ONLY structural well-formedness and readability.** It is NEVER represented as proof of visual beauty or semantic correctness.
 5. **Validation Severity Semantics:**
    - `HARD_FAILURE`: Corrupt PDF structure, unopenable file, zero pages rendered. Results in `is_valid = False`.
-   - `WARNING`: Low text density, unexpected blank page, missing vector drawings on expected diagram page. Does NOT cause automatic validation rejection unless configured by explicit policy; surfaces in anomaly list for user review.
+   - `WARNING`: Low text density, unexpected blank page, missing vector drawings on expected diagram page, dimension variance. Does NOT cause automatic validation rejection unless configured by explicit policy; surfaces in anomaly list for user review.
    - `INFO`: Page dimensions, text character counts, drawing primitive metrics.
 6. **Performance Budget:**
    - Structural checks: $< 1.5$ seconds for documents under 50 pages on reference hardware (Ubuntu 24.04, Core i7/Ryzen 7). This is an empirical benchmark target, not an absolute real-time SLA.

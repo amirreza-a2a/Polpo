@@ -147,22 +147,36 @@ class IAgentTaskRepository(ABC):
    - **Journal Allowlist Keys (`metadata_json`):** `task_id`, `step_index`, `event_type`, `recorded_at`, `duration_ms`, `tool_name`, `step_correlation_id` (opaque UUID; dictionary attack defense), `status`, `sanitized_error_category`, `consent_token_ref` (single-use UUID reference), `approval_token_ref` (single-use UUID reference), `summary` (generic non-sensitive status <= 256 chars; zero document text), `request_disposition`.
    - **Persistence Denylist:** Complete user requests with source text, full Markdown drafts, working copies, prompts, completions, unvalidated plans, tool args with source text, unredacted compiler diagnostics, `document.tex`, local paths, credentials, unredacted exceptions.
 
-3. **Exhaustive Startup Recovery & Token Invalidation (Finding B):**
-   - `reconcile_interrupted_tasks()` scans `agent_tasks` under `BEGIN IMMEDIATE` across **all non-terminal states**: `CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`.
-   - Transitions matching tasks to `TaskStatus.INTERRUPTED` with `error_message = "Task interrupted by application shutdown"`, `updated_at = :now`, and `completed_at = :now` (establishing the 30-day retention cutoff for abandoned interrupted tasks).
+3. **Exhaustive Startup Recovery & Token Invalidation (Finding B, Section 4):**
+   - `reconcile_interrupted_tasks()` scans `agent_tasks` under `BEGIN IMMEDIATE` across **all 10 non-terminal states**: `CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`.
+   - Transitions matching tasks to `TaskStatus.INTERRUPTED` with `error_message = "Task interrupted by application shutdown"`, `updated_at = :now`, and `completed_at = COALESCE(completed_at, :now)`.
+   - **Interruption Timestamp Invariant:** On repeated application launches or subsequent reconciliations, `completed_at` is **never reset or updated**. An already-interrupted task preserves its initial interruption timestamp, preventing retention from being indefinitely extended.
    - **Token Invalidation:** In-memory authorization tokens expire immediately on process shutdown; persisted journal references are non-reusable audit records. Old tokens cannot authorize subsequent operations upon restart.
-   - **Network Ambiguity:** In-flight network requests interrupted by restart are recorded as `REQUEST_OUTCOME_UNKNOWN`. Zero automated retries; explicit user confirmation required with potential duplicate billing disclosure.
+   - **Network Ambiguity & Dispatch Intent:** In-flight network requests interrupted by restart are recorded as `REQUEST_OUTCOME_UNKNOWN` via write-ahead `DISPATCH_INTENT` verification. Zero automated retries; explicit user confirmation required with potential duplicate billing disclosure.
+   - **Restart Semantics:** Restart creates a new `AgentTask` with fresh `task_id`, fresh editor snapshot, and fresh authorization; the interrupted task remains persisted for audit.
    - Operation is idempotent and returns the list of reconciled `task_id`s.
 
-4. **Task Retention, Purging, and Deletion Semantics (Finding E):**
+4. **Task Retention, Purging, and Two-Phase Filesystem Cleanup Semantics (Finding B):**
    - **Retention Calculation:** 30-day retention calculated strictly from `completed_at` (terminal or interrupted transition timestamp), NOT from task creation time.
-   - **Protected Active Tasks:** Active or awaiting tasks (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`) have `completed_at IS NULL` and are never automatically purged.
-   - **Purge Scope:** Applies to terminal and interrupted tasks (`COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`, `INTERRUPTED`) where `completed_at IS NOT NULL AND completed_at <= :cutoff`.
+   - **Protected Active Tasks:** Active or awaiting tasks (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`) have `completed_at IS NULL` and are **never automatically purged**.
+   - **Purge Scope Across All Five Terminal & Interrupted States:** Applies to `COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`, and `INTERRUPTED` where `completed_at IS NOT NULL AND completed_at <= :cutoff`.
    - **Cascade Deletion:** SQLite `ON DELETE CASCADE` automatically purges `agent_task_journal` rows when `agent_tasks` records are deleted.
    - **Two-Phase Idempotent Filesystem Cleanup:**
-     1. Unlink scratchpad directories (`.polpo/working_copies/{id}/`) and staging failure bundles (`.polpo/staging_failures/{id}/`) using `shutil.rmtree(..., ignore_errors=True)`.
-     2. Delete database records in a SQLite transaction (`BEGIN IMMEDIATE`) with bounded batch limits (`LIMIT 50`).
-     3. Startup reconciliation cleans orphan scratchpad directories whose `working_copy_id` is missing in `agent_tasks`.
+     Cleanup covers **both** temporary storage directories:
+     - Working copy scratchpads: `<canonical_root>/.polpo/working_copies/`
+     - Staging failure diagnostic bundles: `<canonical_root>/.polpo/staging_failures/`
+
+     Safety and path normalization rules:
+     1. *Canonical Allowed Roots:* Deletion is strictly anchored to validated application-data roots (`working_copies_dir` and `staging_failures_dir`).
+     2. *Path Normalization & Traversal Prevention:* Target directory paths are resolved via `Path.resolve()`. The implementation verifies that `resolved_target.is_relative_to(canonical_root)` and that the directory name strictly matches canonical UUID4 regex (`^[0-9a-f-]{36}$`). Any path attempting `..` traversal or symbolic link escape is rejected.
+     3. *Symlink Protection:* If any path entry within the target directory is a symbolic link, the link itself is unlinked without following the target.
+     4. *No Silent Failure Masks:* `shutil.rmtree(..., ignore_errors=True)` is **strictly prohibited**. The cleanup implementation uses observable, per-item exception handling (`try ... except OSError as err`) that logs structured warnings on deletion failures while recording unlinked targets.
+     5. *Two-Phase Ordering:*
+        - *Phase 1 (Filesystem):* Unlink disk folders (`working_copies/{id}` and `staging_failures/{id}`) with observable error trapping.
+        - *Phase 2 (Database):* Execute SQLite transaction (`BEGIN IMMEDIATE`) deleting expired task rows.
+        - If Phase 1 succeeds and Phase 2 fails: SQLite transaction rolls back, preserving the database row; cleanup retries on the next cycle.
+        - If Phase 2 succeeds and Phase 1 encounters an unexpected file-lock error: startup orphan reconciliation scans **both** `.polpo/working_copies/` and `.polpo/staging_failures/` and safely purges any directory without an active corresponding ID in `agent_tasks`.
+   - **Bounded Cleanup Batches:** Retention cleanup runs in bounded batches of at most 50 tasks per execution cycle (`LIMIT 50`) to prevent SQLite transaction locking or desktop GUI lag.
 
 ---
 
@@ -172,8 +186,9 @@ class IAgentTaskRepository(ABC):
 - [ ] Tasks can be saved, updated, and retrieved by `task_id` with plan steps preserved.
 - [ ] Journal entries append monotonically and reject payloads containing unallowed keys.
 - [ ] Every non-terminal status (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`) transitions to `INTERRUPTED` upon calling `reconcile_interrupted_tasks()`.
-- [ ] Stored `completed_at` timestamp is recorded upon terminal transition and used for 30-day retention calculations.
-- [ ] `purge_expired_tasks()` purges terminal tasks older than 30 days from `completed_at` and cascade-deletes journal records atomically.
+- [ ] Stored `completed_at` timestamp is recorded upon terminal and interrupted transitions, never reset on repeated startup reconciliations, and used for 30-day retention calculations.
+- [ ] `purge_expired_tasks()` purges terminal and interrupted tasks (`COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`, `INTERRUPTED`) older than 30 days from `completed_at` and cascade-deletes journal records atomically.
+- [ ] Two-phase cleanup unlinks both `.polpo/working_copies/` and `.polpo/staging_failures/` safely without `ignore_errors=True`, enforcing canonical root boundaries and symlink protection.
 - [ ] Zero plaintext secrets or raw document texts found in stored database columns across `agent_tasks`, `agent_task_journal`, and `publication_style_profiles`.
 
 ---
@@ -185,8 +200,19 @@ class IAgentTaskRepository(ABC):
   - `test_migration_006_execution()`: Verifies migration creates tables and indices cleanly.
   - `test_save_and_get_agent_task()`: Round-trip test of `AgentTask` aggregate.
   - `test_journal_allowlist_filtering()`: Confirms non-allowlisted fields are rejected.
-  - `test_reconcile_interrupted_tasks_all_states()`: Simulates crash and verifies all 10 non-terminal states transition to `INTERRUPTED`.
-  - `test_purge_expired_tasks_retention()`: Verifies 30-day retention calculated from `completed_at` deletes only expired terminal tasks.
+  - `test_reconcile_interrupted_tasks_all_states()`: Simulates crash and verifies all 10 non-terminal states transition to `INTERRUPTED` and that repeated startup does NOT reset `completed_at`.
+  - `test_purge_expired_tasks_retention()`: Verifies 30-day retention calculated from `completed_at` across all five required states and boundaries:
+    1. Expired `COMPLETED` task is purged.
+    2. Expired `REJECTED` task is purged.
+    3. Expired `CANCELLED` task is purged.
+    4. Expired `FAILED` task is purged.
+    5. Expired `INTERRUPTED` task is purged.
+    6. Non-expired tasks in all terminal/interrupted states are retained.
+    7. Active tasks (`RUNNING`, `PLANNING`, etc.) are never purged.
+    8. Tasks with `completed_at IS NULL` are strictly protected.
+    9. Corresponding `agent_task_journal` rows are deleted via foreign-key cascade.
+    10. Cleanup execution is bounded (`LIMIT 50`) and idempotent across repeated runs.
+  - `test_filesystem_cleanup_safety()`: Verifies safe unlinking across both `.polpo/working_copies/` and `.polpo/staging_failures/` with symlink traversal blocked, path traversal (`..`) rejected, and observable error logging (no `ignore_errors=True`).
   - `test_cascade_delete_journal_rows()`: Asserts deleting an `agent_tasks` row atomically deletes all corresponding `agent_task_journal` rows.
 
 ### 5.2 Negative & Security Tests (Verifying Stored Database Values)

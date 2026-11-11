@@ -236,71 +236,92 @@ The recovery engine (`AgentRecoveryService`) scans `agent_tasks` on startup and 
 - **Zero Replay:** Any `consent_token_ref` or `approval_token_ref` recorded in `agent_task_journal` is an immutable, read-only historical event reference, NOT an authorization credential. It cannot authorize any subsequent AI transmission, package installation, or editor buffer mutation.
 - **Mandatory Fresh Authorization:** A task restored from `INTERRUPTED` status cannot proceed without generating a fresh plan and obtaining new explicit human approvals.
 
-#### 3. Critical Network Invariant (Unknown Outcome Handling):
+#### 3. Durable Write-Ahead Dispatch Protocol & Network Ambiguity (Finding B, Section 4):
+To close the crash recovery ambiguity window where the application process terminates after an outbound operation begins but before a confirmed outcome is written, the system enforces a strict **Write-Ahead Dispatch Protocol**:
+
+1. **Local Pre-Validation:** The request or tool arguments are validated against schema and bounds locally.
+2. **Durable Intent Persistence (`BEGIN IMMEDIATE`):** Before initiating any outbound HTTP call to an AI provider or executing any non-idempotent consequential local tool (e.g. package installation), the orchestrator writes a minimal `DISPATCH_INTENT` journal event under an immediate SQLite transaction.
+3. **Commit Transaction:** The transaction is committed to the local database file before bytes leave the process.
+4. **Operation Dispatch:** The outbound AI call or tool action is dispatched.
+5. **Outcome Confirmation:** When a verified response or execution outcome arrives, the confirmed disposition (`REQUEST_SUBMITTED_SUCCESS`, `REQUEST_SUBMITTED_FAILED`, or `TOOL_ACTION_EXECUTED`) is persisted.
+
+##### Handling Process Crashes During In-Flight Operations:
+- If startup recovery encounters a recorded `DISPATCH_INTENT` without a subsequent confirmed terminal disposition, the orchestrator conservatively classifies the event as `REQUEST_OUTCOME_UNKNOWN` (for AI calls) or `TOOL_ACTION_OUTCOME_UNKNOWN` (for tool actions).
 - **Never automatically repeat an external AI request with an unknown outcome.**
-- If an HTTP request was dispatched to an AI provider and the process crashed, lost network connectivity, or timed out before receiving the response, the outcome is classified as `REQUEST_OUTCOME_UNKNOWN`.
-- The system distinguishes six structured disposition states (persisted as status codes, never containing prompt or response text):
+- Even if the crash occurred between recording intent and network transmission, the system accepts conservative false uncertainty over the risk of silent duplicate billing or non-idempotent tool side effects.
+- The system distinguishes six structured disposition states (persisted strictly as status codes, never containing prompt, completion, or document text):
   1. `REQUEST_NOT_SUBMITTED`: Request never left the local client. Safe to retry autonomously if within budget.
   2. `REQUEST_SUBMITTED_SUCCESS`: Response received and verified.
   3. `REQUEST_SUBMITTED_FAILED`: Response confirmed failed with an error status code. Safe to advance fallback chain.
-  4. `REQUEST_OUTCOME_UNKNOWN`: Network timeout or process termination while request in-flight. Requires explicit user action before any retry.
+  4. `REQUEST_OUTCOME_UNKNOWN`: Network timeout, process termination, or unconfirmed intent while request in-flight. Requires explicit user direction before any retry; silent duplicate execution is strictly prohibited.
   5. `TOOL_ACTION_EXECUTED`: Local tool executed with confirmed result.
-  6. `TOOL_ACTION_OUTCOME_UNKNOWN`: Process terminated during tool execution. Safe cleanup in staging; zero automated replay.
+  6. `TOOL_ACTION_OUTCOME_UNKNOWN`: Process terminated during tool execution. Safe cleanup in staging; zero automated replay. Environment reconciliation is required before offering another attempt.
 - When `REQUEST_OUTCOME_UNKNOWN` is encountered:
   - The orchestrator NEVER automatically retries the call.
   - The orchestrator NEVER silently advances to the fallback provider.
-  - The UI displays an explicit uncertainty alert disclosing potential duplicate billing, requiring the user to manually trigger a new attempt or dismiss the task.
+  - The UI displays an explicit uncertainty alert disclosing potential duplicate billing, requiring the user to manually trigger a fresh attempt or dismiss the task.
 
-### 8.4 Comprehensive Persistent-Data Privacy Boundary & Retention Semantics (Finding A, Finding E)
+#### 4. Recovery Semantics for `INTERRUPTED` Tasks (Finding B, Section 4):
+The user interface presents three distinct choices for any task in `INTERRUPTED` state:
+1. **Inspect:** The user can inspect the task journal, failure diagnostics, and step history to understand where the task stopped.
+2. **Dismiss:** The user transitions the task to `CANCELLED`, preserving its audit trail while clearing it from active workspace attention.
+3. **Restart:** The user chooses to attempt the document repair or styling task anew.
+   - **Fresh Aggregate & Non-Resurrection:** Restart does **NOT** resume the old Working Copy, replay the interrupted plan, or reuse stale tokens.
+   - Instead, Restart creates a **brand-new `AgentTask`** with a fresh `task_id`, fresh working copy snapshot taken from the current active editor buffer under OCC, and fresh plan generation.
+   - All previous in-memory authorization tokens, step correlation IDs, and candidate approvals from the interrupted task are dead and cannot be reused.
+   - The original `INTERRUPTED` task record remains persisted in `agent_tasks` with its original `completed_at` retention timestamp intact, serving strictly as an immutable audit record until expired.
+
+### 8.4 Comprehensive Persistent-Data Privacy Boundary & Retention Semantics (Finding A, Finding B, Finding E)
 
 To prevent persistent storage (`agent_tasks`, `agent_task_journal`, `publication_style_profiles`) from accumulating sensitive user text, private documents, or API secrets, a strict data minimization policy is enforced across all tables:
 
 **Default Policy: Persist lifecycle metadata, not document content or unrestricted model context.**
 
-#### 1. Exhaustive Persistent Field Audit & Classification:
+#### 1. Exhaustive Persistent Field Audit & Classification (Finding A):
 
-| Table | Field | Data Classification | Sensitive Content Possible? | Persistence Policy | Validation & Bounds | Retention |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `agent_tasks` | `task_id` | System Identifier | No | Persisted primary key | Canonical UUID4 format string | 30 days from `completed_at` |
-| `agent_tasks` | `job_id` | Foreign Key | No | References parent `jobs(id)` | Valid positive integer | Cascade with parent job |
-| `agent_tasks` | `status` | State Machine Enum | No | Current `TaskStatus` | Allowlisted enum string only | 30 days from `completed_at` |
-| `agent_tasks` | `task_goal` | Bounded Lifecycle Label | **Yes** (if raw request stored) | **Short display label / classification only**. Never store raw user request when it contains document fragments or private text. | Sanitized string, max 256 chars, no control chars or private path substrings | 30 days from `completed_at` |
-| `agent_tasks` | `plan_json` | Validated Structured Metadata | **Yes** (if model emits raw text/args) | **Strictly validated safe plan schema only**. Contains allowlisted tool names, rationales, and typed arguments. Absolutely prohibited: raw prompts, completions, document fragments, credentials. | JSON schema validation against `AgentPlanSchema`, max 16 KB total size | 30 days from `completed_at` |
-| `agent_tasks` | `current_step_index` | Execution Counter | No | Monotonic step counter | Integer `0 <= index <= total_steps` | 30 days from `completed_at` |
-| `agent_tasks` | `total_steps` | Execution Bound | No | Bounded plan size | Integer `0 <= steps <= 10` | 30 days from `completed_at` |
-| `agent_tasks` | `working_copy_id` | Ephemeral Scratchpad ID | No | Opaque UUID referencing `.polpo/working_copies/{id}/` | Canonical UUID4 format string; content strictly ephemeral on disk | 30 days in DB; folder purged on completion/restart |
-| `agent_tasks` | `failure_id` | Ephemeral Diagnostic ID | No | Opaque UUID referencing `.polpo/staging_failures/{id}/` | Canonical UUID4 format string; diagnostic bundle managed by LRU | 30 days in DB; bundle pruned via LRU (max 5) |
-| `agent_tasks` | `error_message` | Bounded Diagnostic Category | **Yes** (if raw logs/traces stored) | **Sanitized English error category or bounded summary string**. Never store unredacted stack traces, system paths, or source text. | Redacted by `TexLogSanitizer`, max 512 chars | 30 days from `completed_at` |
-| `agent_tasks` | `created_at` | Timestamp | No | Epoch creation time | Real/float >= 0 | 30 days from `completed_at` |
-| `agent_tasks` | `updated_at` | Timestamp | No | Epoch last update time | Real/float >= `created_at` | 30 days from `completed_at` |
-| `agent_tasks` | `completed_at` | Timestamp | No | Epoch terminal completion time; baseline for retention window | Real/float >= `created_at` (NULL for active tasks) | 30 days from `completed_at` |
-| `agent_task_journal` | `entry_id` | Sequence ID | No | Auto-increment primary key | Positive integer | Cascade deleted with task |
-| `agent_task_journal` | `task_id` | Foreign Key | No | References `agent_tasks(task_id)` | UUID4 with `ON DELETE CASCADE` | Cascade deleted with task |
-| `agent_task_journal` | `step_index` | Execution Step | No | Step index in plan | Optional integer `0 <= step <= 10` | Cascade deleted with task |
-| `agent_task_journal` | `event_type` | Audit Event Enum | No | Typed audit event | Allowlisted string enum | Cascade deleted with task |
-| `agent_task_journal` | `recorded_at` | Timestamp | No | Microsecond epoch timestamp | Real/float >= 0 | Cascade deleted with task |
-| `agent_task_journal` | `metadata_json` | Strictly Allowlisted Audit Record | **Yes** (if arbitrary keys allowed) | **Strict Allowlist only**. Capped at 8 KB per entry; max 50 entries per task. Plain content hashes prohibited (replaced by opaque correlation IDs). | Schema validation against `JournalMetadataAllowlist`, max 8 KB | Cascade deleted with task |
-| `publication_style_profiles` | `profile_id` | Profile Identifier | No | Key (`builtin:{name}` or `user:{uuid}`) | String, max 64 chars, regex `^(builtin:[a-z0-9_-]+|user:[0-9a-f-]{36})$` | Permanent (built-in) / user-managed |
-| `publication_style_profiles` | `display_name` | Presentation Name | No | Human-readable profile title | String, max 128 chars | User-managed |
-| `publication_style_profiles` | `description` | Presentation Summary | No | Optional description | String, max 512 chars | User-managed |
-| `publication_style_profiles` | `schema_version` | Schema Evolution | No | Version number | Positive integer (default 1) | User-managed |
-| `publication_style_profiles` | `is_builtin` | Immutability Flag | No | 1 for read-only built-in, 0 for user | Integer (0 or 1) | User-managed |
-| `publication_style_profiles` | `profile_json` | Declarative Profile Spec | **Yes** (if raw macros injected) | **Strictly validated declarative typesetting JSON**. Prohibit raw LaTeX macros, `header-includes`, shell commands, executable code. | Validated against `PublicationStyleProfileSchema`, max 16 KB | User-managed |
-| `publication_style_profiles` | `created_at`, `updated_at` | Timestamps | No | Epoch modification times | Real/float >= 0 | User-managed |
+| Table | Field | SQL Type & Nullability | Default | Key Role | Data Classification | Sensitive Content Possible? | Persistence Policy | Validation & Size Bounds | Retention & Deletion |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `agent_tasks` | `task_id` | `TEXT NOT NULL` | None | Primary Key | System Identifier | No | Persisted primary key | Canonical UUID4 format string (36 chars) | 30 days from `completed_at` |
+| `agent_tasks` | `job_id` | `INTEGER NOT NULL` | None | Foreign Key | Parent Job Reference | No | References parent `jobs(id)` | Valid positive integer; `ON DELETE CASCADE` | Cascade deleted with parent job |
+| `agent_tasks` | `status` | `TEXT NOT NULL` | None | None | State Machine Enum | No | Current `TaskStatus` string | Allowlisted enum string only (max 32 chars) | 30 days from `completed_at` |
+| `agent_tasks` | `task_goal` | `TEXT NOT NULL` | None | None | Bounded Lifecycle Label | **Yes** (if raw request stored) | **Allowlisted task category or bounded generic display label only** (e.g. `PDF_EXPORT_REPAIR`, `STYLE_PROFILE_APPLY`). Storing raw user requests or document text is strictly prohibited. | Sanitized string, max 256 chars, no control chars or private path substrings | 30 days from `completed_at` |
+| `agent_tasks` | `plan_json` | `TEXT` | `NULL` | None | Validated Structured Metadata | **Yes** (if model emits raw text/args) | **Metadata-only persistence: NULL or strictly bounded step metadata only** (step index, allowlisted tool names, risk tiers). Complete plans and natural language rationales remain ephemeral in memory. Prohibited: prompts, completions, document fragments, credentials. | Schema validation against `AgentPlanMetadataSchema`, max 16 KB total size | 30 days from `completed_at` |
+| `agent_tasks` | `current_step_index` | `INTEGER` | `0` | None | Execution Counter | No | Monotonic step counter | Integer `0 <= index <= total_steps` | 30 days from `completed_at` |
+| `agent_tasks` | `total_steps` | `INTEGER` | `0` | None | Execution Bound | No | Bounded plan size | Integer `0 <= steps <= 10` | 30 days from `completed_at` |
+| `agent_tasks` | `working_copy_id` | `TEXT` | `NULL` | None | Ephemeral Scratchpad ID | No | Opaque UUID referencing `.polpo/working_copies/{id}/` | Canonical UUID4 format string; disk content strictly ephemeral | 30 days in DB; folder purged on completion/restart |
+| `agent_tasks` | `failure_id` | `TEXT` | `NULL` | None | Ephemeral Diagnostic ID | No | Opaque UUID referencing `.polpo/staging_failures/{id}/` | Canonical UUID4 format string; diagnostic bundle managed by LRU | 30 days in DB; bundle pruned via LRU (max 5) |
+| `agent_tasks` | `error_message` | `TEXT` | `NULL` | None | Bounded Diagnostic Category | **Yes** (if raw logs/traces stored) | **Sanitized English error category or typed error code only** (e.g. `PACKAGE_MISSING:soul`, `LATEX_SYNTAX_ERROR`). Prohibited: unredacted stack traces, local system paths, source text. | Redacted by `TexLogSanitizer`, max 512 chars | 30 days from `completed_at` |
+| `agent_tasks` | `created_at` | `REAL NOT NULL` | None | None | Timestamp | No | Epoch creation time | Real/float >= 0 | 30 days from `completed_at` |
+| `agent_tasks` | `updated_at` | `REAL NOT NULL` | None | None | Timestamp | No | Epoch last update time | Real/float >= `created_at` | 30 days from `completed_at` |
+| `agent_tasks` | `completed_at` | `REAL` | `NULL` | None | Timestamp | No | Epoch completion or interruption time; baseline for retention | Real/float >= `created_at` (NULL for active tasks; set once on terminal/interrupted) | 30 days from `completed_at` |
+| `agent_task_journal` | `entry_id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | Auto | Primary Key | Sequence ID | No | Auto-increment primary key | Positive integer | Cascade deleted with task |
+| `agent_task_journal` | `task_id` | `TEXT NOT NULL` | None | Foreign Key | Parent Task Reference | No | References `agent_tasks(task_id)` | UUID4 format; `ON DELETE CASCADE` | Cascade deleted with task |
+| `agent_task_journal` | `step_index` | `INTEGER` | `NULL` | None | Execution Step | No | Step index in plan | Optional integer `0 <= step <= 10` | Cascade deleted with task |
+| `agent_task_journal` | `event_type` | `TEXT NOT NULL` | None | None | Audit Event Enum | No | Typed audit event | Allowlisted string enum | Cascade deleted with task |
+| `agent_task_journal` | `metadata_json` | `TEXT NOT NULL` | None | None | Allowlisted Audit Record | **Yes** (if arbitrary keys allowed) | **Strict Allowlist only**. Contains typed classifications, bounded summaries, and opaque non-authorizing references. Prohibited: document hashes, raw source text, secrets. | Schema validation against `JournalMetadataAllowlist`, max 8 KB | Cascade deleted with task |
+| `agent_task_journal` | `recorded_at` | `REAL NOT NULL` | None | None | Timestamp | No | Microsecond epoch timestamp | Real/float >= 0 | Cascade deleted with task |
+| `publication_style_profiles` | `profile_id` | `TEXT PRIMARY KEY` | None | Primary Key | Profile Identifier | No | Key (`builtin:{name}` or `user:{uuid}`) | String, max 64 chars, regex `^(builtin:[a-z0-9_-]+|user:[0-9a-f-]{36})$` | Permanent (built-in) / user-managed |
+| `publication_style_profiles` | `display_name` | `TEXT NOT NULL` | None | None | Presentation Name | **Yes** (user title) | Human-readable profile title | String, max 128 chars, sanitized | User-managed |
+| `publication_style_profiles` | `description` | `TEXT` | `NULL` | None | Presentation Summary | **Yes** (user summary) | Optional presentation description | String, max 512 chars, sanitized | User-managed |
+| `publication_style_profiles` | `schema_version` | `INTEGER NOT NULL` | `1` | None | Schema Evolution | No | Schema version number | Positive integer (default 1) | User-managed |
+| `publication_style_profiles` | `is_builtin` | `INTEGER NOT NULL` | `0` | None | Immutability Flag | No | 1 for read-only built-in, 0 for user | Integer (0 or 1) | User-managed |
+| `publication_style_profiles` | `profile_json` | `TEXT NOT NULL` | None | None | Declarative Profile Spec | **Yes** (if raw macros injected) | **Strictly validated declarative typesetting JSON**. Prohibit raw LaTeX macros, `header-includes`, shell commands, executable code. | Validated against `PublicationStyleProfileSchema`, max 16 KB | User-managed |
+| `publication_style_profiles` | `created_at` | `REAL NOT NULL` | None | None | Timestamp | No | Epoch creation time | Real/float >= 0 | User-managed |
+| `publication_style_profiles` | `updated_at` | `REAL NOT NULL` | None | None | Timestamp | No | Epoch modification time | Real/float >= `created_at` | User-managed |
 
 #### 2. Explicit Allowlist of Persisted Journal Metadata (`metadata_json`):
 - `task_id` (UUID4)
 - `step_index` (integer, 0–10)
-- `event_type` (`STATE_CHANGED`, `TOOL_CALLED`, `TOOL_RESULT`, `USER_APPROVAL`, `CONSENT_GRANTED`, `TASK_INTERRUPTED`)
+- `event_type` (`STATE_CHANGED`, `DISPATCH_INTENT`, `TOOL_CALLED`, `TOOL_RESULT`, `USER_APPROVAL`, `CONSENT_GRANTED`, `TASK_INTERRUPTED`)
 - `recorded_at` (epoch timestamp)
 - `duration_ms` (integer >= 0)
 - `tool_name` (allowlisted snake_case string)
 - `step_correlation_id` (UUID4 opaque correlation identifier; replaces plain SHA-256 hashes to prevent dictionary attacks)
 - `status` (`SUCCESS`, `ERROR`, `AWAITING_CONSENT`, `AWAITING_APPROVAL`, `INTERRUPTED`)
-- `sanitized_error_category` (allowlisted error category string, e.g. `TEMPLATE_CONFLICT`, `PACKAGE_MISSING`)
-- `consent_token_ref` (UUID4 audit reference; non-reusable)
-- `approval_token_ref` (UUID4 audit reference; non-reusable)
-- `summary` (bounded generic non-sensitive English summary, max 256 characters; strictly sanitized; zero document text)
+- `sanitized_error_category` (allowlisted error category string, e.g. `TEMPLATE_CONFLICT`, `PACKAGE_MISSING`, `SOURCE_SYNTAX`, `UNKNOWN`)
+- `consent_token_ref` (UUID4 audit reference; non-reusable audit reference, NOT an authorization credential)
+- `approval_token_ref` (UUID4 audit reference; non-reusable audit reference, NOT an authorization credential)
+- `summary` (typed event classification or bounded generic non-sensitive English string, max 256 characters; strictly sanitized; zero document text)
 - `request_disposition` (`REQUEST_NOT_SUBMITTED`, `REQUEST_SUBMITTED_SUCCESS`, `REQUEST_SUBMITTED_FAILED`, `REQUEST_OUTCOME_UNKNOWN`, `TOOL_ACTION_EXECUTED`, `TOOL_ACTION_OUTCOME_UNKNOWN`)
 
 #### 3. Explicit Persistence Denylist (Strictly Prohibited):
@@ -309,7 +330,7 @@ To prevent persistent storage (`agent_tasks`, `agent_task_journal`, `publication
 - Full active editor buffer text or draft snapshots.
 - Temporary Working Copy disk content.
 - Raw model prompts or completions.
-- Unvalidated model-generated plans.
+- Unvalidated model-generated plans or natural-language reasoning.
 - Full tool arguments when containing source text.
 - Full compiler diagnostics or unredacted stdout/stderr.
 - Intermediate `document.tex` files.
@@ -317,15 +338,27 @@ To prevent persistent storage (`agent_tasks`, `agent_task_journal`, `publication
 - API credentials, keys, or passwords.
 - Unredacted exceptions or raw stack traces.
 
-#### 4. Retention, Purging, and Cascade Deletion Semantics (Finding E):
-- **Retention Calculation:** The 30-day retention window is calculated strictly from `completed_at` (the terminal or interrupted transition timestamp), NOT from task creation time. Startup recovery explicitly sets `completed_at = :now` upon transitioning active tasks to `INTERRUPTED`, establishing the 30-day retention baseline for abandoned interrupted tasks.
+#### 4. Retention, Purging, and Two-Phase Filesystem Cleanup Semantics (Finding B):
+- **Retention Calculation:** The 30-day retention window is calculated strictly from `completed_at` (the terminal or interrupted transition timestamp), NOT from task creation time.
+  - Startup recovery sets `completed_at = COALESCE(completed_at, :now)` upon transitioning an active task to `INTERRUPTED`.
+  - **Interruption Timestamp Invariant:** On repeated application launches or reconciliations, `completed_at` is **never reset or updated**. An already-interrupted task preserves its initial interruption timestamp, preventing retention from being indefinitely extended.
 - **Scope of Retention:** Applies to all terminal and interrupted states (`COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`, `INTERRUPTED`) where `completed_at IS NOT NULL AND completed_at <= :cutoff`. Active or awaiting tasks (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`) have `completed_at IS NULL` and are **never automatically purged**.
 - **Database Cascade:** Deletion of an `agent_tasks` record cascades via `FOREIGN KEY (task_id) REFERENCES agent_tasks(task_id) ON DELETE CASCADE`, purging all associated `agent_task_journal` rows atomically.
 - **Two-Phase Idempotent Filesystem Cleanup:**
-  1. *Phase 1 (Filesystem):* Remove scratchpad directories (`.polpo/working_copies/{working_copy_id}/`) and staging failure bundles (`.polpo/staging_failures/{failure_id}/`) using idempotent unlinks (`shutil.rmtree(..., ignore_errors=True)`).
-  2. *Phase 2 (Database):* Execute SQLite transaction (`BEGIN IMMEDIATE`) deleting expired task rows.
-  - If Phase 1 succeeds and Phase 2 fails: the database rolls back, task remains terminal, and cleanup is retried on the next cycle.
-  - If Phase 2 succeeds and Phase 1 partially fails: orphan folders are unreferenced and harmless; startup reconciliation scans `.polpo/working_copies/` and purges any directory without a matching `working_copy_id` in `agent_tasks`.
+  Cleanup covers **both** temporary storage directories:
+  - Working copy scratchpads: `<canonical_root>/.polpo/working_copies/`
+  - Staging failure diagnostic bundles: `<canonical_root>/.polpo/staging_failures/`
+
+  Safety and path normalization rules:
+  1. *Canonical Allowed Roots:* Deletion is strictly anchored to validated application-data roots (`working_copies_dir` and `staging_failures_dir`).
+  2. *Path Normalization & Traversal Prevention:* The target directory path is normalized via `os.path.realpath` / `Path.resolve()`. The implementation verifies that `resolved_target.is_relative_to(canonical_root)` and that the directory name strictly matches canonical UUID4 regex (`^[0-9a-f-]{36}$`). Any path attempting `..` traversal or symbolic link escape is rejected.
+  3. *Symlink Protection:* If any path entry within the target directory is a symbolic link, the link itself is unlinked without following the target.
+  4. *No Silent Failure Masks:* `shutil.rmtree(..., ignore_errors=True)` is **strictly prohibited**. The cleanup implementation uses observable, per-item exception handling (`try ... except OSError as err`) that logs structured warnings on deletion failures while recording unlinked targets.
+  5. *Two-Phase Ordering:*
+     - *Phase 1 (Filesystem):* Unlink disk folders (`working_copies/{id}` and `staging_failures/{id}`) with observable error trapping.
+     - *Phase 2 (Database):* Execute SQLite transaction (`BEGIN IMMEDIATE`) deleting expired task rows.
+     - If Phase 1 succeeds and Phase 2 fails: SQLite transaction rolls back, preserving the database row; cleanup retries on the next cycle.
+     - If Phase 2 succeeds and Phase 1 encounters an unexpected file-lock error: startup orphan reconciliation scans **both** `.polpo/working_copies/` and `.polpo/staging_failures/` and safely purges any directory without an active corresponding ID in `agent_tasks`.
 - **Bounded Cleanup Batches:** Retention cleanup runs in bounded batches of at most 50 tasks per execution cycle (`LIMIT 50`) to prevent SQLite transaction locking or desktop GUI lag.
 
 ### 8.5 Tool Governance & Risk Classification

@@ -116,10 +116,13 @@ class AgentTask:
      - `AWAITING_FINAL_APPROVAL` $\to$ `COMPLETED` (adoption), `REJECTED`, `CANCELLED`, `INTERRUPTED`.
      - `INTERRUPTED` $\to$ `CANCELLED`.
    - Terminal states (`COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`) are strictly immutable; transitions out of them raise `InvalidStateTransitionError`. Transitioning to any terminal state sets `completed_at = time.time()`.
-2. **Exhaustive Crash Recovery Matrix (Finding B):**
+   - Transitioning to `INTERRUPTED` sets `completed_at` once. Repeated reconciliations preserve `completed_at` and never reset it.
+   - An `INTERRUPTED` task supports transition to `CANCELLED` (user dismissal).
+   - User Restart creates a **brand-new `AgentTask` aggregate** with fresh `task_id`, fresh editor snapshot, and fresh authorization, leaving the interrupted task intact for audit.
+2. **Exhaustive Crash Recovery Matrix (Finding B, Section 4):**
    - Every non-terminal state (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`) supports a deterministic transition to `INTERRUPTED` on process restart.
    - Old authorization tokens expire immediately on process exit; no stale tokens authorize subsequent operations.
-   - Ambiguous network outcomes are flagged as `REQUEST_OUTCOME_UNKNOWN`, strictly prohibiting automatic retries without user confirmation.
+   - In-flight network operations and tool side effects enforce write-ahead `DISPATCH_INTENT` logging, resolving to `REQUEST_OUTCOME_UNKNOWN` or `TOOL_ACTION_OUTCOME_UNKNOWN` on unconfirmed restarts, strictly prohibiting automatic retries without explicit user confirmation.
 3. **Budget Enforcement:**
    - Tasks reject plans where `len(steps) > MAX_TASK_STEPS = 10` by raising `AgentTaskBudgetExceededError`.
 

@@ -113,7 +113,7 @@ At the moment an AI task is initiated, `AgentController` calls `MarkdownEditorCo
 @dataclass(frozen=True)
 class TaskInputSnapshot:
     """Immutable snapshot of the editor buffer at the moment an AI task is initiated."""
-    document_id: int                    # Job ID
+    job_id: int                         # Target document job ID
     base_canonical_version: int         # Current canonical version loaded in editor
     base_source_hash: str               # SHA-256 of canonical disk file
     editor_draft_revision: int          # Monotonically incrementing editor buffer revision

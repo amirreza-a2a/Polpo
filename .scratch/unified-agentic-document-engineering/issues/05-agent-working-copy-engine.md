@@ -30,7 +30,7 @@
 @dataclass(frozen=True)
 class TaskInputSnapshot:
     """Immutable baseline capturing editor draft text, canonical version, and revisions at task initiation."""
-    document_id: int
+    job_id: int
     base_canonical_version: int
     base_source_hash: str
     editor_draft_revision: int

@@ -43,8 +43,11 @@ class SourceMappingResult:
    - **Tier 2 (`CONTEXTUAL_MATCH`, 0.7):** Identifies surrounding phrase tokens, normalizing common Pandoc transformations (e.g. `\st{sample}` $\to$ `~~sample~~`, mathematical delimiters, escaped characters). Searches Markdown for matching phrase.
    - **Tier 3 (`SECTION_ANCHOR`, 0.5):** Scans backward in `document.tex` from error line to nearest `\section{...}` or `\subsection{...}`. Matches section title against Markdown `# ...` headers. Maps to header line.
    - **Tier 4 (`UNKNOWN`, 0.0):** If error is inside preamble boilerplate or unmapped macros, sets `mapped_line = None` with `UNKNOWN` confidence.
-2. **Ambiguity Gating Invariant:**
-   - If confidence is `UNKNOWN`, the system displays the failing TeX snippet directly and warns the user; the Agent is strictly forbidden from applying automated replacements against arbitrary lines.
+2. **Ambiguity Gating & Patch Authorization Invariant (Finding C):**
+   - **`EXACT_TOKEN` (1.0):** Authorizes targeted document patch generation.
+   - **`CONTEXTUAL_MATCH` (0.7):** Authorizes document patch generation after verifying surrounding text context.
+   - **`SECTION_ANCHOR` (0.5):** Insufficient for automatic exact Patch generation; surfaces section coordinate for human inspection only.
+   - **`UNKNOWN` (0.0):** If confidence is `UNKNOWN`, the system displays the failing TeX snippet directly to the user; the Agent is strictly forbidden from applying automated replacements or generating source patches.
 
 ---
 
