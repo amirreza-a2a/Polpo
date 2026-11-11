@@ -161,7 +161,7 @@ class TypographyConfig:
     mathfont: Optional[str]    # Optional unicode-math font
     fontsize: str              # "10pt", "11pt", "12pt"
     linestretch: float         # 1.0 to 1.6
-    strikethrough_engine: str  # "ulem", "soul", "default"
+    strikethrough_engine: str  # "ulem", "soul", "default" (governed by D-PROP-08; awaiting approval)
 
 @dataclass(frozen=True)
 class GeometryConfig:
@@ -210,10 +210,28 @@ class PublicationStyleProfile:
 - NO shell escape or executable directives.
 - NO unvalidated filesystem paths.
 
-### 7.4 Profile Ownership & Reproducibility (Finding F)
+### 7.4 Profile Ownership, Packaging & Reproducibility (Finding F)
+
+#### Proposed Decision D-PROP-06: Publication Profile Packaging & Storage Alternatives
+Status: `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`
+
+We evaluate two architectural options for packaging and storing publication style profiles:
+
+- **Option A: Version-Controlled Built-in JSON Assets + SQLite User Overrides**
+  - Shipped built-in profiles are static, immutable JSON files in `resources/styles/` (`academic.json`, `technical_report.json`, `textbook.json`, `minimal.json`).
+  - User-customized styles are stored in SQLite table `publication_style_profiles` under Migration 006.
+  - Pros: Clean git version tracking of defaults; zero schema migration needed when built-in typography evolves; instant out-of-the-box availability without database seed steps.
+  - Cons: Requires hybrid lookup logic in `PublicationStyleService` (file system check for `builtin:`, SQLite query for `user:`).
+- **Option B: Database-Seeded Built-ins in SQLite Table**
+  - All profiles (both built-in and user) reside in SQLite table `publication_style_profiles` populated by migration seeds.
+  - Pros: Single unified repository interface (`IStyleProfileRepository.get_profile`).
+  - Cons: Modifying shipped built-in profiles requires database schema migrations; risk of accidental mutation or overwrite in SQLite.
+
+*Recommendation:* Option A for immutable versioning of standard templates and clean override precedence.
+*Status:* `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`
 
 1. **Built-in Profiles:**
-   - Shipped as version-controlled JSON assets under `resources/styles/` (`academic.json`, `technical_report.json`, `textbook.json`, `minimal.json`).
+   - Under Option A, shipped as version-controlled JSON assets under `resources/styles/` (`academic.json`, `technical_report.json`, `textbook.json`, `minimal.json`).
    - Marked `is_builtin = True`, immutable, and read-only.
 2. **User-Defined Profiles:**
    - Persisted in SQLite table `publication_style_profiles` under migration `006_agent_task_tables.sql`.

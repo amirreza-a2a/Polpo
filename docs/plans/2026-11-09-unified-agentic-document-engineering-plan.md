@@ -53,28 +53,14 @@ Execution follows a strict **Supervised Agent** autonomy model: the assistant fo
 - **D-USER-03 — Both Document and Rendering-System Repair:** Separation of document-level markup fixes, publication style configurations, preamble overrides, and product defect reports.
 
 ### Four Open Architectural Decisions (Awaiting Explicit Maintainer Approval)
-The four architectural proposals below remain explicitly unresolved and require formal maintainer sign-off:
+All four architectural proposals below remain explicitly unresolved and require formal maintainer sign-off. Neither option has been adopted as an irrevocable architectural fact.
 
-1. **`D-PROP-01` — Tool Invocation Strategy:**
-   - *Option A:* Provider-neutral structured JSON planning via `RateLimitedAIExecutor`.
-   - *Option B:* Provider-native function calling encapsulated inside infrastructure adapters.
-   - *Recommendation:* Option A (provider portability and fallback simplicity).
-   - *Status:* `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`
-2. **`D-PROP-02` — Task Persistence Architecture:**
-   - *Option A:* Dedicated tables (`agent_tasks`, `agent_task_journal`, `publication_style_profiles`) in `polpot.db` under Migration 006.
-   - *Option B:* Separate SQLite database (`agent_tasks.db`).
-   - *Recommendation:* Option A (transactional foreign-key integrity with parent jobs and unified migration runner).
-   - *Status:* `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`
-3. **`D-PROP-06` — Publication Profile Packaging & Storage:**
-   - *Option A:* Version-controlled built-in JSON assets in `resources/styles/` plus SQLite user overrides.
-   - *Option B:* Database-seeded built-ins in `publication_style_profiles` table.
-   - *Recommendation:* Option A (immutable git versioning of default styles and clean override precedence).
-   - *Status:* `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`
-4. **`D-PROP-08` — Persian RTL Strikethrough Engine:**
-   - *Option A:* Controlled static ULEM engine in `polpo_preamble.tex` with `[normalem]` and `\renewcommand{\st}[1]{\sout{#1}}`.
-   - *Option B:* Controlled Pandoc Lua AST filter (`--lua-filter`) intercepting `Strikeout` AST elements before LaTeX emission.
-   - *Recommendation:* Option A or Option B (both experimentally resolve Pandoc 3.1.3 `\st` macro definition collision; awaiting maintainer selection).
-   - *Status:* `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`
+| Decision ID | Decision Statement | Option A | Option B | Recommendation | Evidence | Affected ADR | Affected Tickets | Implementation Consequence | Status | Maintainer Approval |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **`D-PROP-01`** | **Tool Invocation Strategy:** How should the orchestrator structure tool execution requests across heterogeneous AI providers? | **Option A:** Provider-neutral structured JSON planning via existing `RateLimitedAIExecutor`. | **Option B:** Provider-native function calling encapsulated inside infrastructure adapters. | **Option A** (Recommended for provider portability & fallback simplicity, but Option B is architecturally viable within infrastructure). | Zero vendor SDK coupling in application layer; works uniformly across Gemini, OpenAI, Anthropic, and custom endpoints without adapter drift. | [ADR-007](docs/adr/2026-11-09-adr-007-unified-agent-orchestration-and-tool-governance.md) | `TICK-ADE-02`, `TICK-ADE-04` | Option A requires JSON schema prompt engineering; Option B requires per-provider function-call mapping in `infrastructure/ai/`. | `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL` | PENDING |
+| **`D-PROP-02`** | **Task Persistence Architecture:** Where and how should Agent task state, execution history, and journals be persisted? | **Option A:** Dedicated tables (`agent_tasks`, `agent_task_journal`, `publication_style_profiles`) in canonical `polpot.db` under Migration 006. | **Option B:** Separate SQLite database (`agent_tasks.db`) decoupled from main application database. | **Option A** (Recommended for transactional foreign key integrity with `jobs(id)` and unified backup/migration runner). | Preserves SQLite WAL concurrency; leverages existing `SQLiteMigrationRunner`; enforces `ON DELETE CASCADE` when parent jobs are deleted. | [ADR-007](docs/adr/2026-11-09-adr-007-unified-agent-orchestration-and-tool-governance.md) | `TICK-ADE-01`, `TICK-ADE-03` | Option A integrates with migration 006; Option B requires dual-database connection management and cross-database referential integrity checks. | `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL` | PENDING |
+| **`D-PROP-06`** | **Publication Profile Packaging & Storage:** How should shipped and user-defined publication style profiles be packaged and persisted? | **Option A:** Version-controlled built-in JSON assets in `resources/styles/` plus SQLite user overrides in `publication_style_profiles`. | **Option B:** Database-seeded built-ins in `publication_style_profiles` table under Migration 006. | **Option A** (Recommended for immutable version control of default profiles and clean separation of built-ins). | Clean git version tracking of defaults; zero schema migration needed when built-in typography evolves; instant out-of-the-box availability. | [ADR-010](docs/adr/2026-11-09-adr-010-publication-style-profile-system.md) | `TICK-ADE-13`, `TICK-ADE-14` | Option A requires hybrid lookup (`builtin:` file vs `user:` DB); Option B requires schema migrations whenever standard profiles are updated. | `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL` | PENDING |
+| **`D-PROP-08`** | **Persian RTL Strikethrough Engine:** Which controlled engine should replace broken `soul` reconstruction in multilingual/Persian Quarto PDF exports? | **Option A:** Controlled static ULEM engine in `resources/templates/polpo_preamble.tex` with `[normalem]` and `\renewcommand{\st}[1]{\sout{#1}}`. | **Option B:** Controlled Pandoc Lua AST filter (`filters/strikethrough_ulem.lua`) intercepting `Strikeout` AST elements before LaTeX emission. | **Option A or Option B** (Both experimentally resolve the Pandoc 3.1.3 `\st` macro definition collision; awaiting maintainer selection). | Real toolchain tests: Pandoc 3.1.3 LaTeX template loads `soul` conditionally at line 299; user preambles injected at line 380 collide with naive `\newcommand{\st}`. | [ADR-009](docs/adr/2026-11-09-adr-009-quarto-export-failure-diagnostics-and-ai-pdf-repair.md) | `TICK-ADE-10`, `TICK-ADE-11` | Option A updates `polpo_preamble.tex`; Option B introduces a Lua filter into Quarto invocation flags. Zero arbitrary AI macro injection permitted. | `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL` | PENDING |
 
 ### Supporting Architecture Consensus Proposals
 - **`D-PROP-03`:** Staging failure capture of `DiagnosticBundle` (bounded log + `.tex` snippet) before workspace purge (ADR-009, Finding G).
@@ -416,9 +402,40 @@ CREATE TABLE IF NOT EXISTS publication_style_profiles (
 - **Journal `metadata_json` Allowlist:** `task_id`, `step_index`, `event_type`, `recorded_at`, `duration_ms`, `tool_name`, `step_correlation_id` (opaque UUID replacing plain hashes), `status`, `sanitized_error_category`, `consent_token_ref` (single-use UUID reference), `approval_token_ref` (single-use UUID reference), `summary` (generic non-sensitive status <= 256 chars), `request_disposition`.
 - Entries capped at 8 KB; tasks capped at 50 journal entries.
 
+#### Persistent Field Audit & Data Classification Across All Tables:
+
+| Table | Field | Data Classification | Sensitive Content Possible? | Persistence Policy | Validation & Bounds | Retention |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `agent_tasks` | `task_id` | System Identifier | No | Canonical primary key | UUID4 format string | 30 days from `completed_at` |
+| `agent_tasks` | `job_id` | Foreign Key | No | References parent `jobs(id)` | Positive integer | Cascade with parent job |
+| `agent_tasks` | `status` | State Machine Enum | No | Current `TaskStatus` | Allowlisted enum string | 30 days from `completed_at` |
+| `agent_tasks` | `task_goal` | Bounded Lifecycle Label | **Yes** (if raw request stored) | **Short display label / classification only**. Never store raw user requests containing document fragments or private text. | Sanitized string, max 256 chars | 30 days from `completed_at` |
+| `agent_tasks` | `plan_json` | Validated Structured Metadata | **Yes** (if model emits raw text) | **Strictly validated safe plan schema only**. Allowlisted tool names, rationales, and typed arguments; zero prompts, completions, document fragments, or secrets. | JSON schema validation against `AgentPlanSchema`, max 16 KB | 30 days from `completed_at` |
+| `agent_tasks` | `current_step_index` | Execution Counter | No | Monotonic step counter | `0 <= index <= total_steps` | 30 days from `completed_at` |
+| `agent_tasks` | `total_steps` | Execution Bound | No | Bounded plan size | `0 <= steps <= 10` | 30 days from `completed_at` |
+| `agent_tasks` | `working_copy_id` | Ephemeral Scratchpad ID | No | Opaque UUID referencing `.polpo/working_copies/{id}/` | UUID4 format; content strictly ephemeral on disk | 30 days in DB; folder purged on task end |
+| `agent_tasks` | `failure_id` | Ephemeral Diagnostic ID | No | Opaque UUID referencing `.polpo/staging_failures/{id}/` | UUID4 format; bundle managed by LRU (max 5) | 30 days in DB; bundle pruned via LRU |
+| `agent_tasks` | `error_message` | Bounded Diagnostic Category | **Yes** (if raw logs stored) | **Sanitized English error category or bounded summary**. Never store unredacted stack traces, system paths, or source text. | Redacted by `TexLogSanitizer`, max 512 chars | 30 days from `completed_at` |
+| `agent_tasks` | `created_at` | Timestamp | No | Epoch creation time | Real/float >= 0 | 30 days from `completed_at` |
+| `agent_tasks` | `updated_at` | Timestamp | No | Epoch last update time | Real/float >= `created_at` | 30 days from `completed_at` |
+| `agent_tasks` | `completed_at` | Terminal Timestamp | No | Epoch terminal or interrupted transition time; baseline for retention window | Real/float >= `created_at` (NULL for active tasks) | 30 days from `completed_at` |
+| `agent_task_journal` | `entry_id` | Sequence ID | No | Auto-increment primary key | Positive integer | Cascade deleted with task |
+| `agent_task_journal` | `task_id` | Foreign Key | No | References `agent_tasks(task_id)` | UUID4 with `ON DELETE CASCADE` | Cascade deleted with task |
+| `agent_task_journal` | `step_index` | Execution Step | No | Step index in plan | Optional integer `0 <= step <= 10` | Cascade deleted with task |
+| `agent_task_journal` | `event_type` | Audit Event Enum | No | Typed audit event | Allowlisted string enum | Cascade deleted with task |
+| `agent_task_journal` | `recorded_at` | Timestamp | No | Microsecond epoch timestamp | Real/float >= 0 | Cascade deleted with task |
+| `agent_task_journal` | `metadata_json` | Strictly Allowlisted Audit Record | **Yes** (if arbitrary keys allowed) | **Strict Allowlist only**. Max 8 KB per entry; max 50 entries per task. Plain content hashes prohibited (replaced by opaque correlation IDs). | Schema validation against `JournalMetadataAllowlist`, max 8 KB | Cascade deleted with task |
+| `publication_style_profiles` | `profile_id` | Profile Identifier | No | Key (`builtin:{name}` or `user:{uuid}`) | String, max 64 chars, regex `^(builtin:[a-z0-9_-]+|user:[0-9a-f-]{36})$` | Permanent (built-in) / user-managed |
+| `publication_style_profiles` | `display_name` | Presentation Meta | No | Human-readable title | String, max 128 chars | User-managed |
+| `publication_style_profiles` | `description` | Presentation Meta | No | Human-readable summary | String, max 512 chars | User-managed |
+| `publication_style_profiles` | `schema_version` | Schema Version | No | Schema compatibility version | Integer >= 1 | User-managed |
+| `publication_style_profiles` | `is_builtin` | Immutability Flag | No | Built-in profile protection | 1 (true) or 0 (false) | Permanent |
+| `publication_style_profiles` | `profile_json` | Declarative Profile Spec | **Yes** (if raw macros injected) | **Strictly validated declarative typesetting JSON**. Prohibit raw LaTeX macros, `header-includes`, shell commands, executable code. | Validated against `PublicationStyleProfileSchema`, max 16 KB | User-managed |
+| `publication_style_profiles` | `created_at`, `updated_at` | Timestamps | No | Epoch modification times | Real/float >= 0 | User-managed |
+
 ### 6.3 Task Retention, Purging, and Deletion Semantics (Finding E)
-- **Retention Baseline:** 30-day retention calculated strictly from `completed_at` (terminal transition time), NOT task creation time.
-- **Scope:** Applies to all terminal states (`COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`, `INTERRUPTED`). Active or awaiting tasks are never automatically purged.
+- **Retention Baseline:** 30-day retention calculated strictly from `completed_at` (terminal or interrupted transition timestamp), NOT from task creation time. Startup recovery explicitly sets `completed_at = :now` upon transitioning active tasks to `INTERRUPTED`, establishing the 30-day retention baseline for abandoned interrupted tasks.
+- **Scope:** Applies to all terminal and interrupted states (`COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`, `INTERRUPTED`) where `completed_at IS NOT NULL AND completed_at <= :cutoff`. Active or awaiting tasks (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`) have `completed_at IS NULL` and are never automatically purged.
 - **Cascade Deletion:** SQLite `ON DELETE CASCADE` automatically cleans up associated `agent_task_journal` rows.
 - **Two-Phase Idempotent Filesystem Cleanup:**
   1. Purge scratchpad directories (`.polpo/working_copies/{id}/`) and staging failure bundles (`.polpo/staging_failures/{id}/`) using idempotent unlinks.
@@ -466,7 +483,7 @@ CREATE TABLE IF NOT EXISTS publication_style_profiles (
 ### Milestone D — PDF Repair & Validation
 - **Tickets:** `TICK-ADE-11`, `TICK-ADE-12`.
 - **Deliverables:** `PdfRepairService` (bounded self-correction loop) and `PyMuPdfValidator` (structural and vector PDF inspection, separated from visual quality claims).
-- **Exit Gate:** Broken XeLaTeX compilation repaired via typed style profile override (`strikethrough_engine = "ulem"`); candidate validated through PyMuPDF; text-only PDFs pass without vector drawings; zero arbitrary LaTeX macro injection; D-PROP-08 awaiting maintainer approval.
+- **Exit Gate:** Broken XeLaTeX compilation repaired via typed style profile override (`strikethrough_engine = "ulem"`); candidate validated through PyMuPDF; text-only PDFs pass without vector drawings; zero arbitrary LaTeX macro injection; 12-case empirical regression matrix verified; D-PROP-08 awaiting maintainer approval.
 
 ### Milestone E — Publication Styles
 - **Tickets:** `TICK-ADE-13`, `TICK-ADE-14`.

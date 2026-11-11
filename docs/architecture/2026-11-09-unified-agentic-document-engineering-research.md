@@ -89,6 +89,38 @@ Infrastructure Adapters (infrastructure/)
   4. *Pointer & Version Update:* `DocumentVersionRecord` inserted and `jobs.output_path` updated in SQLite.
 - **Architectural Boundary:** The Agent must NEVER write directly to `document_versions` or overwrite canonical Markdown files. All agent-generated document modifications must be validated on an isolated `AgentWorkingCopy` and applied to the active editor buffer or committed through `DocumentPublicationService` under OCC.
 
+### 2.5 Persistent-Data Privacy Boundary & Field Audit (Finding A)
+In accordance with [`AGENTS.md`](AGENTS.md) Rules 10 and 11, persistent storage across all proposed tables enforces strict metadata allowlists, size bounds, and retention policies. Complete user requests with source text, full Markdown drafts, working copies, raw prompts, completions, and plain content hashes are strictly prohibited from persistence.
+
+| Table | Field | Data Classification | Sensitive Content Possible? | Persistence Policy | Validation & Bounds | Retention |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `agent_tasks` | `task_id` | System Identifier | No | Canonical primary key | UUID4 format string | 30 days from `completed_at` |
+| `agent_tasks` | `job_id` | Foreign Key | No | References parent `jobs(id)` | Positive integer | Cascade with parent job |
+| `agent_tasks` | `status` | State Machine Enum | No | Current `TaskStatus` | Allowlisted enum string | 30 days from `completed_at` |
+| `agent_tasks` | `task_goal` | Bounded Lifecycle Label | **Yes** (if raw request stored) | **Short display label / classification only**. Never store raw user requests containing document fragments or private text. | Sanitized string, max 256 chars | 30 days from `completed_at` |
+| `agent_tasks` | `plan_json` | Validated Structured Metadata | **Yes** (if model emits raw text) | **Strictly validated safe plan schema only**. Allowlisted tool names, rationales, and typed arguments; zero prompts, completions, document fragments, or secrets. | JSON schema validation against `AgentPlanSchema`, max 16 KB | 30 days from `completed_at` |
+| `agent_tasks` | `current_step_index` | Execution Counter | No | Monotonic step counter | `0 <= index <= total_steps` | 30 days from `completed_at` |
+| `agent_tasks` | `total_steps` | Execution Bound | No | Bounded plan size | `0 <= steps <= 10` | 30 days from `completed_at` |
+| `agent_tasks` | `working_copy_id` | Ephemeral Scratchpad ID | No | Opaque UUID referencing `.polpo/working_copies/{id}/` | UUID4 format; content strictly ephemeral on disk | 30 days in DB; folder purged on task end |
+| `agent_tasks` | `failure_id` | Ephemeral Diagnostic ID | No | Opaque UUID referencing `.polpo/staging_failures/{id}/` | UUID4 format; bundle managed by LRU (max 5) | 30 days in DB; bundle pruned via LRU |
+| `agent_tasks` | `error_message` | Bounded Diagnostic Category | **Yes** (if raw logs stored) | **Sanitized English error category or bounded summary**. Never store unredacted stack traces, system paths, or source text. | Redacted by `TexLogSanitizer`, max 512 chars | 30 days from `completed_at` |
+| `agent_tasks` | `created_at` | Timestamp | No | Epoch creation time | Real/float >= 0 | 30 days from `completed_at` |
+| `agent_tasks` | `updated_at` | Timestamp | No | Epoch last update time | Real/float >= `created_at` | 30 days from `completed_at` |
+| `agent_tasks` | `completed_at` | Terminal Timestamp | No | Epoch terminal or interrupted transition time; baseline for retention window | Real/float >= `created_at` (NULL for active tasks) | 30 days from `completed_at` |
+| `agent_task_journal` | `entry_id` | Sequence ID | No | Auto-increment primary key | Positive integer | Cascade deleted with task |
+| `agent_task_journal` | `task_id` | Foreign Key | No | References `agent_tasks(task_id)` | UUID4 with `ON DELETE CASCADE` | Cascade deleted with task |
+| `agent_task_journal` | `step_index` | Execution Step | No | Step index in plan | Optional integer `0 <= step <= 10` | Cascade deleted with task |
+| `agent_task_journal` | `event_type` | Audit Event Enum | No | Typed audit event | Allowlisted string enum | Cascade deleted with task |
+| `agent_task_journal` | `recorded_at` | Timestamp | No | Microsecond epoch timestamp | Real/float >= 0 | Cascade deleted with task |
+| `agent_task_journal` | `metadata_json` | Strictly Allowlisted Audit Record | **Yes** (if arbitrary keys allowed) | **Strict Allowlist only**. Max 8 KB per entry; max 50 entries per task. Plain content hashes prohibited (replaced by opaque correlation IDs). | Schema validation against `JournalMetadataAllowlist`, max 8 KB | Cascade deleted with task |
+| `publication_style_profiles` | `profile_id` | Profile Identifier | No | Key (`builtin:{name}` or `user:{uuid}`) | String, max 64 chars, regex `^(builtin:[a-z0-9_-]+|user:[0-9a-f-]{36})$` | Permanent (built-in) / user-managed |
+| `publication_style_profiles` | `display_name` | Presentation Meta | No | Human-readable title | String, max 128 chars | User-managed |
+| `publication_style_profiles` | `description` | Presentation Meta | No | Human-readable summary | String, max 512 chars | User-managed |
+| `publication_style_profiles` | `schema_version` | Schema Version | No | Schema compatibility version | Integer >= 1 | User-managed |
+| `publication_style_profiles` | `is_builtin` | Immutability Flag | No | Built-in profile protection | 1 (true) or 0 (false) | Permanent |
+| `publication_style_profiles` | `profile_json` | Declarative Profile Spec | **Yes** (if raw macros injected) | **Strictly validated declarative typesetting JSON**. Prohibit raw LaTeX macros, `header-includes`, shell commands, executable code. | Validated against `PublicationStyleProfileSchema`, max 16 KB | User-managed |
+| `publication_style_profiles` | `created_at`, `updated_at` | Timestamps | No | Epoch modification times | Real/float >= 0 | User-managed |
+
 ---
 
 ## 3. External Technical Research & Standards Verification
@@ -112,20 +144,25 @@ Infrastructure Adapters (infrastructure/)
      - Inline math occurs inside (`\st{$x^2$}`).
      - Moving arguments are used (headings `\section{\st{...}}`).
   5. **`ulem` Behavior:** `ulem`'s `\sout{...}` operates at the line/word box level without syllable tokenization, handling language and font switches cleanly. However, `ulem` MUST be loaded with `\usepackage[normalem]{ulem}` to prevent hijacking `\emph`, inline math must be wrapped in `\mbox{$...$}`, and moving arguments require `\protect\sout`.
-- **10-Case Reproducible Regression Matrix:**
+- **12-Case Reproducible Regression Matrix:**
 
-  | # | Test Scenario | Input LaTeX | `soul` v3.1 Result | `ulem` (2019) Result | Controlled Alternative (Lua Filter / Preamble) |
+  | # | Test Scenario | Input LaTeX / QMD | `soul` v3.1 Result | `ulem` (2019) Result | Controlled Alternative (Lua Filter / Preamble) |
   |---|---|---|---|---|---|
-  | 1 | English strikethrough (ambient Persian) | `\st{English text}` | ❌ Fails under Babel bidi | ✅ Passes (rc=0) | `\sout{English text}` |
-  | 2 | Pure Persian strikethrough | `\st{متن فارسی}` | ✅ Passes (rc=0) | ✅ Passes (rc=0) | `\sout{متن فارسی}` |
-  | 3 | Mixed Persian & English | `\st{متن فارسی English}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن فارسی English}` |
-  | 4 | Nested formatting macros | `\st{متن \textbf{پررنگ}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن \textbf{پررنگ}}` |
-  | 5 | Font switch inside | `\st{\textsf{فونت دیگر}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{\textsf{فونت دیگر}}` |
-  | 6 | Direction changes | `\st{\foreignlanguage{english}{LTR} متن}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{...}` handles LTR box |
-  | 7 | Headings & moving arguments | `\section{\st{عنوان}}`, `\item \st{مورد}` | ❌ Fails in moving argument | ✅ Passes with `\protect\sout` | Robust AST translation |
-  | 8 | Inline math inside strikeout | `\st{قبل} $x^2$ \st{بعد}` vs `\st{$x^2$}` | ❌ Fails (`Missing $`) if math inside | ❌ Fails if unboxed | Boxed math: `\sout{\mbox{$x^2$}}` |
-  | 9 | Quarto PDF Output | `~~متن نمونه~~` in Quarto QMD | ❌ Fails if mixed/nested | ✅ Passes with `ulem` override | Clean Quarto XeLaTeX PDF |
-  | 10 | Exact installed versions | `soul` v3.1 vs `ulem` 2019-11-18 | Syllable reconstruction bug on switch | Stable word-box underline (`[normalem]`) | Pinned toolchain verified |
+  | 1 | English-only strikethrough (standard English document) | `\st{English text}` (ambient English, no Babel bidi) | ✅ Passes (rc=0, clean PDF) | ✅ Passes (rc=0) | `\st{English text}` / `\sout{English text}` |
+  | 2 | Persian-only strikethrough (ambient Persian) | `\st{متن فارسی}` (single language, no switch) | ✅ Passes (rc=0) | ✅ Passes (rc=0) | `\sout{متن فارسی}` |
+  | 3 | Mixed Persian & English text | `\st{متن فارسی English}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن فارسی English}` |
+  | 4 | Nested braces | `\st{{متن داخل آکولاد}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{{متن داخل آکولاد}}` |
+  | 5 | Nested formatting macros | `\st{متن \textbf{پررنگ}}`, `\st{\emph{تأکید}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن \textbf{پررنگ}}` |
+  | 6 | Font switch inside | `\st{\textsf{فونت دیگر}}`, `\st{\texttt{کد}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{\textsf{فونت دیگر}}` |
+  | 7 | Babel language switches | `\st{\foreignlanguage{english}{English text}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{\foreignlanguage{english}{English text}}` |
+  | 8 | Direction changes | `\st{\textenglish{LTR} متن}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{...}` handles LTR/RTL box boundary |
+  | 9 | Headings & moving arguments | `\section{\st{عنوان سرفصل}}` | ❌ Fails in moving argument | ✅ Passes with `\protect\sout` | Protected macro or AST translation |
+  | 10 | List items | `\begin{itemize}\item \st{مورد فهرست}\end{itemize}` | ✅ Passes pure Persian; ❌ Fails if mixed/nested | ✅ Passes (rc=0) | `\sout{مورد فهرست}` |
+  | 11 | Inline math inside strikeout | `\st{$x^2$}` vs `\st{قبل} $x^2$ \st{بعد}` | ❌ Fails (`Missing $` / `Reconstruction failed`) | ❌ Fails if unboxed; ✅ Passes boxed | Boxed math: `\sout{\mbox{$x^2$}}` or uncrossed math |
+  | 12 | Quarto-generated PDF output | `~~متن فارسی نمونه~~` / `~~mixed English~~` | ❌ Fails if mixed/nested under XeLaTeX | ✅ Passes with `ulem` override | Clean Quarto XeLaTeX PDF |
+
+  *Toolchain metadata:* Ubuntu 24.04 LTS, TeX Live 2023, XeTeX 3.141592653-2.6-0.999995, Pandoc 3.1.3, Quarto 1.9.38, Babel Persian 3.90, `soul` v3.1 (2023-06-14), `ulem` (2019-11-18).
+  *Empirical note on English-only behavior:* `soul` does NOT fail on English-only text in standard documents. The failure occurs specifically under ambient Persian Babel bidi or when language/directional tokens cross the strikethrough boundary.
 
 - **Architectural Policy:** Zero arbitrary AI-generated macro injection into preambles. Document style options exposed strictly as typed tokens (`strikethrough_engine: "ulem"`). Decision `D-PROP-08` remains `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`.
 

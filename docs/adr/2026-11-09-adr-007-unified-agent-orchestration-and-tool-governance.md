@@ -82,8 +82,8 @@ To eliminate conceptual ambiguity across the system, the following ubiquitous la
 ## 6. Considered Alternatives
 
 ### Alternative A: Provider-Native Function Calling (OpenAI Tools / Gemini Function Calling)
-- *Description:* Directly bind provider-specific tool schemas to the model call.
-- *Rejection Rationale:* Each provider uses a different tool-calling API and schema representation. Implementing native function calling in the application layer violates Clean Architecture by binding domain logic to external vendor SDK shapes. Furthermore, fallback chain progression (`Gemini` $\to$ `OpenAI`) becomes fragile when translating vendor-specific function calling responses mid-task.
+- *Description:* Directly bind provider-specific tool schemas to the model call. When encapsulated strictly inside infrastructure adapters in `infrastructure/ai/`, provider-native function calling does not violate Clean Architecture boundaries.
+- *Trade-off Considerations:* Each provider uses a different tool-calling API and schema representation. Implementing native function calling requires per-provider schema translation, tool-call parsing, and complex fallback chain progression (`Gemini` $\to$ `OpenAI`) when translating vendor-specific function calling responses mid-task.
 
 ### Alternative B: Unrestricted General-Purpose ReAct Agent
 - *Description:* Allow the LLM to recursively plan, execute shell commands, and read arbitrary files until it decides to stop.
@@ -92,6 +92,24 @@ To eliminate conceptual ambiguity across the system, the following ubiquitous la
 ### Alternative C: Proposed Decision — Provider-Neutral Structured JSON Orchestrator with Allowlisted Tool Registry
 - *Description:* The Agent uses Polpo's existing [`IAIExecutionService`](application/ports/ai_executor.py) to generate structured, machine-readable JSON plans and tool requests. A deterministic application-owned `ToolRegistry` and `RiskPolicyGovernor` validate and dispatch tool calls.
 - *Selection Rationale:* Completely decouples application code from vendor SDKs; leverages existing rate-limiting and fallback chain progression; guarantees deterministic security enforcement.
+
+### Proposed Decision D-PROP-01: Tool Invocation Strategy Alternatives
+Status: `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`
+
+We evaluate two architectural options for structuring tool execution requests across heterogeneous AI providers:
+
+- **Option A: Provider-Neutral Structured JSON Planning via `RateLimitedAIExecutor`**
+  - Application layer issues structured JSON system prompts asking the model to emit a valid `AgentPlan`.
+  - Arguments are validated deterministically against schema before execution.
+  - Pros: 100% provider-portable across Gemini, OpenAI, Anthropic, or custom local endpoints; zero vendor SDK coupling; trivial fallback chain progression without adapting disparate tool calling shapes mid-flight.
+  - Cons: Requires prompt engineering and strict JSON schema sanitization/validation.
+- **Option B: Provider-Native Function Calling Encapsulated in Infrastructure Adapters**
+  - Concrete adapters in `infrastructure/ai/` map application `ToolDescriptor`s to provider-native function calling APIs (e.g. Gemini `FunctionDeclaration`, OpenAI `tools`).
+  - Pros: Model providers optimize token training for native tool calls; higher raw JSON adherence out of the box.
+  - Cons: Requires ongoing per-provider adapter maintenance; complex state synchronization when fallback chain switches providers during an active multi-step task.
+
+*Recommendation:* Option A for maximum provider portability and fallback robustness, while noting that Option B remains architecturally valid if encapsulated strictly in infrastructure.
+*Status:* `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`
 
 ---
 
@@ -300,8 +318,8 @@ To prevent persistent storage (`agent_tasks`, `agent_task_journal`, `publication
 - Unredacted exceptions or raw stack traces.
 
 #### 4. Retention, Purging, and Cascade Deletion Semantics (Finding E):
-- **Retention Calculation:** The 30-day retention window is calculated strictly from `completed_at` (the terminal transition timestamp), NOT from task creation time.
-- **Scope of Retention:** Applies to all terminal states (`COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`, `INTERRUPTED`). Active or awaiting tasks (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`) are **never automatically purged**.
+- **Retention Calculation:** The 30-day retention window is calculated strictly from `completed_at` (the terminal or interrupted transition timestamp), NOT from task creation time. Startup recovery explicitly sets `completed_at = :now` upon transitioning active tasks to `INTERRUPTED`, establishing the 30-day retention baseline for abandoned interrupted tasks.
+- **Scope of Retention:** Applies to all terminal and interrupted states (`COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`, `INTERRUPTED`) where `completed_at IS NOT NULL AND completed_at <= :cutoff`. Active or awaiting tasks (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`) have `completed_at IS NULL` and are **never automatically purged**.
 - **Database Cascade:** Deletion of an `agent_tasks` record cascades via `FOREIGN KEY (task_id) REFERENCES agent_tasks(task_id) ON DELETE CASCADE`, purging all associated `agent_task_journal` rows atomically.
 - **Two-Phase Idempotent Filesystem Cleanup:**
   1. *Phase 1 (Filesystem):* Remove scratchpad directories (`.polpo/working_copies/{working_copy_id}/`) and staging failure bundles (`.polpo/staging_failures/{failure_id}/`) using idempotent unlinks (`shutil.rmtree(..., ignore_errors=True)`).
@@ -485,6 +503,25 @@ CREATE TABLE IF NOT EXISTS publication_style_profiles (
     updated_at REAL NOT NULL
 );
 ```
+
+### Proposed Decision D-PROP-02: Task Persistence Architecture Alternatives
+Status: `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`
+
+We evaluate two architectural options for persisting Agent tasks, journals, and style profiles:
+
+- **Option A: Dedicated Tables in Canonical `polpot.db` under Migration 006**
+  - Defines `agent_tasks`, `agent_task_journal`, and `publication_style_profiles` inside `polpot.db`.
+  - Enforces `FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE`.
+  - Leverages existing `SQLiteMigrationRunner` and single-file backup workflows.
+  - Pros: Atomicity with document jobs; automatic cascade cleanup when jobs are deleted; zero dual-connection concurrency hazards.
+  - Cons: Expands the canonical application database schema.
+- **Option B: Separate SQLite Database (`agent_tasks.db`)**
+  - Isolates agent task execution and journal logs in a standalone SQLite database.
+  - Pros: Completely decouples transient agent execution history from document metadata.
+  - Cons: Requires dual-database connection management, cross-database referential integrity checks without foreign keys, and separate migration runners.
+
+*Recommendation:* Option A for foreign-key transactional integrity with parent jobs and unified migration runner.
+*Status:* `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`
 
 ---
 

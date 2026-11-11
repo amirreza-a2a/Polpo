@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
     plan_json TEXT,
     current_step_index INTEGER DEFAULT 0,
     total_steps INTEGER DEFAULT 0,
+    working_copy_id TEXT,
     failure_id TEXT,
     error_message TEXT,
     created_at REAL NOT NULL,
@@ -103,7 +104,7 @@ class IAgentTaskRepository(ABC):
 
     @abstractmethod
     def purge_expired_tasks(self, retention_days: int = 30) -> int:
-        """Purges terminal tasks older than retention_days from completed_at."""
+        """Purges terminal and interrupted tasks older than retention_days from completed_at."""
         pass
 ```
 
@@ -148,14 +149,15 @@ class IAgentTaskRepository(ABC):
 
 3. **Exhaustive Startup Recovery & Token Invalidation (Finding B):**
    - `reconcile_interrupted_tasks()` scans `agent_tasks` under `BEGIN IMMEDIATE` across **all non-terminal states**: `CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`.
-   - Transitions matching tasks to `TaskStatus.INTERRUPTED` with `error_message = "Task interrupted by application shutdown"`.
+   - Transitions matching tasks to `TaskStatus.INTERRUPTED` with `error_message = "Task interrupted by application shutdown"`, `updated_at = :now`, and `completed_at = :now` (establishing the 30-day retention cutoff for abandoned interrupted tasks).
    - **Token Invalidation:** In-memory authorization tokens expire immediately on process shutdown; persisted journal references are non-reusable audit records. Old tokens cannot authorize subsequent operations upon restart.
    - **Network Ambiguity:** In-flight network requests interrupted by restart are recorded as `REQUEST_OUTCOME_UNKNOWN`. Zero automated retries; explicit user confirmation required with potential duplicate billing disclosure.
    - Operation is idempotent and returns the list of reconciled `task_id`s.
 
 4. **Task Retention, Purging, and Deletion Semantics (Finding E):**
-   - **Retention Calculation:** 30-day retention calculated strictly from `completed_at` (terminal transition timestamp), NOT from task creation time.
-   - **Protected Active Tasks:** Active or awaiting tasks are never automatically purged.
+   - **Retention Calculation:** 30-day retention calculated strictly from `completed_at` (terminal or interrupted transition timestamp), NOT from task creation time.
+   - **Protected Active Tasks:** Active or awaiting tasks (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`) have `completed_at IS NULL` and are never automatically purged.
+   - **Purge Scope:** Applies to terminal and interrupted tasks (`COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`, `INTERRUPTED`) where `completed_at IS NOT NULL AND completed_at <= :cutoff`.
    - **Cascade Deletion:** SQLite `ON DELETE CASCADE` automatically purges `agent_task_journal` rows when `agent_tasks` records are deleted.
    - **Two-Phase Idempotent Filesystem Cleanup:**
      1. Unlink scratchpad directories (`.polpo/working_copies/{id}/`) and staging failure bundles (`.polpo/staging_failures/{id}/`) using `shutil.rmtree(..., ignore_errors=True)`.

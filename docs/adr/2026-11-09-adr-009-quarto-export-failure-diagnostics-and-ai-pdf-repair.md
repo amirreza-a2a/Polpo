@@ -98,20 +98,25 @@ We evaluated the strikethrough failure mechanism using Polpo's real runtime tool
      - Inline math inside `\sout{...}` must be placed inside `\mbox{$...$}`.
      - Headings require `\protect\sout` to survive moving arguments.
 
-### 5.3 Ten-Case Empirical Regression Matrix
+### 5.3 Twelve-Case Empirical Regression Matrix
 
-| # | Test Scenario | Input LaTeX | `soul` v3.1 Result | `ulem` (2019) Result | Controlled Alternative (Lua Filter / Preamble) |
+| # | Test Scenario | Input LaTeX / QMD | `soul` v3.1 Result | `ulem` (2019) Result | Controlled Alternative (Lua Filter / Preamble) |
 |---|---|---|---|---|---|
-| 1 | English strikethrough (ambient Persian) | `\st{English text}` | ❌ Fails under Babel bidi | ✅ Passes (rc=0) | `\sout{English text}` |
-| 2 | Pure Persian strikethrough | `\st{متن فارسی}` | ✅ Passes (rc=0) | ✅ Passes (rc=0) | `\sout{متن فارسی}` |
-| 3 | Mixed Persian & English | `\st{متن فارسی English}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن فارسی English}` |
-| 4 | Nested formatting macros | `\st{متن \textbf{پررنگ}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن \textbf{پررنگ}}` |
-| 5 | Font switch inside | `\st{\textsf{فونت دیگر}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{\textsf{فونت دیگر}}` |
-| 6 | Direction changes | `\st{\foreignlanguage{english}{LTR} متن}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{...}` handles LTR box |
-| 7 | Headings & moving arguments | `\section{\st{عنوان}}`, `\item \st{مورد}` | ❌ Fails in moving argument | ✅ Passes with `\protect\sout` | Robust AST translation |
-| 8 | Inline math inside strikeout | `\st{قبل} $x^2$ \st{بعد}` vs `\st{$x^2$}` | ❌ Fails (`Missing $`) if math inside | ❌ Fails if unboxed | Boxed math: `\sout{\mbox{$x^2$}}` |
-| 9 | Quarto PDF Output | `~~متن نمونه~~` in Quarto QMD | ❌ Fails if mixed/nested | ✅ Passes with `ulem` override | Clean Quarto XeLaTeX PDF |
-| 10 | Exact installed versions | `soul` v3.1 vs `ulem` 2019-11-18 | Syllable reconstruction bug on switch | Stable word-box underline (`[normalem]`) | Pinned toolchain verified |
+| 1 | English-only strikethrough (standard English document) | `\st{English text}` (ambient English, no Babel bidi) | ✅ Passes (rc=0, clean PDF) | ✅ Passes (rc=0) | `\st{English text}` / `\sout{English text}` |
+| 2 | Persian-only strikethrough (ambient Persian) | `\st{متن فارسی}` (single language, no switch) | ✅ Passes (rc=0) | ✅ Passes (rc=0) | `\sout{متن فارسی}` |
+| 3 | Mixed Persian & English text | `\st{متن فارسی English}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن فارسی English}` |
+| 4 | Nested braces | `\st{{متن داخل آکولاد}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{{متن داخل آکولاد}}` |
+| 5 | Nested formatting macros | `\st{متن \textbf{پررنگ}}`, `\st{\emph{تأکید}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن \textbf{پررنگ}}` |
+| 6 | Font switch inside | `\st{\textsf{فونت دیگر}}`, `\st{\texttt{کد}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{\textsf{فونت دیگر}}` |
+| 7 | Babel language switches | `\st{\foreignlanguage{english}{English text}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{\foreignlanguage{english}{English text}}` |
+| 8 | Direction changes | `\st{\textenglish{LTR} متن}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{...}` handles LTR/RTL box boundary |
+| 9 | Headings & moving arguments | `\section{\st{عنوان سرفصل}}` | ❌ Fails in moving argument | ✅ Passes with `\protect\sout` | Protected macro or AST translation |
+| 10 | List items | `\begin{itemize}\item \st{مورد فهرست}\end{itemize}` | ✅ Passes pure Persian; ❌ Fails if mixed/nested | ✅ Passes (rc=0) | `\sout{مورد فهرست}` |
+| 11 | Inline math inside strikeout | `\st{$x^2$}` vs `\st{قبل} $x^2$ \st{بعد}` | ❌ Fails (`Missing $` / `Reconstruction failed`) | ❌ Fails if unboxed; ✅ Passes boxed | Boxed math: `\sout{\mbox{$x^2$}}` or uncrossed math |
+| 12 | Quarto-generated PDF output | `~~متن فارسی نمونه~~` / `~~mixed English~~` | ❌ Fails if mixed/nested under XeLaTeX | ✅ Passes with `ulem` override | Clean Quarto XeLaTeX PDF |
+
+*Note on toolchain versions:* Ubuntu 24.04 LTS, TeX Live 2023, XeTeX 3.141592653-2.6-0.999995, Pandoc 3.1.3, Quarto 1.9.38, Babel Persian 3.90, `soul` v3.1 (2023-06-14), `ulem` (2019-11-18).
+*Empirical note on English-only behavior:* `soul` does NOT fail on English-only text in standard documents. The failure occurs specifically under ambient Persian Babel bidi or when language/directional tokens cross the strikethrough boundary.
 
 ### 5.4 Proposed Decision D-PROP-08: Persian Strikethrough Engine Alternatives
 Status: `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`
@@ -237,7 +242,7 @@ To balance local diagnostic needs with privacy, five distinct data representatio
 2. **Sanitized Failure Bundle (`DiagnosticBundle`):** Captured locally in memory/ephemeral store (max 5 bundles per job, max 10MB total). Bounded to 100 lines / 10KB. Absolute host paths, usernames, and staging hashes are redacted.
 3. **TeX Source Mapping Input:** The intermediate `document.tex` file, inspected strictly locally within the staging hook by `PdfDiagnosticService` to compute line mappings. **Never transmitted externally.**
 4. **AI Transmission Payload:** Minimal excerpt disclosed to the author in `LaTeXRepairConsentDialog`: only the failing TeX snippet (10 lines), mapped Markdown line, and sanitized compiler message.
-5. **Persistent Task Journal Metadata:** Only non-sensitive audit metadata (hashes, error category, timestamps) recorded in SQLite under migration 006.
+5. **Persistent Task Journal Metadata:** Only non-sensitive audit metadata (opaque step correlation IDs, error category, timestamps) recorded in SQLite under migration 006 (plain content hashes strictly prohibited).
 
 ### 7.4 Multi-Tier Source Location Mapping & Fail-Closed Classification (Finding C)
 
@@ -275,29 +280,30 @@ flowchart TD
     - Remediation target: `ENVIRONMENT_DEPENDENCY` (system package manager or TeX Live installation).
     - Policy: The application NEVER silently alters document YAML to fake package presence or remove package references without explicit user direction.
 
-### 7.5 Structural PDF Inspection vs. Source Preservation & Visual Checks (Finding F, Finding H)
+### 7.5 Four-Category PDF Inspection vs. Visual and Semantic Quality (Finding F, Finding H)
 
-To eliminate false senses of correctness, PDF validation explicitly separates structural verification from visual quality and semantic correctness:
+To eliminate false senses of correctness, PDF validation explicitly defines four distinct validation categories and separates structural verification from visual quality and semantic correctness:
 
-1. **Structural Inspection (Deterministic PyMuPDF Object Checks):**
+1. **Category 1: Structural Validation (Deterministic PyMuPDF Object Checks):**
    - Header integrity (`%PDF-`), valid xref table via `fitz.open()`.
    - Page count within variance of baseline ($\pm 20\%$).
    - Page dimensions match target format (A4: $595 \times 842 \pm 2$ pt).
    - Text stream presence: extracted text character count > 0.
    - Vector drawings: `require_vector_drawings = False` by default. Text-only documents pass cleanly without vector drawings. When `expected_diagram_pages` is non-empty, vector drawing counts are verified strictly on those designated pages.
    - Blank page detection: pages with $< 10$ characters of text and zero vector drawings are flagged.
-2. **Source-Preservation Checks:**
-   - Verifies that bounded `expected_text_anchors` extracted from key document sections appear in the PyMuPDF extracted text stream.
-3. **Optional Visual Inspection (Raster Previews):**
+2. **Category 2: Source-Preservation Checks:**
+   - Verifies that bounded `expected_text_anchors` extracted from key document sections appear in the PyMuPDF extracted text stream (does NOT transmit or inspect full source Markdown).
+3. **Category 3: Visual Anomaly Detection (Raster Previews):**
    - Generates 150 DPI PNG raster previews of sampled pages (first 3 pages + last page + any flagged anomaly pages; maximum 5 pages total).
-   - Memory bounded: max 50MB image memory buffer.
+   - Memory bounded: max 50MB image memory buffer; byte buffers are dropped promptly after UI consumption.
    - Execution timeout: 5.0 seconds with cooperative thread cancellation check.
-4. **Validation Severity Semantics:**
+4. **Category 4: Semantic Correctness (Explicitly Out-of-Scope / Unsupported):**
+   - Structural and raster inspection CANNOT prove mathematical correctness, semantic fidelity, absence of subtle layout overflow, Persian typography aesthetics, or translation accuracy.
+   - **`is_valid = True` proves ONLY structural well-formedness and readability.** It is NEVER represented as proof of visual beauty or semantic correctness.
+5. **Validation Severity Semantics:**
    - `HARD_FAILURE`: Corrupt PDF structure, unopenable file, zero pages rendered. Results in `is_valid = False`.
    - `WARNING`: Low text density, unexpected blank page, missing vector drawings on expected diagram page. Does NOT cause automatic validation rejection unless configured by explicit policy; surfaces in anomaly list for user review.
    - `INFO`: Page dimensions, text character counts, drawing primitive metrics.
-5. **No Visual or Semantic Quality Guarantees:**
-   - `is_valid = True` proves ONLY that the PDF is structurally well-formed, openable, and non-empty. It does NOT guarantee visual beauty, mathematical accuracy, Persian RTL text correctness, or semantic fidelity.
 6. **Performance Budget:**
    - Structural checks: $< 1.5$ seconds for documents under 50 pages on reference hardware (Ubuntu 24.04, Core i7/Ryzen 7). This is an empirical benchmark target, not an absolute real-time SLA.
 

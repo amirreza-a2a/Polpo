@@ -95,7 +95,7 @@ class AgentTask:
     error_message: Optional[str] = None         # Sanitized English summary (max 512 chars)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
-    completed_at: Optional[float] = None        # Set strictly on transition to terminal state
+    completed_at: Optional[float] = None        # Set strictly on transition to terminal or interrupted state
 ```
 
 ---
@@ -131,7 +131,7 @@ class AgentTask:
 - [ ] Transitioning from `CREATED` directly to `COMPLETED` raises `InvalidStateTransitionError`.
 - [ ] Transitioning from `AWAITING_PLAN_APPROVAL` to `RUNNING` succeeds only when a valid `AgentPlan` is attached.
 - [ ] Every non-terminal status (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`) cleanly transitions to `INTERRUPTED` on startup recovery.
-- [ ] Transition to terminal states sets `completed_at` timestamp.
+- [ ] Transition to terminal states (or `INTERRUPTED`) sets `completed_at` timestamp.
 - [ ] `AgentTaskPolicy.is_terminal()` returns `True` exclusively for `COMPLETED`, `REJECTED`, `CANCELLED`, and `FAILED`.
 - [ ] AST check confirms zero imports of `PySide6`, `Qt`, or `sqlite3` in `core/entities/agent_task.py` and `core/policies/agent_task_policy.py`.
 

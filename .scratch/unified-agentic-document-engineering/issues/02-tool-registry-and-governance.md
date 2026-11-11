@@ -132,7 +132,7 @@ class ITool(ABC):
 ## 7. Observability & Audit Requirements
 
 - Records tool execution duration in milliseconds.
-- Outputs structured hashes of tool arguments and results for the journal.
+- Outputs opaque step correlation IDs and allowlisted metadata for the journal, strictly prohibiting plain content hashes of tool arguments or outputs.
 
 ---
 
