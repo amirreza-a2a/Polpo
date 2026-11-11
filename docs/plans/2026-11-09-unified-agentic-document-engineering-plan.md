@@ -2,11 +2,11 @@
 
 - **Mission Baseline:** `25bb95d198c34c035b5d66513166e06494d82cdb` (main)
 - **Release Baseline:** `v0.1.0-rc.2` (strictly preserved)
-- **Date:** 2026-11-09
+- **Date:** 2026-11-09 (Revised: 2026-11-11)
 - **Status:** Proposed (Awaiting Maintainer Review & Approval)
 - **Authoritative Directives:** D-USER-01 (Unified Assistant Scope), D-USER-02 (Supervised Agent Autonomy), D-USER-03 (Document vs Rendering-System Repair)
-- **Related ADRs:** [ADR-007](file:///home/amirreza-a2a/DevelopPOlpo/PolpoT/docs/adr/2026-11-09-adr-007-unified-agent-orchestration-and-tool-governance.md), [ADR-008](file:///home/amirreza-a2a/DevelopPOlpo/PolpoT/docs/adr/2026-11-09-adr-008-agent-working-copy-patch-and-occ-safety.md), [ADR-009](file:///home/amirreza-a2a/DevelopPOlpo/PolpoT/docs/adr/2026-11-09-adr-009-quarto-export-failure-diagnostics-and-ai-pdf-repair.md), [ADR-010](file:///home/amirreza-a2a/DevelopPOlpo/PolpoT/docs/adr/2026-11-09-adr-010-publication-style-profile-system.md)
-- **Research Reference:** [`docs/architecture/2026-11-09-unified-agentic-document-engineering-research.md`](file:///home/amirreza-a2a/DevelopPOlpo/PolpoT/docs/architecture/2026-11-09-unified-agentic-document-engineering-research.md)
+- **Related ADRs:** [ADR-007](docs/adr/2026-11-09-adr-007-unified-agent-orchestration-and-tool-governance.md), [ADR-008](docs/adr/2026-11-09-adr-008-agent-working-copy-patch-and-occ-safety.md), [ADR-009](docs/adr/2026-11-09-adr-009-quarto-export-failure-diagnostics-and-ai-pdf-repair.md), [ADR-010](docs/adr/2026-11-09-adr-010-publication-style-profile-system.md)
+- **Research Reference:** [`docs/architecture/2026-11-09-unified-agentic-document-engineering-research.md`](docs/architecture/2026-11-09-unified-agentic-document-engineering-research.md)
 
 ---
 
@@ -27,11 +27,11 @@ Execution follows a strict **Supervised Agent** autonomy model: the assistant fo
 ### In Scope
 1. **Central Agent Orchestrator:** Provider-neutral orchestration service coordinating multi-step document engineering plans via existing `IAIExecutionService`.
 2. **Allowlisted Tool Registry:** Typed, governance-controlled registry of internal document inspection, validation, styling, and patch tools.
-3. **Task Lifecycle & Persistence:** State machine with checkpoints, pause/resume, cooperative cancellation, and append-only SQLite task journaling.
-4. **Agent Working Copy & Patch Engine:** In-memory scratchpads tracking source hashes, line-based patches, and OCC watermarks, preventing premature canonical writes.
-5. **Quarto Diagnostic Infrastructure:** Capturing intermediate generated `document.tex` and sanitized compiler logs before ephemeral staging workspace cleanup.
-6. **AI-Assisted Full-Document PDF Repair:** Multi-tier source mapping, deterministic error classification, candidate recompilation, and PyMuPDF vector inspection.
-7. **Publication Style Profile System:** 4-scope visual separation, declarative typography and geometry schema, 4 standard built-in profiles, and SQLite persistence for custom styles.
+3. **Task Lifecycle & Persistence:** State machine with checkpoints, pause/resume, cooperative cancellation, conservative crash recovery, and append-only SQLite task journaling with an explicit privacy allowlist under migration `006_agent_task_tables.sql` (Finding D, Finding E, Finding I).
+4. **Agent Working Copy & Patch Engine:** In-memory scratchpads initialized from `TaskInputSnapshot`, line-based patches with stable anchors, and three-way conflict detection, preventing premature canonical writes and protecting active editor drafts (Finding C).
+5. **Quarto Diagnostic Infrastructure:** Capturing intermediate generated `document.tex` locally and extracting sanitized compiler logs before ephemeral staging workspace cleanup (Finding G).
+6. **AI-Assisted Full-Document PDF Repair:** Multi-tier source mapping, deterministic error classification, candidate recompilation, decoupled `IPdfInspectionEngine` port, and PyMuPDF vector inspection (Finding B, Finding H).
+7. **Publication Style Profile System:** 4-scope visual separation, declarative typography and geometry schema, 4 standard built-in profiles, SQLite persistence for custom styles, and zero preamble macro injection (Finding A, Finding F).
 8. **Desktop Presentation Integration:** Assistant review drawer/dock in `ReviewWorkspaceView.qml` supporting Chat, Plan review, Execution timeline, Diff inspection, and Candidate PDF preview.
 
 ### Explicit Non-Goals
@@ -41,6 +41,7 @@ Execution follows a strict **Supervised Agent** autonomy model: the assistant fo
 4. **No Silent Canonical Persistence:** The Agent will never commit to `document_versions` or overwrite canonical Markdown without explicit user adoption under OCC.
 5. **No Expansion of Telegram Transport:** The legacy Telegram bot remains frozen and untouched.
 6. **No Release Tag / Baseline Alteration:** Release baseline `v0.1.0-rc.2` and commit `25bb95d` remain immutable.
+7. **No Arbitrary LaTeX Macro Injection:** The Agent will never inject unrestricted raw LaTeX macros or preamble code into documents or system preambles (Finding A, Finding F).
 
 ---
 
@@ -53,11 +54,12 @@ Execution follows a strict **Supervised Agent** autonomy model: the assistant fo
 
 ### Proposed Architectural Decisions (Awaiting Maintainer Approval)
 - **D-PROP-01:** Provider-neutral structured JSON planning via `RateLimitedAIExecutor` (ADR-007).
-- **D-PROP-02:** Isolated `AgentWorkingCopy` and line-based `PatchSet` with undo/redo preservation in editor (ADR-008).
-- **D-PROP-03:** Staging failure capture of `DiagnosticBundle` (bounded log + `.tex` snippet) before workspace purge (ADR-009).
-- **D-PROP-04:** Multi-tier source mapping (`EXACT_TOKEN` $\to$ `SECTION_ANCHOR` $\to$ `UNKNOWN`) (ADR-009).
-- **D-PROP-05:** Versioned declarative `PublicationStyleProfile` schema with built-in profiles and allowlist staging injection (ADR-010).
-- **D-PROP-06:** Append-only SQLite task journaling with safe startup recovery (`INTERRUPTED` state) (ADR-007).
+- **D-PROP-02:** `TaskInputSnapshot`, isolated `AgentWorkingCopy`, and line-based `PatchSet` with three-way conflict handling and undo/redo preservation in editor (ADR-008, Finding C).
+- **D-PROP-03:** Staging failure capture of `DiagnosticBundle` (bounded log + `.tex` snippet) before workspace purge (ADR-009, Finding G).
+- **D-PROP-04:** Multi-tier source mapping (`EXACT_TOKEN` $\to$ `CONTEXTUAL_MATCH` $\to$ `SECTION_ANCHOR` $\to$ `UNKNOWN`) (ADR-009, Finding G).
+- **D-PROP-05:** Versioned declarative `PublicationStyleProfile` schema with 4 scopes, typed schema, built-in profiles, and allowlist staging injection (ADR-010, Finding F).
+- **D-PROP-06:** Append-only SQLite task journaling with privacy allowlist and conservative startup recovery (`INTERRUPTED` state; no automated replay on unknown network outcome) under migration `006_agent_task_tables.sql` (ADR-007, Finding D, Finding E, Finding I).
+- **D-PROP-07:** Decoupled `IPdfInspectionEngine` foundational port in `application/ports/` before repair orchestrator, ensuring an acyclic DAG (ADR-009, Finding B).
 
 ---
 
@@ -75,45 +77,48 @@ Presentation Layer (interfaces/desktop)
 Application Layer (application/)
  ├── services/agent_orchestration_service.py     ──> Coordinates planning, tool calls, and state
  ├── services/tool_registry.py                   ──> Typed allowlist of executable tools
- ├── services/agent_working_copy_service.py      ──> Manages scratchpad copies and patches
+ ├── services/agent_working_copy_service.py      ──> Manages scratchpad copies, snapshots, and patches
  ├── services/pdf_diagnostic_service.py          ──> Classifies errors & maps TeX to Markdown
  ├── services/pdf_repair_service.py              ──> Generates candidate fixes & recompiles
  ├── services/publication_style_service.py       ──> Resolves & persists PublicationStyleProfiles
  ├── ports/agent_task_repository.py              ──> Abstract port: IAgentTaskRepository
- └── ports/pdf_validator_port.py                 ──> Abstract port: IPdfInspectionEngine
+ └── ports/pdf_validator_port.py                 ──> Abstract port: IPdfInspectionEngine (Foundation Contract)
                         │
                         ▼ (Enforces Domain Policies)
 Core Domain Layer (core/)
+ ├── entities/task_input_snapshot.py             ──> TaskInputSnapshot (Editor buffer baseline)
  ├── entities/agent_task.py                      ──> AgentTask, AgentPlan, PlanStep, ToolCall
  ├── entities/agent_working_copy.py              ──> AgentWorkingCopy, WorkingCopyStatus
- ├── entities/document_patch.py                  ──> DocumentPatch, PatchSet, PatchScope
+ ├── entities/document_patch.py                  ──> DocumentPatch, PatchSet, PatchAnchor, PatchScope
  ├── entities/publication_style_profile.py       ──> PublicationStyleProfile, TypographyConfig
  ├── policies/agent_task_policy.py               ──> State machine transition rules & terminal states
  └── policies/tool_governance_policy.py          ──> ToolRiskLevel & authorization evaluations
                         ▲
                         │ (Implements Ports)
 Infrastructure Layer (infrastructure/)
- ├── persistence/sqlite/agent_task_repository.py ──> SQLite WAL task & journal persistence
- ├── persistence/sqlite/style_profile_repository.py ──> SQLite publication profile persistence
+ ├── persistence/sqlite/agent_task_repository.py ──> SQLite WAL task & journal persistence (Migration 006)
+ ├── persistence/sqlite/style_profile_repository.py ──> SQLite publication profile persistence (Migration 006)
  ├── pdf/quarto_adapter.py                       ──> Captures DiagnosticBundle before staging purge
  ├── pdf/staging_workspace.py                    ──> Injects profile tokens & extracts document.tex
- └── pdf/mupdf_validator.py                      ──> PyMuPDF structural & vector inspection
+ └── pdf/mupdf_validator.py                      ──> PyMuPdfValidator (implements IPdfInspectionEngine)
 ```
 
 ### 4.2 Component Responsibility Matrix
 
 | Subsystem / Component | Layer | Primary Responsibility | Reused Existing Code | New Seams Introduced |
 | :--- | :--- | :--- | :--- | :--- |
+| `TaskInputSnapshot` | `core/` | Freezes editor draft text, canonical version, and revisions at task initiation. | `core/entities/job.py` | Editor snapshot model. |
 | `AgentTask` & `AgentPlan` | `core/` | Domain aggregate tracking task state, plan steps, and budgets. | `core/entities/job.py` | State machine & plan hierarchy. |
 | `ToolGovernancePolicy` | `core/` | Evaluates tool risk levels and required authorization tokens. | — | Risk matrix & permission gate. |
 | `AgentWorkingCopy` | `core/` | Scratchpad tracking base version, draft revision, text, and patches. | `core/entities/document_version.py` | Isolated scratchpad lifecycle. |
 | `PublicationStyleProfile` | `core/` | Declarative schema for typography, geometry, colors, and margins. | `metadata_normalizer.py` | Publication profile schema. |
+| `IPdfInspectionEngine` | `application/ports/` | Abstract contract for structural and visual PDF inspection. | `application/ports/pdf_export_port.py` | Foundational validator port. |
 | `AgentOrchestrationService` | `application/` | Coordinates planning prompt, tool invocation, and state transitions. | `RateLimitedAIExecutor` | Task orchestration port. |
 | `ToolRegistry` | `application/` | Manages allowlisted `ITool` instances, validates inputs and outputs. | `LaTeXRepairService` | Typed tool contracts. |
 | `PdfDiagnosticService` | `application/` | Extracts `DiagnosticBundle`, maps TeX lines, classifies errors. | `TexLogSanitizer` | Multi-tier source mapper. |
 | `PdfRepairService` | `application/` | Formulates repair prompts, coordinates working copy recompilation. | `QuartoPdfExportService` | Candidate recompilation loop. |
 | `PublicationStyleService` | `application/` | Loads built-in profiles, saves custom profiles, injects metadata. | `metadata_normalizer.py` | Profile lifecycle service. |
-| `SqliteAgentTaskRepository` | `infrastructure/` | Persists tasks and journal records in SQLite WAL under `BEGIN IMMEDIATE`. | `UnitOfWork` & SQLite runner | `agent_tasks`, `agent_journal` tables. |
+| `SqliteAgentTaskRepository` | `infrastructure/` | Persists tasks and allowlisted journal records in SQLite WAL under `BEGIN IMMEDIATE`. | `UnitOfWork` & SQLite runner | Migration `006_agent_task_tables.sql`. |
 | `QuartoPdfAdapter` | `infrastructure/` | Captures intermediate `.tex` and compiler log before purge. | `QuartoPdfAdapter` | Diagnostic extraction hook. |
 | `PyMuPdfValidator` | `infrastructure/` | Inspects compiled PDF page count, text preservation, and vector drawings. | PyMuPDF (`fitz`) | `IPdfInspectionEngine` adapter. |
 | `AgentController` | `interfaces/` | Translates QML user actions to service commands; exposes Qt signals. | `ExportController` & `EditorController` | Assistant presentation signals. |
@@ -140,6 +145,7 @@ graph TD
         DiagSvc["PdfDiagnosticService\n(Multi-Tier Mapper & Classifier)"]
         RepairSvc["PdfRepairService\n(Candidate Recompilation Loop)"]
         StyleSvc["PublicationStyleService\n(Profile Resolution & Injection)"]
+        InspectionPort["IPdfInspectionEngine\n(Application Port)"]
 
         Ctrl --> Orch
         Orch --> Registry
@@ -147,14 +153,17 @@ graph TD
         Orch --> DiagSvc
         Orch --> RepairSvc
         Orch --> StyleSvc
+        RepairSvc --> InspectionPort
     end
 
     subgraph Core ["Domain Layer (core/)"]
+        Snapshot["TaskInputSnapshot"]
         Task["AgentTask & AgentPlan"]
         WC["AgentWorkingCopy & DocumentPatch"]
         Style["PublicationStyleProfile"]
         Pol["TaskPolicy & ToolGovernancePolicy"]
 
+        WCS --> Snapshot
         Orch --> Task
         WCS --> WC
         StyleSvc --> Style
@@ -163,24 +172,24 @@ graph TD
 
     subgraph Infra ["Infrastructure Layer (infrastructure/)"]
         AIExec["RateLimitedAIExecutor\n(Outbound HTTPS AI)"]
-        SqliteRepo["SqliteAgentTaskRepository\n(SQLite WAL Journal)"]
+        SqliteRepo["SqliteAgentTaskRepository\n(SQLite WAL Journal - Migr 006)"]
         QuartoEng["QuartoPdfAdapter\n(XeLaTeX & Staging Barrier)"]
         MuValidator["PyMuPdfValidator\n(Structural PDF Inspection)"]
 
         Orch --> AIExec
         Orch --> SqliteRepo
         RepairSvc --> QuartoEng
-        RepairSvc --> MuValidator
+        MuValidator -.->|implements| InspectionPort
     end
 ```
 
-### 5.2 Agent Task Lifecycle State Machine
+### 5.2 Agent Task Lifecycle State Machine (Finding D)
 
 ```mermaid
 stateDiagram-v2
     [*] --> CREATED: User initiates mission
-    CREATED --> CONTEXT_GATHERING: Load document metadata & diagnostics
-    CONTEXT_GATHERING --> PLANNING: Context assembled
+    CREATED --> CONTEXT_GATHERING: Capture TaskInputSnapshot & diagnostics
+    CONTEXT_GATHERING --> PLANNING: Snapshot assembled
     PLANNING --> AWAITING_PLAN_APPROVAL: Model emits structured JSON plan
 
     AWAITING_PLAN_APPROVAL --> RUNNING: User Approves Plan
@@ -199,20 +208,24 @@ stateDiagram-v2
     PAUSED --> RUNNING: User clicks Resume
     PAUSED --> CANCELLED: User clicks Cancel
 
-    RUNNING --> VALIDATING: Steps executed / Recompiling candidate
+    RUNNING --> VALIDATING: Steps executed / Recompiling candidate in staging
     VALIDATING --> AWAITING_FINAL_APPROVAL: Candidate passes compilation & PyMuPDF
     VALIDATING --> RUNNING: Candidate fails (Bounded 1-attempt replan)
 
-    AWAITING_FINAL_APPROVAL --> COMPLETED: User clicks "Apply Changes" (OCC commit)
+    AWAITING_FINAL_APPROVAL --> COMPLETED: User clicks "Apply Changes" (Buffer updated)
     AWAITING_FINAL_APPROVAL --> REJECTED: User clicks "Reject Changes"
 
     RUNNING --> FAILED: Budget exhausted / unrecoverable error
     VALIDATING --> FAILED: Recompilation permanently failed
 
     CREATED --> INTERRUPTED: Application restart detected
+    CONTEXT_GATHERING --> INTERRUPTED: Application restart detected
+    PLANNING --> INTERRUPTED: Application restart detected
     RUNNING --> INTERRUPTED: Application restart detected
     VALIDATING --> INTERRUPTED: Application restart detected
-    INTERRUPTED --> CANCELLED: Reconciled on startup
+    PAUSED --> INTERRUPTED: Application restart detected
+
+    INTERRUPTED --> CANCELLED: Reconciled on startup / user dismissed
 
     COMPLETED --> [*]
     REJECTED --> [*]
@@ -220,58 +233,29 @@ stateDiagram-v2
     FAILED --> [*]
 ```
 
-### 5.3 Tool Invocation & Governance Sequence
+### 5.3 Working Copy, Snapshot & Three-Way Conflict Lifecycle (Finding C)
 
 ```mermaid
 sequenceDiagram
-    participant Orch as AgentOrchestrationService
-    participant Gov as ToolGovernancePolicy
-    participant Reg as ToolRegistry
-    participant UI as Desktop UI (QML)
-    participant Tool as ITool Implementation
-    participant Log as SQLite Task Journal
-
-    Orch->>Gov: evaluate_tool_permission(tool_name, arguments)
-
-    alt Tool Risk is READ_ONLY or ISOLATED_MUTATION
-        Gov-->>Orch: PermissionGranted(Autonomous)
-    else Tool Risk is EXTERNAL_TRANSMISSION
-        Gov-->>Orch: PermissionRequiresConsent(payload_preview)
-        Orch->>UI: Emit consentRequired(payload_preview)
-        UI-->>Orch: User grants consent
-    else Tool Risk is CONSEQUENTIAL_SYSTEM
-        Gov-->>Orch: PermissionRequiresConfirmation(action_description)
-        Orch->>UI: Emit actionApprovalRequired(action_description)
-        UI-->>Orch: User confirms action
-    end
-
-    Orch->>Reg: get_tool(tool_name)
-    Reg-->>Orch: tool_instance
-    Orch->>Tool: execute(context, arguments)
-    Tool-->>Orch: ToolExecutionResult(status, data)
-    Orch->>Log: record_tool_result(task_id, tool_name, result)
-```
-
-### 5.4 Working Copy & Isolated Approval Lifecycle
-
-```mermaid
-sequenceDiagram
-    participant Agent as Agent Assistant
+    participant User as Human Author (QML)
+    participant Editor as MarkdownEditorController
     participant WCS as AgentWorkingCopyService
     participant Staging as StagingWorkspaceManager
     participant Quarto as Quarto / XeLaTeX
-    participant User as Human Author (QML)
-    participant Editor as MarkdownEditorController
+    participant Agent as Agent Assistant
     participant Pub as DocumentPublicationService
 
-    Note over Agent,WCS: Phase 1: Scratchpad Allocation
-    Agent->>WCS: create_working_copy(job_id)
-    WCS-->>Agent: working_copy_id (Snapshots base_version N and SHA-256)
+    Note over User,Editor: Phase 1: Task Initiation & Snapshot
+    User->>Agent: Submits task request
+    Agent->>Editor: capture_task_snapshot()
+    Editor-->>Agent: TaskInputSnapshot (draft_revision, source_text, base_version)
+    Agent->>WCS: create_working_copy(snapshot)
+    WCS-->>Agent: working_copy_id
 
-    Note over Agent,WCS: Phase 2: Patch Staging
-    Agent->>WCS: apply_patch(working_copy_id, patch)
-    WCS->>WCS: Validates line ranges & text matches
-    WCS-->>Agent: Patch applied to scratchpad
+    Note over Agent,WCS: Phase 2: Patch Staging on Scratchpad
+    Agent->>WCS: apply_patch(working_copy_id, patch_with_anchors)
+    WCS->>WCS: Validates contextual anchors & SHA-256
+    WCS-->>Agent: Patch applied to scratchpad RAM
 
     Note over Agent,Quarto: Phase 3: Real Candidate Verification
     Agent->>Staging: stage_working_copy(working_copy_id)
@@ -279,76 +263,35 @@ sequenceDiagram
     Quarto-->>Staging: Exit code 0 (PDF compiled)
     Staging-->>Agent: candidate_pdf_path
 
-    Note over Agent,User: Phase 4: Human Review
+    Note over Agent,User: Phase 4: Human Review & Three-Way Merge
     Agent->>User: Presents Side-by-Side PDF Preview & Unified Diff
 
     alt User Rejects Changes
         User->>WCS: Discard working copy
         WCS->>WCS: Purge scratchpad RAM & temporary candidate PDF
     else User Confirms Adoption
-        User->>Editor: apply_patch_set(patches)
-        Note over Editor: Atomic QTextCursor edit block
-        Editor->>Editor: Buffer dirty (isDirty = True, Ctrl+Z undoable)
-        opt User Saves
-            User->>Editor: Save (Ctrl+S)
-            Editor->>Pub: publish_version(job_id, base_version=N, text)
-            Pub->>Pub: 4-Phase Atomic Commit (v{N+1})
+        User->>Editor: apply_patch_set(patch_set, snapshot)
+        alt User Typed Conflicting Edits While Agent Ran
+            Editor-->>User: Flags OverlappingEditConflictError (Opens Conflict View)
+        else Clean or Disjoint Rebase Verified
+            Note over Editor: Atomic QTextCursor edit block
+            Editor->>Editor: Buffer dirty (isDirty = True, Ctrl+Z undoable)
+            opt User Saves
+                User->>Editor: Save (Ctrl+S)
+                Editor->>Pub: publish_version(job_id, base_version=N, text)
+                Pub->>Pub: 4-Phase Atomic Commit under OCC (v{N+1})
+            end
         end
     end
 ```
 
-### 5.5 Quarto PDF Failure Diagnostic and AI Repair Sequence
-
-```mermaid
-sequenceDiagram
-    participant Quarto as Quarto / XeLaTeX Engine
-    participant Staging as StagingWorkspaceManager
-    participant Adapter as QuartoPdfAdapter
-    participant Diag as PdfDiagnosticService
-    participant Agent as Agent Orchestrator
-    participant User as User (Review Workspace)
-
-    Quarto-->>Adapter: Subprocess returns exit code 1 (Compilation Failed)
-    Note over Adapter: Hook: Intercept before staging directory purge
-    Adapter->>Staging: Read intermediate document.tex & *.log
-    Adapter->>Diag: create_diagnostic_bundle(job_id, logs, document_tex)
-    Diag->>Diag: Multi-Tier Source Mapping (TeX l.384 -> Markdown coordinate)
-    Diag->>Diag: Classify ErrorCategory (e.g. TEMPLATE_CONFLICT)
-    Diag-->>Adapter: DiagnosticBundle
-    Note over Staging: Finally block purges ephemeral staging directory safely!
-    Adapter->>User: Emit pdfCompilationFailedWithDiagnostic(bundle)
-
-    User->>Agent: Clicks "Fix with AI Assistant"
-    Agent->>User: Discloses Sanitized Pre-Transmission Consent
-    User-->>Agent: Consent granted
-    Agent->>Agent: Formulates Repair Proposal (e.g. PublicationStyle override)
-    Agent->>Agent: Recompiles on AgentWorkingCopy
-    Agent->>User: Shows verified candidate PDF & settings diff
-```
-
-### 5.6 Publication Style Workflow
-
-```mermaid
-flowchart LR
-    A[Author Request:<br/>'Apply Academic Style'] --> B[Assistant parses intent<br/>Scope 2: Publication Theme]
-    B --> C[Fetch Profile:<br/>builtin:academic]
-    C --> D[Clone into<br/>AgentWorkingCopy]
-    D --> E[Quarto Staging Injection:<br/>Inject geometry, fonts, classoptions]
-    E --> F[Full XeLaTeX Compilation<br/>in .pdf_staging/]
-    F --> G[PyMuPDF Vector Inspection]
-    G --> H[Present Candidate PDF<br/>& Style Settings Diff]
-    H --> I{User Approval}
-    I -->|Approved| J[Update Document Front Matter<br/>under OCC Save]
-    I -->|Rejected| K[Discard Candidate]
-```
-
-### 5.7 Implementation Dependency Graph (Ticket DAG)
+### 5.4 Corrected Ticket Dependency DAG (Finding B)
 
 ```mermaid
 graph TD
     M_A1["TICK-ADE-01<br/>Agent Task & State Machine"] --> M_A2["TICK-ADE-02<br/>Tool Registry & Governance"]
     M_A1 --> M_A3["TICK-ADE-03<br/>SQLite Task Persistence"]
-    M_A2 --> M_A4["TICK-ADE-04<br/>Agent Orchestrator Service"]
+    M_A2 & M_A3 --> M_A4["TICK-ADE-04<br/>Agent Orchestrator Service"]
 
     M_A1 --> M_B1["TICK-ADE-05<br/>Agent Working Copy Engine"]
     M_B1 --> M_B2["TICK-ADE-06<br/>Line-Based Patch Engine"]
@@ -356,34 +299,52 @@ graph TD
 
     M_A1 --> M_C1["TICK-ADE-08<br/>Staging Failure Diagnostic Capture"]
     M_C1 --> M_C2["TICK-ADE-09<br/>Multi-Tier Source Location Mapper"]
-    M_C2 --> M_C3["TICK-ADE-10<br/>Deterministic Error Classifier"]
+    M_C2 --> M_C3["TICK-ADE-10<br/>Deterministic Error Classifier & Port"]
 
+    M_C3 --> M_D2["TICK-ADE-12<br/>PyMuPDF Candidate PDF Validator"]
     M_A4 & M_B2 & M_C3 --> M_D1["TICK-ADE-11<br/>AI PDF Repair Orchestrator"]
-    M_D1 --> M_D2["TICK-ADE-12<br/>PyMuPDF Candidate PDF Validator"]
 
     M_B1 --> M_E1["TICK-ADE-13<br/>Publication Style Profile Schema"]
-    M_E1 --> M_E2["TICK-ADE-14<br/>Style Profile Staging Injection"]
+    M_E1 & M_A3 --> M_E2["TICK-ADE-14<br/>Style Profile Staging Injection"]
 
-    M_D2 & M_E2 & M_B3 --> M_F1["TICK-ADE-15<br/>Desktop Assistant UX & E2E Acceptance"]
+    M_D1 & M_D2 & M_E2 & M_B3 --> M_F1["TICK-ADE-15<br/>Desktop Assistant UX & E2E Acceptance"]
 ```
+
+#### Topological Order & Milestone Feasibility:
+1. **Milestone A (Agent Foundations):**
+   - TICK-ADE-01 (Domain Task & Policy) $\to$ TICK-ADE-02 (Tool Registry) & TICK-ADE-03 (SQLite Persistence under Migration 006) $\to$ TICK-ADE-04 (Orchestrator Service).
+2. **Milestone B (Working Copy & Patch Safety):**
+   - TICK-ADE-05 (Working Copy & `TaskInputSnapshot`) $\to$ TICK-ADE-06 (Line Patch with Anchors) $\to$ TICK-ADE-07 (Editor Buffer Adoption & OCC).
+3. **Milestone C (Quarto Diagnostic Infrastructure):**
+   - TICK-ADE-08 (Failure Interception & Bundle) $\to$ TICK-ADE-09 (Multi-Tier Source Mapper) $\to$ TICK-ADE-10 (Error Classifier & `IPdfInspectionEngine` Foundation Port).
+4. **Milestone D (AI-Assisted PDF Repair):**
+   - TICK-ADE-10 provides the `IPdfInspectionEngine` port.
+   - TICK-ADE-12 implements `PyMuPdfValidator` conforming to `IPdfInspectionEngine`.
+   - TICK-ADE-11 implements `PdfRepairService` orchestrating repair candidates and calling `IPdfInspectionEngine`.
+   - TICK-ADE-11 and TICK-ADE-12 are acyclic and can be executed in topological sequence or parallel.
+5. **Milestone E (Publication Style System):**
+   - TICK-ADE-13 (Profile Schema & Built-in JSONs) $\to$ TICK-ADE-14 (SQLite Persistence & Metadata Injection).
+6. **Milestone F (Desktop Assistant UX & Capabilities):**
+   - TICK-ADE-15 (QML Assistant Dock, Diff Viewer, Candidate Preview, and E2E Test Suite) unifies Milestones A through E.
 
 ---
 
-## 6. Data Model & Persistence Strategy
+## 6. Persistence Strategy & Journal Privacy (Finding E, Finding I)
 
-### 6.1 SQLite Schema Design
+### 6.1 Unified SQLite Schema Migration: `006_agent_task_tables.sql`
 
-In accordance with [`AGENTS.md`](file:///home/amirreza-a2a/DevelopPOlpo/PolpoT/AGENTS.md) Rules 8 & 9, schema additions are versioned, explicit, and executed through `MigrationRunner`.
+In accordance with actual repository state (`main` contains migrations 001 through 005), migration 006 defines all Agent and Style Profile tables:
 
 ```sql
--- Migration 009: Agent Task Journal and Publication Style Profiles
+-- infrastructure/persistence/sqlite/migrations/006_agent_task_tables.sql
+-- Migration 006: Agent Tasks, Allowlisted Journal, and Publication Style Profiles
 
 CREATE TABLE IF NOT EXISTS agent_tasks (
     task_id TEXT PRIMARY KEY,
     job_id INTEGER NOT NULL,
-    status TEXT NOT NULL,                -- CREATED, PLANNING, AWAITING_PLAN_APPROVAL, RUNNING, etc.
+    status TEXT NOT NULL,
     task_goal TEXT NOT NULL,
-    plan_json TEXT,                     -- Serialized AgentPlan DTO
+    plan_json TEXT,
     current_step_index INTEGER DEFAULT 0,
     total_steps INTEGER DEFAULT 0,
     working_copy_id TEXT,
@@ -401,8 +362,8 @@ CREATE TABLE IF NOT EXISTS agent_task_journal (
     entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id TEXT NOT NULL,
     step_index INTEGER,
-    event_type TEXT NOT NULL,           -- STATE_CHANGED, TOOL_CALLED, TOOL_RESULT, USER_APPROVAL, CONSENT_GRANTED
-    payload_json TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    metadata_json TEXT NOT NULL,
     recorded_at REAL NOT NULL,
     FOREIGN KEY (task_id) REFERENCES agent_tasks(task_id) ON DELETE CASCADE
 );
@@ -410,26 +371,25 @@ CREATE TABLE IF NOT EXISTS agent_task_journal (
 CREATE INDEX IF NOT EXISTS idx_agent_journal_task_id ON agent_task_journal(task_id);
 
 CREATE TABLE IF NOT EXISTS publication_style_profiles (
-    profile_id TEXT PRIMARY KEY,        -- "builtin:academic", "user:my_report"
+    profile_id TEXT PRIMARY KEY,
     display_name TEXT NOT NULL,
     description TEXT,
     schema_version INTEGER NOT NULL DEFAULT 1,
     is_builtin INTEGER NOT NULL DEFAULT 0,
-    profile_json TEXT NOT NULL,         -- Validated PublicationStyleProfile JSON
+    profile_json TEXT NOT NULL,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL
 );
 ```
 
-### 6.2 Data Minimization & Secret Prohibition
-- `plan_json`, `payload_json`, and `profile_json` are strictly audited to ensure **zero plaintext API keys, passwords, or host usernames** are stored.
-- Raw document text is NOT permanently stored in `agent_tasks`; text resides in canonical version files or transient `AgentWorkingCopy` RAM.
+### 6.2 Task Journal Privacy Governance
+- `metadata_json` enforces an explicit allowlist: `task_id`, `step_index`, `event_type`, `recorded_at`, `duration_ms`, `tool_name`, `input_hash`, `output_hash`, `status`, `sanitized_error_category`, `consent_token_ref`, `approval_token_ref`, `summary`.
+- Strictly forbidden from journal: full document contents, active editor buffer, full AI prompts/responses, API credentials, unredacted paths, unbounded stack traces.
+- Entries capped at 8 KB; tasks capped at 50 journal entries.
 
 ---
 
 ## 7. Allowlisted Tool Catalog
-
-Every tool registered in `ToolRegistry` is strictly allowlisted, typed, and assigned an immutable risk level:
 
 | Tool Name | Risk Tier | Input Parameters | Output Payload | Description |
 | :--- | :--- | :--- | :--- | :--- |
@@ -448,82 +408,34 @@ Every tool registered in `ToolRegistry` is strictly allowlisted, typed, and assi
 
 ---
 
-## 8. Decomposition Milestones & Ticket Index
+## 8. Milestone Execution & Acceptance Gates
 
-Implementation is decomposed into 6 vertical tracer-bullet milestones comprising 15 dependency-ordered tickets. Each ticket is authored as an independent implementation specification under `.scratch/unified-agentic-document-engineering/issues/`.
+### Milestone A — Agent Foundations
+- **Tickets:** `TICK-ADE-01`, `TICK-ADE-02`, `TICK-ADE-03`, `TICK-ADE-04`.
+- **Deliverables:** Core domain `AgentTask` aggregate, policy, allowlisted `ToolRegistry`, SQLite persistence under migration `006_agent_task_tables.sql`, and `AgentOrchestrationService`.
+- **Exit Gate:** 100% unit tests pass; active tasks marked `INTERRUPTED` on simulated restart; zero vendor SDK leaks.
 
-### Milestone A: Agent Foundations & Orchestration Engine
-*Focus: Task aggregate, state machine, allowlisted tool registry, and SQLite task persistence.*
-*Recommended Implementation Skills: `domain-modeling`, `tdd`, `codebase-design`.*
-- **TICK-ADE-01:** Core Domain Agent Task Aggregate, Plan Model & Lifecycle Policy.
-- **TICK-ADE-02:** Allowlisted Tool Registry, Typed Tool Contracts & Risk Governance Policy.
-- **TICK-ADE-03:** SQLite Task Repository, Journaling Schema & Startup Crash Recovery.
-- **TICK-ADE-04:** Provider-Neutral Agent Orchestration Service & JSON Plan Generator.
+### Milestone B — Working Copy and Patch Safety
+- **Tickets:** `TICK-ADE-05`, `TICK-ADE-06`, `TICK-ADE-07`.
+- **Deliverables:** `TaskInputSnapshot`, `AgentWorkingCopy`, line patch engine with stable anchors, three-way conflict detection, atomic `QTextCursor` editor adoption, and OCC save gating.
+- **Exit Gate:** Applying patches preserves editor undo stack (`Ctrl+Z`); uncommitted edits are protected; zero premature disk writes.
 
-### Milestone B: Working Copy & Patch Architecture
-*Focus: Scratchpad isolation, line-based patch application, stale detection, and editor buffer OCC integration.*
-*Recommended Implementation Skills: `tdd`, `surgical-patch`, `code-review`.*
-- **TICK-ADE-05:** Agent Working Copy Aggregate, Scratchpad Lifecycle & Hash Verification.
-- **TICK-ADE-06:** Raw Line-Based Document Patch Service & Collision Disambiguation.
-- **TICK-ADE-07:** Native Editor Buffer Patch Adoption, Undo/Redo Integrity & OCC Gating.
+### Milestone C — Diagnostics & Inspection Contracts
+- **Tickets:** `TICK-ADE-08`, `TICK-ADE-09`, `TICK-ADE-10`.
+- **Deliverables:** Staging failure capture, multi-tier source location mapper, deterministic error classifier, and the foundational `IPdfInspectionEngine` application port.
+- **Exit Gate:** XeLaTeX error lines map accurately to Markdown; `Package soul Error: Reconstruction failed.` classified as `TEMPLATE_CONFLICT`; `IPdfInspectionEngine` port ready.
 
-### Milestone C: Quarto Diagnostic Infrastructure
-*Focus: Failure diagnostic bundle capture, staging workspace hooks, multi-tier mapping, and error classification.*
-*Recommended Implementation Skills: `diagnosing-bugs`, `tdd`.*
-- **TICK-ADE-08:** Staging Workspace Failure Interception & Diagnostic Bundle Capture.
-- **TICK-ADE-09:** Multi-Tier Generated TeX to Canonical Markdown Source Location Mapper.
-- **TICK-ADE-10:** Deterministic First-Stage Error Classifier & Scope Separator.
+### Milestone D — PDF Repair & Validation
+- **Tickets:** `TICK-ADE-11`, `TICK-ADE-12`.
+- **Deliverables:** `PdfRepairService` (bounded self-correction loop) and `PyMuPdfValidator` (structural and vector PDF inspection).
+- **Exit Gate:** Broken XeLaTeX compilation repaired via typed style profile override (`strikethrough_engine = "ulem"`); candidate validated through PyMuPDF; zero arbitrary LaTeX macro injection.
 
-### Milestone D: AI-Assisted PDF Repair & Recompilation Validation
-*Focus: Supervised PDF repair workflow, full-document Quarto recompilation, and PyMuPDF vector inspection.*
-*Recommended Implementation Skills: `tdd`, `codebase-design`.*
-- **TICK-ADE-11:** AI PDF Repair Orchestration Service & Bounded Self-Correction Loop.
-- **TICK-ADE-12:** PyMuPDF Structural PDF Inspection Engine & Visual Regression Validator.
+### Milestone E — Publication Styles
+- **Tickets:** `TICK-ADE-13`, `TICK-ADE-14`.
+- **Deliverables:** 4-scope visual separation, `PublicationStyleProfile` schema, 4 built-in JSON profiles in `resources/styles/`, SQLite persistence, and staging metadata injection.
+- **Exit Gate:** All 4 built-in profiles compile cleanly under XeLaTeX; missing fonts fall back safely; raw TeX injection rejected.
 
-### Milestone E: Publication Style Profile System
-*Focus: Declarative style schema, 4 built-in profiles, SQLite persistence, and Quarto barrier injection.*
-*Recommended Implementation Skills: `domain-modeling`, `tdd`.*
-- **TICK-ADE-13:** Publication Style Profile Domain Schema, Built-in Templates & Validation.
-- **TICK-ADE-14:** Style Profile SQLite Persistence & Staging Metadata Barrier Injection.
-
-### Milestone F: Unified Desktop Assistant UX & E2E Integration
-*Focus: Native QML assistant review dock, plan approval, diff viewer, candidate preview, and E2E verification.*
-*Recommended Implementation Skills: `code-review`, `verification-before-completion`.*
-- **TICK-ADE-15:** Desktop Assistant Review Dock QML, Split Candidate Preview & E2E Suite.
-
----
-
-## 9. Ticket Index & Execution Matrix
-
-| Ticket ID | Milestone | Title | Priority | Blocked By | Proposed Target Files |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **`TICK-ADE-01`** | A | Core Domain Agent Task Aggregate, Plan Model & Lifecycle Policy | P1 | None | `core/entities/agent_task.py`, `core/policies/agent_task_policy.py` |
-| **`TICK-ADE-02`** | A | Allowlisted Tool Registry, Typed Tool Contracts & Risk Governance Policy | P1 | `TICK-ADE-01` | `application/services/tool_registry.py`, `core/policies/tool_governance_policy.py` |
-| **`TICK-ADE-03`** | A | SQLite Task Repository, Journaling Schema & Startup Crash Recovery | P1 | `TICK-ADE-01` | `infrastructure/persistence/sqlite/agent_task_repository.py`, migration runner |
-| **`TICK-ADE-04`** | A | Provider-Neutral Agent Orchestration Service & JSON Plan Generator | P1 | `TICK-ADE-02`, `03` | `application/services/agent_orchestration_service.py` |
-| **`TICK-ADE-05`** | B | Agent Working Copy Aggregate, Scratchpad Lifecycle & Hash Verification | P1 | `TICK-ADE-01` | `core/entities/agent_working_copy.py`, `application/services/agent_working_copy_service.py` |
-| **`TICK-ADE-06`** | B | Raw Line-Based Document Patch Service & Collision Disambiguation | P1 | `TICK-ADE-05` | `core/entities/document_patch.py`, `application/services/document_patch_service.py` |
-| **`TICK-ADE-07`** | B | Native Editor Buffer Patch Adoption, Undo/Redo Integrity & OCC Gating | P1 | `TICK-ADE-06` | `interfaces/desktop/controllers/markdown_editor_controller.py` |
-| **`TICK-ADE-08`** | C | Staging Workspace Failure Interception & Diagnostic Bundle Capture | P1 | None | `infrastructure/pdf/quarto_adapter.py`, `infrastructure/pdf/staging_workspace.py` |
-| **`TICK-ADE-09`** | C | Multi-Tier Generated TeX to Canonical Markdown Source Location Mapper | P1 | `TICK-ADE-08` | `application/services/pdf_diagnostic_service.py` |
-| **`TICK-ADE-10`** | C | Deterministic First-Stage Error Classifier & Scope Separator | P1 | `TICK-ADE-08` | `application/services/pdf_diagnostic_service.py` |
-| **`TICK-ADE-11`** | D | AI PDF Repair Orchestration Service & Bounded Self-Correction Loop | P1 | `TICK-ADE-04`, `06`, `10` | `application/services/pdf_repair_service.py` |
-| **`TICK-ADE-12`** | D | PyMuPDF Structural PDF Inspection Engine & Visual Regression Validator | P2 | `TICK-ADE-11` | `infrastructure/pdf/mupdf_validator.py`, `application/ports/pdf_validator_port.py` |
-| **`TICK-ADE-13`** | E | Publication Style Profile Domain Schema, Built-in Templates & Validation | P2 | None | `core/entities/publication_style_profile.py`, `resources/styles/*.json` |
-| **`TICK-ADE-14`** | E | Style Profile SQLite Persistence & Staging Metadata Barrier Injection | P2 | `TICK-ADE-13` | `application/services/publication_style_service.py`, `staging_workspace.py` |
-| **`TICK-ADE-15`** | F | Desktop Assistant Review Dock QML, Split Candidate Preview & E2E Suite | P1 | `TICK-ADE-07`, `12`, `14` | `interfaces/desktop/controllers/agent_controller.py`, `AssistantDock.qml` |
-
----
-
-## 10. Definition of Done & Quality Verification
-
-Before declaring the implementation of this system complete in subsequent Boost missions, the following criteria must be satisfied:
-
-1. **Architecture Boundary Verification:** Static AST dependency tests pass with zero violations of Clean Architecture rules (no PySide6/Qt or vendor SDKs in `core/` or `application/`).
-2. **Deterministic State Transitions:** 100% of defined `AgentTask` state transitions and terminal states verified via unit tests.
-3. **OCC Safety Invariant:** Zero silent writes to SQLite `document_versions` or disk files; all document changes advance monotonically through `DocumentPublicationService`.
-4. **Editor Undo/Redo Integrity:** Applied patch sets preserve the Qt `QUndoStack` and revert completely via `Ctrl+Z`.
-5. **RTL Strikethrough Verification:** The mandatory `soul` reconstruction failure under XeLaTeX Persian RTL is verified to be resolved via the `ulem` publication style override without modifying the author's Markdown source.
-6. **PyMuPDF Validation:** Candidate PDFs verified for page count integrity, text preservation, and vector drawing presence.
-7. **Cross-Platform Test Execution:** Full test suite passing across Ubuntu Linux POSIX and Windows Server CI matrix runners.
-8. **Documentation Synchronization:** ADRs, CONTEXT.md updates, and skill documentation aligned with final verified code.
+### Milestone F — Desktop Assistant UX & E2E Acceptance
+- **Tickets:** `TICK-ADE-15`.
+- **Deliverables:** `AgentController`, `AssistantDock.qml`, plan review card, diff inspector, split candidate PDF preview, and end-to-end headless integration suite.
+- **Exit Gate:** Full end-to-end acceptance suite passes offscreen (`QQuickView.grabWindow()`); no GUI thread blocking; responsive cancellation.
