@@ -69,7 +69,7 @@ class PublicationStyleService:
    - Implements `IStyleProfileRepository` in `infrastructure/persistence/sqlite/style_profile_repository.py`.
    - Uses table `publication_style_profiles` defined in migration `006_agent_task_tables.sql`.
    - Built-in profile IDs are prefixed with `builtin:` and are read-only; attempts to delete them raise `ImmutableBuiltinProfileError`.
-   - User profile IDs are prefixed with `user:`.
+   - User profile IDs are prefixed with `user:` followed by a canonical UUID4 string (`user:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}`).
 2. **Metadata Injection & Allowlist Validation:**
    - Maps profile tokens into Quarto metadata: `documentclass`, `fontsize`, `linestretch`, `papersize`, `geometry`, `number-sections`, `number-depth`, `toc`, `toc-depth`, `colorlinks`, `linkcolor`, `urlcolor`, `citecolor`.
    - Translates `strikethrough_engine = "ulem"` into Quarto YAML / staging preamble configuration deterministically, adhering to maintainer proposal `D-PROP-08` (Option A vs Option B; awaiting maintainer approval).
@@ -102,6 +102,7 @@ class PublicationStyleService:
   - `test_full_compilation_with_injected_academic_profile()`: Verifies real XeLaTeX build.
 
 ### 5.2 Negative & Security Tests
+- `test_user_profile_id_canonical_uuid4_validation()`: Asserts non-UUID or non-canonical user profile IDs are rejected.
 - `test_reject_unallowlisted_profile_keys()`: Asserts arbitrary keys injected into profile JSON are rejected.
 - `test_reject_malicious_profile_json_injection()`: Asserts LaTeX macro commands, shell commands, or unallowlisted keys in `profile_json` are rejected before database commit.
 

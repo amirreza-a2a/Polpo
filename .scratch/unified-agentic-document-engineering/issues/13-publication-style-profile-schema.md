@@ -61,7 +61,7 @@ class SectionConfig:
 
 @dataclass(frozen=True)
 class PublicationStyleProfile:
-    profile_id: str                    # "builtin:academic", "user:custom_report_v1"
+    profile_id: str                    # "builtin:academic", "user:{uuid4}" (canonical UUID4 validation)
     version: str                       # "1.0.0"
     schema_version: int                # 1
     display_name: str

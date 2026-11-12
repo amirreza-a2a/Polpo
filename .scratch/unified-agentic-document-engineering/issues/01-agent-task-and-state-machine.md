@@ -44,6 +44,18 @@ class TaskStatus(Enum):
     FAILED = "FAILED"
     INTERRUPTED = "INTERRUPTED"
 
+class TaskCategory(Enum):
+    PDF_EXPORT_REPAIR = "PDF_EXPORT_REPAIR"
+    STYLE_PROFILE_APPLY = "STYLE_PROFILE_APPLY"
+    DOCUMENT_ANALYSIS = "DOCUMENT_ANALYSIS"
+
+class ErrorCode(Enum):
+    LATEX_SYNTAX_ERROR = "LATEX_SYNTAX_ERROR"
+    PACKAGE_MISSING = "PACKAGE_MISSING"
+    FONT_MISSING = "FONT_MISSING"
+    TEMPLATE_CONFLICT = "TEMPLATE_CONFLICT"
+    UNKNOWN_ERROR = "UNKNOWN_ERROR"
+
 class PlanStepStatus(Enum):
     PENDING = "PENDING"
     IN_PROGRESS = "IN_PROGRESS"
@@ -77,7 +89,7 @@ class PlanStep:
 @dataclass
 class AgentPlan:
     plan_id: str
-    task_goal: str                              # Short sanitized display label (max 256 chars)
+    task_goal: TaskCategory                     # Closed allowlisted category enum
     assessed_scope: str
     steps: List[PlanStep]
     created_at: float
@@ -87,15 +99,15 @@ class AgentTask:
     task_id: str
     job_id: int
     status: TaskStatus
-    task_goal: str                              # Short sanitized display label (max 256 chars; never raw private text)
+    task_goal: TaskCategory                     # Closed allowlisted category enum (never arbitrary user prose)
     plan: Optional[AgentPlan] = None
     current_step_index: int = 0
     working_copy_id: Optional[str] = None
     failure_id: Optional[str] = None
-    error_message: Optional[str] = None         # Sanitized English summary (max 512 chars)
+    error_message: Optional[ErrorCode] = None   # Typed ErrorCode only (never unredacted prose or stack traces)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
-    completed_at: Optional[float] = None        # Set strictly on transition to terminal or interrupted state
+    completed_at: Optional[float] = None        # Set-once invariant via COALESCE; preserved across dismissal and repeated reconciliations
 ```
 
 ---
@@ -115,15 +127,24 @@ class AgentTask:
      - `VALIDATING` $\to$ `AWAITING_FINAL_APPROVAL` (candidate verified), `RUNNING` (bounded replan), `FAILED`, `CANCELLED`, `INTERRUPTED`.
      - `AWAITING_FINAL_APPROVAL` $\to$ `COMPLETED` (adoption), `REJECTED`, `CANCELLED`, `INTERRUPTED`.
      - `INTERRUPTED` $\to$ `CANCELLED`.
-   - Terminal states (`COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`) are strictly immutable; transitions out of them raise `InvalidStateTransitionError`. Transitioning to any terminal state sets `completed_at = time.time()`.
-   - Transitioning to `INTERRUPTED` sets `completed_at` once. Repeated reconciliations preserve `completed_at` and never reset it.
-   - An `INTERRUPTED` task supports transition to `CANCELLED` (user dismissal).
-   - User Restart creates a **brand-new `AgentTask` aggregate** with fresh `task_id`, fresh editor snapshot, and fresh authorization, leaving the interrupted task intact for audit.
+   - Terminal states (`COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`) are strictly immutable; transitions out of them raise `InvalidStateTransitionError`.
+   - **Set-Once Timestamp Invariant (Finding A):** Every transition establishing a terminal or interrupted timestamp enforces:
+     ```sql
+     completed_at = COALESCE(completed_at, :now)
+     ```
+     - First transition from active state to terminal state sets `completed_at`.
+     - First transition from active state to `INTERRUPTED` sets `completed_at`.
+     - Repeated startup reconciliations of `INTERRUPTED` strictly preserve `completed_at`.
+     - User dismissal from `INTERRUPTED` to `CANCELLED` strictly preserves the original `completed_at`. Dismissal CANNOT reset or extend the 30-day retention window. Dismissal action is recorded as a typed `TASK_DISMISSED` journal event, never by resetting the retention anchor.
+     - User Restart creates a **brand-new `AgentTask` aggregate** with fresh `task_id`, fresh editor snapshot, and fresh authorization (`completed_at = NULL`), leaving the interrupted task intact for audit.
 2. **Exhaustive Crash Recovery Matrix (Finding B, Section 4):**
    - Every non-terminal state (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`) supports a deterministic transition to `INTERRUPTED` on process restart.
    - Old authorization tokens expire immediately on process exit; no stale tokens authorize subsequent operations.
    - In-flight network operations and tool side effects enforce write-ahead `DISPATCH_INTENT` logging, resolving to `REQUEST_OUTCOME_UNKNOWN` or `TOOL_ACTION_OUTCOME_UNKNOWN` on unconfirmed restarts, strictly prohibiting automatic retries without explicit user confirmation.
-3. **Budget Enforcement:**
+3. **Data Minimization & Free-Form Prose Removal (Finding D):**
+   - `task_goal` persists strictly as allowlisted `TaskCategory` enum values (`PDF_EXPORT_REPAIR`, `STYLE_PROFILE_APPLY`, `DOCUMENT_ANALYSIS`). Arbitrary user-derived sentences are strictly prohibited.
+   - `error_message` persists strictly as typed `ErrorCode` values (`LATEX_SYNTAX_ERROR`, `PACKAGE_MISSING`, `FONT_MISSING`, `TEMPLATE_CONFLICT`, `UNKNOWN_ERROR`). Arbitrary English prose and unredacted stack traces are strictly prohibited.
+4. **Budget Enforcement:**
    - Tasks reject plans where `len(steps) > MAX_TASK_STEPS = 10` by raising `AgentTaskBudgetExceededError`.
 
 ---
@@ -134,7 +155,10 @@ class AgentTask:
 - [ ] Transitioning from `CREATED` directly to `COMPLETED` raises `InvalidStateTransitionError`.
 - [ ] Transitioning from `AWAITING_PLAN_APPROVAL` to `RUNNING` succeeds only when a valid `AgentPlan` is attached.
 - [ ] Every non-terminal status (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`) cleanly transitions to `INTERRUPTED` on startup recovery.
-- [ ] Transition to terminal states (or `INTERRUPTED`) sets `completed_at` timestamp.
+- [ ] Transition to terminal states (or `INTERRUPTED`) sets `completed_at` once via `COALESCE`.
+- [ ] Transitioning from `INTERRUPTED` to `CANCELLED` (dismissal) strictly preserves the initial `completed_at` timestamp.
+- [ ] `task_goal` accepts exclusively allowlisted `TaskCategory` enum tokens.
+- [ ] `error_message` accepts exclusively typed `ErrorCode` tokens.
 - [ ] `AgentTaskPolicy.is_terminal()` returns `True` exclusively for `COMPLETED`, `REJECTED`, `CANCELLED`, and `FAILED`.
 - [ ] AST check confirms zero imports of `PySide6`, `Qt`, or `sqlite3` in `core/entities/agent_task.py` and `core/policies/agent_task_policy.py`.
 
@@ -146,13 +170,25 @@ class AgentTask:
 - `tests/unit/test_agent_task_policy.py`:
   - `test_valid_lifecycle_transitions()`: Verifies step-by-step advance from `CREATED` through `COMPLETED`.
   - `test_all_non_terminal_states_support_interrupted()`: Verifies each of the 10 non-terminal states can transition to `INTERRUPTED`.
-  - `test_terminal_transition_sets_completed_at()`: Asserts `completed_at` is populated upon terminal transition.
+  - `test_terminal_transition_sets_completed_at_once()`: Asserts `completed_at` is populated upon terminal transition and subsequent redundant terminal calls do not reset it.
   - `test_interrupted_transition_sets_completed_at_once()`: Asserts `completed_at` is set on transition to `INTERRUPTED` and never reset on repeated checks.
-  - `test_interrupted_to_cancelled_dismissal()`: Asserts that an `INTERRUPTED` task can be explicitly transitioned to `CANCELLED` (user dismissal).
-  - `test_restart_creates_fresh_aggregate_with_new_id()`: Asserts that user Restart creates a brand-new `AgentTask` aggregate with a new UUID and empty authorization state, leaving the interrupted task intact.
+  - `test_repeated_reconciliation_preserves_completed_at()`: Verifies that multiple reconciliation cycles on an already-interrupted task preserve the original `completed_at`.
+  - `test_dismiss_interrupted_task_preserves_completed_at()`: Asserts that an `INTERRUPTED` task transitioned to `CANCELLED` (user dismissal) preserves the original `completed_at` timestamp unchanged.
+  - `test_dismissed_interrupted_task_retains_original_purge_deadline()`: Execution steps:
+    1. Create an active task.
+    2. Transition to `INTERRUPTED`.
+    3. Capture its `completed_at`.
+    4. Advance the test clock by 25 days.
+    5. Transition to `CANCELLED` (dismissal).
+    6. Assert `completed_at` is identical to step 3.
+    7. Verify the 30-day retention cutoff calculation expires 5 days later, not 30 days later.
+  - `test_restart_creates_fresh_task_without_changing_original_timestamp()`: Asserts that user Restart creates a brand-new `AgentTask` aggregate with a new UUID and `completed_at = NULL`, leaving the interrupted task's timestamp intact.
   - `test_illegal_transition_rejection()`: Verifies illegal jumps raise `InvalidStateTransitionError`.
   - `test_terminal_state_immutability()`: Asserts that no state transitions are permitted out of terminal states.
   - `test_budget_exceeded_rejection()`: Verifies that plans with $> 10$ steps raise `AgentTaskBudgetExceededError`.
+  - `test_task_goal_persists_only_allowlisted_category()`: Verifies `task_goal` accepts only `TaskCategory` members.
+  - `test_task_goal_rejects_arbitrary_user_sentence()`: Asserts assigning free-form user prompt text raises `ValueError`.
+  - `test_error_message_persists_only_error_code()`: Verifies `error_message` accepts only `ErrorCode` members.
 
 ### 5.2 Negative & Security Tests
 - `test_secret_prohibition_in_entities()`: Ensures task goals, rationale strings, and tool argument dictionaries reject assignment of detected secret keys.

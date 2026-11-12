@@ -101,10 +101,12 @@ class AgentController(QObject):
    - Background tasks (Quarto compilation, AI HTTP requests, PDF rasterization) execute on `QThreadPool.globalInstance()`.
    - Results are communicated back to `AgentController` via Qt signals with queued connections (`Qt.QueuedConnection`).
    - The GUI thread remains 100% responsive without frame drops.
-2. **Dependency Wiring & Recovery Presentation (Finding B):**
+2. **Dependency Wiring & Recovery Presentation (Finding A, Finding B):**
    - Composition root wires concrete `PyMuPdfValidator` (from `TICK-ADE-12`) into `PdfRepairService` (from `TICK-ADE-11`).
    - If startup recovery transitions tasks to `INTERRUPTED`, `AgentController` exposes an interrupted task notification banner in `AssistantDock.qml`.
    - Any prior authorization tokens are strictly invalidated; the UI requires fresh plan formulation or task dismissal.
+   - When the user dismisses an interrupted task (`dismissTask(taskId)`), the controller triggers transition `INTERRUPTED -> CANCELLED`, strictly preserving `completed_at = COALESCE(completed_at, :now)` and logging `TASK_DISMISSED` without extending the 30-day retention cutoff.
+   - When the user restarts an interrupted task (`restartTask(taskId)`), the orchestrator creates a brand-new `AgentTask` aggregate with fresh ID and authorization, leaving the interrupted task record intact.
    - For tasks with `REQUEST_OUTCOME_UNKNOWN`, the UI displays an explicit warning modal highlighting potential duplicate billing and prompts the user to manually trigger a new attempt or dismiss the task.
 3. **End-to-End Acceptance Suite:**
    - Implements `tests/acceptance/test_agentic_document_engineering_e2e.py` testing the complete lifecycle:
@@ -144,6 +146,8 @@ class AgentController(QObject):
 ### 5.4 Persistence & OCC Tests
 - `test_e2e_editor_save_triggers_occ_publish()`: Asserts that adopting an agent proposal into the editor buffer leaves it in memory (dirty buffer) without triggering auto-save or canonical publication; explicit save (Ctrl+S) invokes `DocumentPublicationService.publish_version` under OCC (`base_version == latest_version`), producing `v{N+1}` and updating persistent task status in SQLite table `agent_tasks` under migration `006_agent_task_tables.sql`.
 - `test_e2e_task_interrupted_recovery_ui()`: Asserts that upon application restart with in-flight tasks, `AgentRecoveryService` transitions them to `INTERRUPTED` in SQLite, and the presentation controller renders the recovery notification banner in `AssistantDock.qml`.
+- `test_e2e_dismiss_interrupted_task_preserves_retention_timestamp()`: Asserts that dismissing an interrupted task via `AgentController.dismissTask()` transitions the SQLite record to `CANCELLED` while preserving the original `completed_at` timestamp.
+- `test_e2e_restart_interrupted_task_creates_new_aggregate()`: Asserts that restarting an interrupted task via `AgentController.restartTask()` creates a fresh `AgentTask` in SQLite without altering the original interrupted task.
 
 ---
 

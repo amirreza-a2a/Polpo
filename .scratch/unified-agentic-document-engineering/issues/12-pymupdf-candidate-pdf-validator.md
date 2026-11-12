@@ -44,8 +44,14 @@ class PyMuPdfValidator(IPdfInspectionEngine):
    - Page Count Bound: Enforces `max_pages = 500` bound against decompression bombs.
    - Page Dimensions: Verifies page dimensions match expected format (e.g. A4: $595 \times 842 \pm 2$ pt). Flags deviations as `WARNING`.
    - Text Content Extraction: Extracts text via `page.get_text()` and checks for presence of bounded `request.expected_text_anchors: Tuple[str, ...]` (max 10 anchors, max 128 chars each, max 2 KB total; does NOT require full source markdown).
-   - Blank Page Detection: Flags pages with $< 10$ characters of text and zero vector drawings as `WARNING` (blank page indicator).
-   - Vector Graphics Detection: `require_vector_drawings = False` by default. Text-only documents are structurally valid with zero drawings. Verifies `len(page.get_drawings()) > 0` ONLY on pages specified in `request.policy.expected_diagram_pages: Tuple[int, ...]`; flags missing drawings on those pages as `WARNING`, not automatic hard rejection.
+   - Blank Page Detection: Flags pages with $< 10$ characters of text and zero vector/raster objects as `WARNING` (blank page indicator).
+   - Typed Diagram Expectations (Finding F):
+     - Text-only documents default to `request.expected_diagrams = ()` and pass structural validation cleanly with zero vector drawings or raster images.
+     - When `request.expected_diagrams` contains per-page `DiagramExpectation(page_number, kind, required)` entries:
+       - `ExpectedDiagramKind.VECTOR`: Verifies `len(page.get_drawings()) > 0` on that designated page. Confirms vector path presence; does NOT guarantee semantic diagram correctness.
+       - `ExpectedDiagramKind.RASTER`: Verifies `len(page.get_images()) > 0` on that designated page. Confirms raster image presence; does NOT guarantee semantic diagram correctness.
+       - `ExpectedDiagramKind.UNSPECIFIED`: No specific object-type requirement is inferred.
+     - Severity Policy: Missing required diagram (`required = True`) flags `AnomalySeverity.HARD_FAILURE`, failing validation (`is_valid = False`). Missing optional diagram (`required = False`) flags `AnomalySeverity.WARNING`, allowing validation to pass.
    - Structural vs Semantic Scope: Explicitly documents that `is_valid = True` proves structural well-formedness and readability only; it does NOT imply visual beauty, mathematical correctness, Persian RTL text correctness, or semantic fidelity.
 2. **Optional Visual Preview Generation:**
    - If `request.generate_raster_previews` is `True`, renders 150 DPI page preview PNGs for sampled pages (first 3 pages + last page + any page with an anomaly; max 5 pages total).
@@ -59,8 +65,9 @@ class PyMuPdfValidator(IPdfInspectionEngine):
 ## 4. Acceptance Criteria
 
 - [ ] Corrupt or empty PDF files fail inspection with `HARD_FAILURE` anomaly and `is_valid = False`.
-- [ ] Text-only PDF documents pass inspection cleanly without requiring vector drawings (`require_vector_drawings = False`).
-- [ ] Vector drawings are verified exclusively on pages listed in `expected_diagram_pages`.
+- [ ] Text-only PDF documents pass inspection cleanly without requiring drawings or images (`expected_diagrams = ()`).
+- [ ] Vector and raster presence are verified according to typed `DiagramExpectation` entries.
+- [ ] Missing required diagram produces `HARD_FAILURE` (`is_valid = False`); missing optional diagram produces `WARNING`.
 - [ ] Orphan blank pages are detected and reported as `WARNING` without causing automatic hard rejection.
 - [ ] Text extraction verifies presence of `expected_text_anchors` without requiring full markdown text.
 - [ ] Page raster previews are generated cleanly as PNG byte buffers for at most 5 sampled pages when requested.
@@ -74,8 +81,11 @@ class PyMuPdfValidator(IPdfInspectionEngine):
 ### 5.1 Unit Tests
 - `tests/unit/test_pdf_validator.py`:
   - `test_valid_pdf_structural_inspection()`: Confirms clean report on valid sample PDF.
-  - `test_text_only_pdf_passes_without_drawings()`: Asserts text-only PDF passes with zero vector drawings.
-  - `test_expected_diagram_pages_drawing_verification()`: Asserts drawings are checked only on expected diagram pages.
+  - `test_text_only_pdf_passes_without_drawings()`: Asserts text-only PDF passes with zero vector drawings or images.
+  - `test_expected_vector_diagram_verification()`: Asserts vector path presence checked on expected page.
+  - `test_expected_raster_diagram_verification()`: Asserts raster image presence checked on expected page.
+  - `test_missing_required_diagram_fails_validation()`: Confirms `required = True` missing diagram sets `is_valid = False` with `HARD_FAILURE`.
+  - `test_missing_optional_diagram_produces_warning()`: Confirms `required = False` missing diagram records `WARNING` without failing validation.
   - `test_corrupt_pdf_hard_failure()`: Confirms `HARD_FAILURE` on truncated/corrupted PDF.
   - `test_orphan_blank_page_detection()`: Confirms warning on blank trailing page without hard rejection.
   - `test_text_anchor_extraction_verification()`: Confirms presence of expected text anchors.

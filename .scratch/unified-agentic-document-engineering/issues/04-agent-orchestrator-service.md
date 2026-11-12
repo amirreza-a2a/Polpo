@@ -86,8 +86,9 @@ class AgentOrchestrationService:
 
 ## 3. Detailed Implementation Requirements
 
-1. **Structured JSON Plan Generation & Goal Sanitization (Finding A):**
-   - Extracts a sanitized, bounded task display label (`task_goal`, max 256 chars) from `command.user_prompt`; never persists raw user requests containing document text or sensitive instructions directly into SQLite.
+1. **Structured JSON Plan Generation & Intent Classification (Finding A, Finding D):**
+   - Deterministically classifies `command.user_prompt` (ephemeral) into a closed `TaskCategory` enum (`PDF_EXPORT_REPAIR`, `STYLE_PROFILE_APPLY`, `DOCUMENT_ANALYSIS`), persisting exclusively the allowlisted category token in `agent_tasks.task_goal`. A user-facing display label may be derived in RAM; arbitrary user prose is strictly prohibited from SQLite persistence.
+   - The complete `AgentPlan` (including step rationales) remains strictly in memory; `agent_tasks.plan_json` persists strictly NULL or bounded step metadata (step index, allowlisted tool names, risk tiers, max 16 KB).
    - Dispatches structured prompt using `prompts/agent/planning_v1.txt`.
    - Strips Markdown code blocks (````json ... ````) before parsing.
    - Validates plan structure against schema version 1.
@@ -105,10 +106,10 @@ class AgentOrchestrationService:
    - The orchestrator NEVER automatically repeats the request and NEVER silently advances the provider fallback chain.
    - It transitions task to `INTERRUPTED` or `PAUSED`, records disposition code safely without storing prompt/response text, and requires explicit user instruction with potential duplicate billing disclosure.
    - User Restart creates a **brand-new `AgentTask`** with fresh `task_id`, fresh editor snapshot, and fresh authorization, preserving the interrupted task for audit.
-4. **Journal Audit Logging (Finding A, Finding E):**
+4. **Journal Audit Logging (Finding A, Finding D, Finding E):**
    - Appends entries to `agent_task_journal` via `task_repo` using only allowlisted fields.
    - Replaces plain content hashes with opaque `step_correlation_id` (UUID4).
-   - Bounds `summary` to generic non-sensitive status <= 256 characters.
+   - Constrains `summary` to allowlisted `JournalEventCode` enum values (e.g. `TASK_CREATED`, `PLAN_APPROVAL_REQUIRED`, `DISPATCH_INTENT`, `REQUEST_OUTCOME_UNKNOWN`, `TOOL_ACTION_OUTCOME_UNKNOWN`, `TASK_INTERRUPTED`, `TASK_DISMISSED`); arbitrary prose is strictly prohibited.
 
 ---
 
@@ -118,7 +119,8 @@ class AgentOrchestrationService:
 - [ ] Task halts deterministically in `AWAITING_PLAN_APPROVAL` without executing any tool step.
 - [ ] Calling `approve_plan(approved=True)` executes plan steps sequentially.
 - [ ] Calling `cancel_task()` terminates execution cooperatively and marks task `CANCELLED`.
-- [ ] Step outputs and state transitions are recorded in the SQLite journal using allowlisted keys.
+- [ ] `task_goal` persists exclusively allowlisted `TaskCategory` enum tokens; `plan_json` is NULL or metadata-only.
+- [ ] Step outputs and state transitions are recorded in the SQLite journal using allowlisted keys and typed event codes.
 - [ ] Unknown network outcomes do not trigger automated request replays.
 - [ ] AST check confirms zero imports of `PySide6`, `Qt`, or vendor AI SDKs in `application/services/agent_orchestration_service.py`.
 
@@ -136,6 +138,10 @@ class AgentOrchestrationService:
   - `test_write_ahead_dispatch_intent_persisted_under_begin_immediate()`: Verifies `DISPATCH_INTENT` journal row is written and committed prior to external dispatch.
   - `test_restart_task_creates_fresh_task_aggregate()`: Asserts that restarting an `INTERRUPTED` task creates a brand-new `AgentTask` aggregate with fresh ID, snapshot, and authorization.
   - `test_dismiss_interrupted_task_transitions_to_cancelled()`: Asserts that dismissing an `INTERRUPTED` task cleanly transitions it to `CANCELLED`.
+  - `test_task_goal_persists_only_allowlisted_category()`: Verifies `task_goal` accepts only `TaskCategory` members.
+  - `test_task_goal_rejects_arbitrary_user_sentence()`: Asserts arbitrary user prompt text in `task_goal` raises error.
+  - `test_plan_rationale_never_persisted()`: Asserts natural-language plan rationales are kept in memory and never persisted in SQLite.
+  - `test_journal_summary_accepts_only_allowlisted_event_code()`: Asserts `summary` accepts only `JournalEventCode` tokens.
 
 ### 5.2 Negative & Security Tests
 - `test_reject_plans_with_unregistered_tools()`: Rejects model-generated plans requesting nonexistent tools.

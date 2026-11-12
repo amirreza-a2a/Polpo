@@ -94,7 +94,7 @@ class ITool(ABC):
    - **Write-Ahead Intent Protocol:** Before dispatching an external transmission or executing a non-idempotent consequential action (e.g. package installation), persist a minimal `DISPATCH_INTENT` journal event under `BEGIN IMMEDIATE`.
    - **Process Termination Disposition:** If the process terminates during tool execution, startup recovery marks the tool outcome as `TOOL_ACTION_OUTCOME_UNKNOWN` or `REQUEST_OUTCOME_UNKNOWN`. Automated replay is strictly forbidden; environment reconciliation is required.
    - **Token Scope & Expiration (Finding B):** Consent and approval tokens are single-use ephemeral UUID4 strings stored strictly in-memory with a 10-minute maximum TTL. Tokens expire immediately on application termination; persisted token references in the journal are non-reusable audit records.
-   - **Payload Minimization (Finding A):** Tools accepting source or diagnostic inputs enforce bounded payloads (maximum 64 KB total; diagnostic excerpts capped at 10 KB / 100 lines); attempts to pass full documents or plaintext API keys are rejected.
+   - **Payload Minimization & Ephemeral Diagnostic Boundary (Finding A, Finding D):** Tools accepting source or diagnostic inputs enforce bounded payloads (maximum 64 KB total; diagnostic excerpts capped at 10 KB / 100 lines). Crucially, this 10 KB excerpt allowance is strictly ephemeral in RAM (`ToolExecutionContext` / `DiagnosticBundle`) for approved tool input; it NEVER authorizes persisting compiler output or raw tool arguments into SQLite records. Attempts to pass full documents or plaintext API keys are rejected.
 
 ---
 
@@ -104,6 +104,7 @@ class ITool(ABC):
 - [ ] Attempting to invoke an `EXTERNAL_TRANSMISSION` tool without a valid consent token returns `AWAITING_CONSENT`.
 - [ ] `ReadDocumentStructureTool` accurately extracts headings and region counts from Markdown.
 - [ ] Tool catalog serializes cleanly to JSON for inclusion in system planning prompts.
+- [ ] Bounded 10 KB diagnostic excerpts remain strictly ephemeral in RAM and are never persisted in SQLite.
 - [ ] AST check confirms zero imports of `subprocess` in `application/services/tool_registry.py`.
 
 ---
@@ -123,6 +124,8 @@ class ITool(ABC):
 
 ### 5.2 Negative & Security Tests
 - `test_reject_shell_tool_registration()`: Ensures tools named `shell_exec` or `run_command` are rejected at registration.
+- `test_sanitized_diagnostic_excerpt_remains_ephemeral()`: Asserts that 10 KB diagnostic excerpts are maintained strictly in memory and are never serialized or routed to database persistence.
+- `test_tool_arguments_never_persisted()`: Asserts that raw tool arguments containing source fragments or compiler diagnostics are not persisted in task or journal tables.
 
 ### 5.3 Concurrency & Persistence Considerations
 - Tool execution is stateless or scoped to `ToolExecutionContext`.

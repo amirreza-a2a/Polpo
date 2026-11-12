@@ -304,7 +304,7 @@ When `QuartoPdfExportService` stages a document for compilation:
 In accordance with [`AGENTS.md`](AGENTS.md) Rules 10 and 11 and ADR-007, the `publication_style_profiles` persistence model enforces explicit privacy classification, ownership, and retention semantics that differ fundamentally from ephemeral Agent task records:
 
 #### 1. Exhaustive Field Classification & Bounds:
-- `profile_id`: System Identifier (String, max 64 chars, regex `^(builtin:[a-z0-9_-]+|user:[0-9a-f-]{36})$`). Non-sensitive. Permanent for built-ins; user-managed for custom profiles.
+- `profile_id`: System Identifier (String, max 64 chars, regex `^(builtin:[a-z0-9_-]+|user:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$` with canonical UUID4 validation). Non-sensitive. Permanent for built-ins; user-managed for custom profiles.
 - `display_name`: Presentation Name (String, max 128 chars, sanitized). **Potentially user-sensitive** (if the user titles a profile after a confidential project or publication).
 - `description`: Presentation Summary (String, max 512 chars, sanitized). **Potentially user-sensitive** (user-authored descriptive summary).
 - `schema_version`: Schema Evolution Version (Integer NOT NULL DEFAULT 1). Non-sensitive.

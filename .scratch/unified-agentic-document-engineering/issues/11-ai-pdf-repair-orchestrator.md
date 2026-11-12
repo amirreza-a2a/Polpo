@@ -42,7 +42,7 @@ class PdfRepairConsentPayload:
     failing_snippet: str
     mapped_markdown_line: Optional[int]
     sanitized_error_excerpt: str
-    target_scope: RepairScope
+    target_scope: Optional[RemediationScope]
 
 @dataclass(frozen=True)
 class PdfRepairProposal:
@@ -67,12 +67,12 @@ class PdfRepairProposal:
    - Discloses `PdfRepairConsentPayload` before dispatching external model requests.
    - Builds prompt using `prompts/repair/quarto_repair_v1.txt`.
 3. **Zero Arbitrary Macro Injection & Fail-Closed Unknowns (Finding A, Finding C, Finding D):**
-   - If `error_category == TEMPLATE_CONFLICT` (e.g. `soul` in RTL), the service instructs the model to emit a publication style token override (`strikethrough_engine = "ulem"`), governed by maintainer proposal `D-PROP-08` (Status: `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`), NOT arbitrary `\newcommand` or `\usepackage` lines. If D-PROP-08 is unapproved, routes to product defect reporting.
-   - If `error_category == UNKNOWN` or `recommended_scope is None`, the repair orchestrator immediately halts automated patch generation, sets `validation_passed = False`, and yields raw diagnostic evidence to the user for human inspection.
-4. **Candidate Recompilation & Bounded Loop:**
+   - If `error_category == TEMPLATE_CONFLICT` (e.g. `soul` in RTL), the service instructs the model to emit a publication style token override (`strikethrough_engine = "ulem"`), governed by maintainer proposal `D-PROP-08` (Status: `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`), NOT arbitrary `\newcommand` or `\usepackage` lines. If D-PROP-08 is unapproved, routes to product defect reporting (`suggested_action = SuggestedAction.REPORT_PRODUCT_DEFECT`).
+   - If `error_category == UNKNOWN` or `remediation_scope is None`, the repair orchestrator immediately halts automated patch generation (`proposal_generation_allowed = False`, `automatic_patch_application_allowed = False`), sets `validation_passed = False`, and yields raw diagnostic evidence to the user for human inspection with `suggested_action = SuggestedAction.HUMAN_INSPECTION_REQUIRED`.
+4. **Candidate Recompilation & Bounded Loop (Finding F):**
    - Applies candidate patch to `AgentWorkingCopy`.
    - Recompiles full candidate PDF in `.pdf_staging/`.
-   - Inspects candidate PDF via `IPdfInspectionEngine.inspect_pdf()` using bounded `expected_text_anchors: Tuple[str, ...]` (without full `source_markdown`).
+   - Inspects candidate PDF via `IPdfInspectionEngine.inspect_pdf()` using bounded `expected_text_anchors: Tuple[str, ...]` and typed `expected_diagrams: Tuple[DiagramExpectation, ...]` (without requiring full `source_markdown`). Text-only PDFs pass with empty expectations.
    - If compilation fails, executes at most one bounded retry (`max_retries = 1`) passing the new compiler error.
    - If second attempt fails, returns `PdfRepairProposal(validation_passed=False)`.
 
@@ -84,7 +84,8 @@ class PdfRepairProposal:
 - [ ] Candidate patch is applied to `AgentWorkingCopy` and recompiled through actual Quarto/XeLaTeX.
 - [ ] If first candidate fails compilation, second attempt receives the new compiler error.
 - [ ] If second attempt fails, returns `PdfRepairProposal(validation_passed=False)` without infinite loop.
-- [ ] Candidate PDF is verified via `IPdfInspectionEngine`.
+- [ ] Candidate PDF is verified via `IPdfInspectionEngine` using typed `expected_diagrams: Tuple[DiagramExpectation, ...]`.
+- [ ] Unknown or unmapped errors halt patch generation fail-closed.
 - [ ] No raw LaTeX macros are injected into preambles.
 - [ ] AST check confirms zero imports of `PySide6`, `Qt`, `sqlite3`, or vendor AI SDKs in `application/services/pdf_repair_service.py`.
 
@@ -102,6 +103,8 @@ class PdfRepairProposal:
 
 ### 5.2 Negative & Security Tests
 - `test_reject_arbitrary_preamble_macro_injection()`: Ensures repair proposals containing `\newcommand` or `\usepackage` are rejected by safety policy before compilation.
+- `test_unknown_error_cannot_generate_patch()`: Asserts that when error is classified as `UNKNOWN` or has `remediation_scope = None`, no AI patch generation is dispatched.
+- `test_patch_proposal_does_not_authorize_adoption()`: Asserts candidate proposal generation in scratchpad does not authorize editor buffer mutation or canonical OCC publication.
 
 ### 5.3 Concurrency & Persistence Considerations
 - Recompilation executed within isolated staging directories under timeout governance (60s).

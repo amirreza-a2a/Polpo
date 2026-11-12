@@ -26,11 +26,17 @@
 ## 2. Proposed Application Interfaces & DTOs
 
 ```python
+class SourceMappingEvidence(Enum):
+    EXACT_TOKEN = "EXACT_TOKEN"         # Ordinal score: 1.0
+    CONTEXTUAL_MATCH = "CONTEXTUAL_MATCH" # Ordinal score: 0.7
+    SECTION_ANCHOR = "SECTION_ANCHOR"   # Ordinal score: 0.5
+    UNKNOWN = "UNKNOWN"                 # Ordinal score: 0.0
+
 @dataclass(frozen=True)
 class SourceMappingResult:
     mapped_line: Optional[int]           # 1-indexed line in canonical Markdown, or None
     mapped_snippet: str                  # Contextual Markdown lines
-    confidence: MappingConfidence        # EXACT_TOKEN (1.0), CONTEXTUAL_MATCH (0.7), SECTION_ANCHOR (0.5), UNKNOWN (0.0)
+    confidence: SourceMappingEvidence    # Ordinal score (not a calibrated probability)
     matched_token: Optional[str] = None
 ```
 

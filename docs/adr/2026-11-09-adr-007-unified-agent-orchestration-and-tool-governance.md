@@ -203,9 +203,20 @@ stateDiagram-v2
 ```
 
 #### State Transition Invariants:
-1. **Terminal States:** `COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`. No transitions out of terminal states are permitted.
-2. **Pre-Execution Checkpoint (`AWAITING_PLAN_APPROVAL`):** Consequential execution cannot start until the human user reviews and explicitly approves the multi-step plan.
-3. **Restart Invariant (`INTERRUPTED`):** Any task in any active or awaiting non-terminal state (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`) when the application stops or crashes transitions deterministically to `INTERRUPTED` upon application startup. The orchestrator **never silently resumes network operations or disk mutations** upon restart.
+1. **Terminal States vs Interrupted State:** `COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED` are strictly terminal and immutable. No transitions out of terminal states are permitted. `INTERRUPTED` is a recoverable, non-active state that permits transition to `CANCELLED` (explicit user dismissal) or triggering a fresh task attempt via Restart.
+2. **Set-Once Timestamp Invariant (Finding A):** Every transition that establishes a terminal or interrupted timestamp enforces the set-once invariant:
+   ```sql
+   completed_at = COALESCE(completed_at, :now)
+   ```
+   - First transition from an active state to a terminal state (`COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`): sets `completed_at`.
+   - First transition from an active state to `INTERRUPTED`: sets `completed_at`.
+   - Repeated startup reconciliation of `INTERRUPTED`: preserves `completed_at`.
+   - User dismissal from `INTERRUPTED` to `CANCELLED`: strictly preserves the original `completed_at`. User dismissal CANNOT reset or extend the 30-day retention window.
+   - Repeated dismissal or audit operations never reset the timestamp.
+   - Audit separation: If the user dismissal timestamp is needed for audit, it is recorded in a typed Journal event (`event_type = 'TASK_DISMISSED'`), never by resetting the retention anchor `completed_at`.
+   - Restart creates a brand-new `AgentTask` aggregate with its own fresh timestamp lifecycle (`completed_at = NULL`).
+3. **Pre-Execution Checkpoint (`AWAITING_PLAN_APPROVAL`):** Consequential execution cannot start until the human user reviews and explicitly approves the multi-step plan.
+4. **Restart Invariant (`INTERRUPTED`):** Any task in any active or awaiting non-terminal state (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`) when the application stops or crashes transitions deterministically to `INTERRUPTED` upon application startup. The orchestrator **never silently resumes network operations or disk mutations** upon restart.
 
 ### 8.3 Exhaustive Task Recovery Model, Token Invalidation & Network Ambiguity (Finding B)
 
@@ -261,13 +272,13 @@ To close the crash recovery ambiguity window where the application process termi
   - The orchestrator NEVER silently advances to the fallback provider.
   - The UI displays an explicit uncertainty alert disclosing potential duplicate billing, requiring the user to manually trigger a fresh attempt or dismiss the task.
 
-#### 4. Recovery Semantics for `INTERRUPTED` Tasks (Finding B, Section 4):
+#### 4. Recovery Semantics for `INTERRUPTED` Tasks (Finding A, Finding B):
 The user interface presents three distinct choices for any task in `INTERRUPTED` state:
 1. **Inspect:** The user can inspect the task journal, failure diagnostics, and step history to understand where the task stopped.
-2. **Dismiss:** The user transitions the task to `CANCELLED`, preserving its audit trail while clearing it from active workspace attention.
+2. **Dismiss:** The user transitions the task to `CANCELLED`, preserving its audit trail while clearing it from active workspace attention. Crucially, transitioning `INTERRUPTED -> CANCELLED` preserves the original `completed_at` timestamp (`completed_at = COALESCE(completed_at, :now)`), ensuring that dismissal does NOT reset or extend the 30-day retention window. The dismissal action is logged as a typed `TASK_DISMISSED` journal event.
 3. **Restart:** The user chooses to attempt the document repair or styling task anew.
    - **Fresh Aggregate & Non-Resurrection:** Restart does **NOT** resume the old Working Copy, replay the interrupted plan, or reuse stale tokens.
-   - Instead, Restart creates a **brand-new `AgentTask`** with a fresh `task_id`, fresh working copy snapshot taken from the current active editor buffer under OCC, and fresh plan generation.
+   - Instead, Restart creates a **brand-new `AgentTask`** with a fresh `task_id`, fresh working copy snapshot taken from the current active editor buffer under OCC, fresh timestamp lifecycle (`created_at = now`, `completed_at = NULL`), and fresh plan generation.
    - All previous in-memory authorization tokens, step correlation IDs, and candidate approvals from the interrupted task are dead and cannot be reused.
    - The original `INTERRUPTED` task record remains persisted in `agent_tasks` with its original `completed_at` retention timestamp intact, serving strictly as an immutable audit record until expired.
 
@@ -284,23 +295,23 @@ To prevent persistent storage (`agent_tasks`, `agent_task_journal`, `publication
 | `agent_tasks` | `task_id` | `TEXT NOT NULL` | None | Primary Key | System Identifier | No | Persisted primary key | Canonical UUID4 format string (36 chars) | 30 days from `completed_at` |
 | `agent_tasks` | `job_id` | `INTEGER NOT NULL` | None | Foreign Key | Parent Job Reference | No | References parent `jobs(id)` | Valid positive integer; `ON DELETE CASCADE` | Cascade deleted with parent job |
 | `agent_tasks` | `status` | `TEXT NOT NULL` | None | None | State Machine Enum | No | Current `TaskStatus` string | Allowlisted enum string only (max 32 chars) | 30 days from `completed_at` |
-| `agent_tasks` | `task_goal` | `TEXT NOT NULL` | None | None | Bounded Lifecycle Label | **Yes** (if raw request stored) | **Allowlisted task category or bounded generic display label only** (e.g. `PDF_EXPORT_REPAIR`, `STYLE_PROFILE_APPLY`). Storing raw user requests or document text is strictly prohibited. | Sanitized string, max 256 chars, no control chars or private path substrings | 30 days from `completed_at` |
-| `agent_tasks` | `plan_json` | `TEXT` | `NULL` | None | Validated Structured Metadata | **Yes** (if model emits raw text/args) | **Metadata-only persistence: NULL or strictly bounded step metadata only** (step index, allowlisted tool names, risk tiers). Complete plans and natural language rationales remain ephemeral in memory. Prohibited: prompts, completions, document fragments, credentials. | Schema validation against `AgentPlanMetadataSchema`, max 16 KB total size | 30 days from `completed_at` |
+| `agent_tasks` | `task_goal` | `TEXT NOT NULL` | None | None | Bounded Lifecycle Category | **Yes** (if raw request stored) | **Allowlisted `TaskCategory` enum only** (e.g. `PDF_EXPORT_REPAIR`, `STYLE_PROFILE_APPLY`, `DOCUMENT_ANALYSIS`). Ephemeral human-facing display label remains in RAM only; SQLite persists strictly the allowlisted enum string. Raw user requests or document text are strictly prohibited. | Allowlisted enum string only (max 32 chars) | 30 days from `completed_at` |
+| `agent_tasks` | `plan_json` | `TEXT` | `NULL` | None | Validated Structured Metadata | **Yes** (if model emits raw text/args) | **Metadata-only persistence: NULL or strictly bounded step metadata only** (step index, allowlisted tool names, risk tiers). Complete plans and natural language rationales remain ephemeral in memory. Prohibited: prompts, completions, tool arguments, tool outputs, document fragments, credentials. | Schema validation against `AgentPlanMetadataSchema`, max 16 KB total size (or NULL) | 30 days from `completed_at` |
 | `agent_tasks` | `current_step_index` | `INTEGER` | `0` | None | Execution Counter | No | Monotonic step counter | Integer `0 <= index <= total_steps` | 30 days from `completed_at` |
 | `agent_tasks` | `total_steps` | `INTEGER` | `0` | None | Execution Bound | No | Bounded plan size | Integer `0 <= steps <= 10` | 30 days from `completed_at` |
 | `agent_tasks` | `working_copy_id` | `TEXT` | `NULL` | None | Ephemeral Scratchpad ID | No | Opaque UUID referencing `.polpo/working_copies/{id}/` | Canonical UUID4 format string; disk content strictly ephemeral | 30 days in DB; folder purged on completion/restart |
 | `agent_tasks` | `failure_id` | `TEXT` | `NULL` | None | Ephemeral Diagnostic ID | No | Opaque UUID referencing `.polpo/staging_failures/{id}/` | Canonical UUID4 format string; diagnostic bundle managed by LRU | 30 days in DB; bundle pruned via LRU (max 5) |
-| `agent_tasks` | `error_message` | `TEXT` | `NULL` | None | Bounded Diagnostic Category | **Yes** (if raw logs/traces stored) | **Sanitized English error category or typed error code only** (e.g. `PACKAGE_MISSING:soul`, `LATEX_SYNTAX_ERROR`). Prohibited: unredacted stack traces, local system paths, source text. | Redacted by `TexLogSanitizer`, max 512 chars | 30 days from `completed_at` |
+| `agent_tasks` | `error_message` | `TEXT` | `NULL` | None | Bounded Error Code | **Yes** (if raw logs/traces stored) | **Typed `ErrorCode` or sanitized error code string only** (e.g. `PACKAGE_MISSING:soul`, `LATEX_SYNTAX_ERROR`, `FONT_MISSING`, `TEMPLATE_CONFLICT`). Prohibited: arbitrary English sentences, unredacted stack traces, local system paths, source text. | Sanitized error code string, max 64 chars | 30 days from `completed_at` |
 | `agent_tasks` | `created_at` | `REAL NOT NULL` | None | None | Timestamp | No | Epoch creation time | Real/float >= 0 | 30 days from `completed_at` |
 | `agent_tasks` | `updated_at` | `REAL NOT NULL` | None | None | Timestamp | No | Epoch last update time | Real/float >= `created_at` | 30 days from `completed_at` |
-| `agent_tasks` | `completed_at` | `REAL` | `NULL` | None | Timestamp | No | Epoch completion or interruption time; baseline for retention | Real/float >= `created_at` (NULL for active tasks; set once on terminal/interrupted) | 30 days from `completed_at` |
+| `agent_tasks` | `completed_at` | `REAL` | `NULL` | None | Set-Once Timestamp | No | Epoch completion or interruption time; baseline for retention. Set once on terminal or interrupted transition; preserved on repeated recovery and dismissal. | Real/float >= `created_at` (NULL for active tasks; set once via COALESCE) | 30 days from `completed_at` |
 | `agent_task_journal` | `entry_id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | Auto | Primary Key | Sequence ID | No | Auto-increment primary key | Positive integer | Cascade deleted with task |
 | `agent_task_journal` | `task_id` | `TEXT NOT NULL` | None | Foreign Key | Parent Task Reference | No | References `agent_tasks(task_id)` | UUID4 format; `ON DELETE CASCADE` | Cascade deleted with task |
 | `agent_task_journal` | `step_index` | `INTEGER` | `NULL` | None | Execution Step | No | Step index in plan | Optional integer `0 <= step <= 10` | Cascade deleted with task |
 | `agent_task_journal` | `event_type` | `TEXT NOT NULL` | None | None | Audit Event Enum | No | Typed audit event | Allowlisted string enum | Cascade deleted with task |
 | `agent_task_journal` | `metadata_json` | `TEXT NOT NULL` | None | None | Allowlisted Audit Record | **Yes** (if arbitrary keys allowed) | **Strict Allowlist only**. Contains typed classifications, bounded summaries, and opaque non-authorizing references. Prohibited: document hashes, raw source text, secrets. | Schema validation against `JournalMetadataAllowlist`, max 8 KB | Cascade deleted with task |
 | `agent_task_journal` | `recorded_at` | `REAL NOT NULL` | None | None | Timestamp | No | Microsecond epoch timestamp | Real/float >= 0 | Cascade deleted with task |
-| `publication_style_profiles` | `profile_id` | `TEXT PRIMARY KEY` | None | Primary Key | Profile Identifier | No | Key (`builtin:{name}` or `user:{uuid}`) | String, max 64 chars, regex `^(builtin:[a-z0-9_-]+|user:[0-9a-f-]{36})$` | Permanent (built-in) / user-managed |
+| `publication_style_profiles` | `profile_id` | `TEXT PRIMARY KEY` | None | Primary Key | Profile Identifier | No | Key (`builtin:{name}` or `user:{uuid}`) | String, max 64 chars, regex `^(builtin:[a-z0-9_-]+|user:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$` (canonical UUID4) | Permanent (built-in) / user-managed |
 | `publication_style_profiles` | `display_name` | `TEXT NOT NULL` | None | None | Presentation Name | **Yes** (user title) | Human-readable profile title | String, max 128 chars, sanitized | User-managed |
 | `publication_style_profiles` | `description` | `TEXT` | `NULL` | None | Presentation Summary | **Yes** (user summary) | Optional presentation description | String, max 512 chars, sanitized | User-managed |
 | `publication_style_profiles` | `schema_version` | `INTEGER NOT NULL` | `1` | None | Schema Evolution | No | Schema version number | Positive integer (default 1) | User-managed |
@@ -321,7 +332,7 @@ To prevent persistent storage (`agent_tasks`, `agent_task_journal`, `publication
 - `sanitized_error_category` (allowlisted error category string, e.g. `TEMPLATE_CONFLICT`, `PACKAGE_MISSING`, `SOURCE_SYNTAX`, `UNKNOWN`)
 - `consent_token_ref` (UUID4 audit reference; non-reusable audit reference, NOT an authorization credential)
 - `approval_token_ref` (UUID4 audit reference; non-reusable audit reference, NOT an authorization credential)
-- `summary` (typed event classification or bounded generic non-sensitive English string, max 256 characters; strictly sanitized; zero document text)
+- `summary` (typed event code from `JournalEventCode` enum or allowlisted closed set of predefined non-sensitive messages, e.g. `TASK_CREATED`, `PLAN_APPROVAL_REQUIRED`, `DISPATCH_INTENT`, `REQUEST_OUTCOME_UNKNOWN`, `TOOL_ACTION_OUTCOME_UNKNOWN`, `TASK_INTERRUPTED`, `TASK_DISMISSED`; arbitrary free-form English prose is strictly prohibited)
 - `request_disposition` (`REQUEST_NOT_SUBMITTED`, `REQUEST_SUBMITTED_SUCCESS`, `REQUEST_SUBMITTED_FAILED`, `REQUEST_OUTCOME_UNKNOWN`, `TOOL_ACTION_EXECUTED`, `TOOL_ACTION_OUTCOME_UNKNOWN`)
 
 #### 3. Explicit Persistence Denylist (Strictly Prohibited):
@@ -332,16 +343,17 @@ To prevent persistent storage (`agent_tasks`, `agent_task_journal`, `publication
 - Raw model prompts or completions.
 - Unvalidated model-generated plans or natural-language reasoning.
 - Full tool arguments when containing source text.
-- Full compiler diagnostics or unredacted stdout/stderr.
+- Compiler diagnostics in SQLite: while up to 10 KB of sanitized diagnostic excerpt is allowed in ephemeral RAM execution context (`DiagnosticBundle`), storing raw or excerpted compiler logs in SQLite is strictly prohibited.
 - Intermediate `document.tex` files.
 - Full local filesystem paths or usernames.
 - API credentials, keys, or passwords.
 - Unredacted exceptions or raw stack traces.
 
-#### 4. Retention, Purging, and Two-Phase Filesystem Cleanup Semantics (Finding B):
+#### 4. Retention, Purging, and Two-Phase Filesystem Cleanup Semantics (Finding A, Finding B):
 - **Retention Calculation:** The 30-day retention window is calculated strictly from `completed_at` (the terminal or interrupted transition timestamp), NOT from task creation time.
   - Startup recovery sets `completed_at = COALESCE(completed_at, :now)` upon transitioning an active task to `INTERRUPTED`.
   - **Interruption Timestamp Invariant:** On repeated application launches or reconciliations, `completed_at` is **never reset or updated**. An already-interrupted task preserves its initial interruption timestamp, preventing retention from being indefinitely extended.
+  - **Dismissal Retention Invariant:** When a user dismisses an interrupted task (`INTERRUPTED -> CANCELLED`), `completed_at` is preserved unchanged (`completed_at = COALESCE(completed_at, :now)`). Dismissal cannot reset the 30-day retention cutoff.
 - **Scope of Retention:** Applies to all terminal and interrupted states (`COMPLETED`, `REJECTED`, `CANCELLED`, `FAILED`, `INTERRUPTED`) where `completed_at IS NOT NULL AND completed_at <= :cutoff`. Active or awaiting tasks (`CREATED`, `CONTEXT_GATHERING`, `PLANNING`, `AWAITING_PLAN_APPROVAL`, `RUNNING`, `AWAITING_CONSENT`, `AWAITING_ACTION_APPROVAL`, `PAUSED`, `VALIDATING`, `AWAITING_FINAL_APPROVAL`) have `completed_at IS NULL` and are **never automatically purged**.
 - **Database Cascade:** Deletion of an `agent_tasks` record cascades via `FOREIGN KEY (task_id) REFERENCES agent_tasks(task_id) ON DELETE CASCADE`, purging all associated `agent_task_journal` rows atomically.
 - **Two-Phase Idempotent Filesystem Cleanup:**
@@ -351,10 +363,11 @@ To prevent persistent storage (`agent_tasks`, `agent_task_journal`, `publication
 
   Safety and path normalization rules:
   1. *Canonical Allowed Roots:* Deletion is strictly anchored to validated application-data roots (`working_copies_dir` and `staging_failures_dir`).
-  2. *Path Normalization & Traversal Prevention:* The target directory path is normalized via `os.path.realpath` / `Path.resolve()`. The implementation verifies that `resolved_target.is_relative_to(canonical_root)` and that the directory name strictly matches canonical UUID4 regex (`^[0-9a-f-]{36}$`). Any path attempting `..` traversal or symbolic link escape is rejected.
-  3. *Symlink Protection:* If any path entry within the target directory is a symbolic link, the link itself is unlinked without following the target.
-  4. *No Silent Failure Masks:* `shutil.rmtree(..., ignore_errors=True)` is **strictly prohibited**. The cleanup implementation uses observable, per-item exception handling (`try ... except OSError as err`) that logs structured warnings on deletion failures while recording unlinked targets.
-  5. *Two-Phase Ordering:*
+  2. *Canonical UUID4 Directory Name Validation:* Every child directory candidate must be validated using Python's standard `uuid.UUID(entry_name)` parser, verifying `str(parsed) == entry_name` (canonical lowercase), `parsed.version == 4`, and `parsed.variant == uuid.RFC_4122`. Malformed strings, non-canonical casing, wrong UUID versions (e.g. v1, v5), or wrong variants are rejected immediately.
+  3. *Path Normalization & Anti-Traversal:* The target directory path is validated against the canonical application-data root. Any path containing `..` traversal, directory escape, or unauthorized subpaths is rejected.
+  4. *Symlink & Reparse-Point Defense:* Because `Path.resolve()` and `is_relative_to()` alone are vulnerable to time-of-check/time-of-use (TOCTOU) race conditions, cleanup enforces `follow_symlinks=False` and revalidates target identity with `os.lstat()` immediately before removal. On Windows, NTFS reparse points and directory junctions are explicitly checked and never traversed into external targets. If safe target identity cannot be proven, cleanup fails closed.
+  5. *No Silent Failure Masks:* `shutil.rmtree(..., ignore_errors=True)` is **strictly prohibited**. The cleanup implementation uses observable, per-item exception handling (`try ... except OSError as err`) that logs structured warnings on deletion failures while recording unlinked targets.
+  6. *Two-Phase Ordering:*
      - *Phase 1 (Filesystem):* Unlink disk folders (`working_copies/{id}` and `staging_failures/{id}`) with observable error trapping.
      - *Phase 2 (Database):* Execute SQLite transaction (`BEGIN IMMEDIATE`) deleting expired task rows.
      - If Phase 1 succeeds and Phase 2 fails: SQLite transaction rolls back, preserving the database row; cleanup retries on the next cycle.
@@ -574,8 +587,9 @@ We evaluate two architectural options for persisting Agent tasks, journals, and 
 
 ## 13. Testing & Verification Strategy
 
-- **Domain Policy Tests:** Test state machine transitions in `core/policies/agent_task_policy.py`, verifying all invalid transitions raise `InvalidStateTransitionError` and `INTERRUPTED` transitions succeed on active states.
+- **Domain Policy & Timestamp Invariant Tests (Finding A):** Test state machine transitions in `core/policies/agent_task_policy.py`, verifying all invalid transitions raise `InvalidStateTransitionError`, `INTERRUPTED` transitions succeed on active states, and `completed_at` is set once (`COALESCE`) and strictly preserved across reconciliations and user dismissals (`INTERRUPTED -> CANCELLED`).
+- **Filesystem Cleanup & UUID4 Validation Tests (Finding B):** Verify canonical UUID4 parsing (standard parser, lowercase, round-trip, version 4, RFC 4122 variant), rejection of path traversal (`..`), symlink escapes, and Windows reparse points, with observable error handling (no `ignore_errors=True`).
 - **Tool Governance Tests:** Verify that high-risk tools cannot execute without explicit authorization tokens.
-- **Journal Allowlist Privacy Tests:** Inspect serialized `metadata_json` records, verifying zero document text or secret substrings.
+- **Journal & Task Privacy Allowlist Tests (Finding D):** Verify `task_goal` accepts only allowlisted `TaskCategory` enums and rejects arbitrary prose; `error_message` persists only typed `ErrorCode` strings; `summary` accepts only `JournalEventCode` enums; compiler diagnostics remain ephemeral in RAM; and inspect serialized database records to verify zero prompt text, document text, or credentials.
 - **Orchestration Unit Tests:** Test `AgentOrchestrationService` with mocked `IAIExecutionService` and mock tools, verifying plan generation, consent pauses, and cancellation handling.
 - **AST Architecture Invariant Tests:** Add static AST assertions verifying that `application/services/agent_orchestration_service.py` has zero imports of `PySide6`, `Qt`, `sqlite3`, `google.generativeai`, or `openai`.
