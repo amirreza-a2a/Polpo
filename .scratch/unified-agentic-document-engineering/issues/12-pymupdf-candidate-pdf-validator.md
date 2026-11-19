@@ -51,10 +51,12 @@ class PyMuPdfValidator(IPdfInspectionEngine):
        - `ExpectedDiagramKind.VECTOR`: Verifies `len(page.get_drawings()) > 0` on that designated page. Confirms vector path presence; does NOT guarantee semantic diagram correctness.
        - `ExpectedDiagramKind.RASTER`: Verifies `len(page.get_images()) > 0` on that designated page. Confirms raster image presence; does NOT guarantee semantic diagram correctness.
        - `ExpectedDiagramKind.UNSPECIFIED`: No specific object-type requirement is inferred.
-     - Severity Policy: Missing required diagram (`required = True`) flags `AnomalySeverity.HARD_FAILURE`, failing validation (`is_valid = False`). Missing optional diagram (`required = False`) flags `AnomalySeverity.WARNING`, allowing validation to pass.
+       - **Validation Invariant (`UNSPECIFIED + required=True` Prohibition):** If `kind == ExpectedDiagramKind.UNSPECIFIED` and `required == True`, request validation raises `ValueError("DiagramExpectation with kind=UNSPECIFIED cannot have required=True; UNSPECIFIED provides no concrete presence predicate")`. `UNSPECIFIED` is valid only with `required = False`.
+     - Severity Policy: Missing required diagram (`kind in (VECTOR, RASTER)` with `required = True`) flags `AnomalySeverity.HARD_FAILURE`, failing validation (`is_valid = False`). Missing optional diagram (`required = False`) flags `AnomalySeverity.WARNING`, allowing validation to pass.
    - Structural vs Semantic Scope: Explicitly documents that `is_valid = True` proves structural well-formedness and readability only; it does NOT imply visual beauty, mathematical correctness, Persian RTL text correctness, or semantic fidelity.
 2. **Optional Visual Preview Generation:**
    - If `request.generate_raster_previews` is `True`, renders 150 DPI page preview PNGs for sampled pages (first 3 pages + last page + any page with an anomaly; max 5 pages total).
+   - `request.preview_page_indices`: Validated strictly as zero-based page indices (`0 <= index < page_count`), converted deterministically to user-facing `page_number = index + 1`. Out-of-bounds indices are rejected during request validation.
    - Enforces 50MB image memory buffer cap and 5.0-second execution timeout with cooperative cancellation checks.
    - Generated buffers returned as immutable `raster_previews: Tuple[bytes, ...]`.
 3. **Realistic Performance Target:**
@@ -68,6 +70,8 @@ class PyMuPdfValidator(IPdfInspectionEngine):
 - [ ] Text-only PDF documents pass inspection cleanly without requiring drawings or images (`expected_diagrams = ()`).
 - [ ] Vector and raster presence are verified according to typed `DiagramExpectation` entries.
 - [ ] Missing required diagram produces `HARD_FAILURE` (`is_valid = False`); missing optional diagram produces `WARNING`.
+- [ ] `DiagramExpectation` with `kind=UNSPECIFIED` and `required=True` raises `ValueError` during request validation.
+- [ ] `preview_page_indices` validated as zero-based page indices (`0 <= index < page_count`) with `page_number = index + 1` conversion.
 - [ ] Orphan blank pages are detected and reported as `WARNING` without causing automatic hard rejection.
 - [ ] Text extraction verifies presence of `expected_text_anchors` without requiring full markdown text.
 - [ ] Page raster previews are generated cleanly as PNG byte buffers for at most 5 sampled pages when requested.
@@ -86,6 +90,8 @@ class PyMuPdfValidator(IPdfInspectionEngine):
   - `test_expected_raster_diagram_verification()`: Asserts raster image presence checked on expected page.
   - `test_missing_required_diagram_fails_validation()`: Confirms `required = True` missing diagram sets `is_valid = False` with `HARD_FAILURE`.
   - `test_missing_optional_diagram_produces_warning()`: Confirms `required = False` missing diagram records `WARNING` without failing validation.
+  - `test_unspecified_kind_with_required_true_raises_error()`: Asserts `ValueError` when `UNSPECIFIED` diagram expectation specifies `required=True`.
+  - `test_preview_page_indices_zero_based_bounds()`: Verifies zero-based indexing and rejection of out-of-bounds indices.
   - `test_corrupt_pdf_hard_failure()`: Confirms `HARD_FAILURE` on truncated/corrupted PDF.
   - `test_orphan_blank_page_detection()`: Confirms warning on blank trailing page without hard rejection.
   - `test_text_anchor_extraction_verification()`: Confirms presence of expected text anchors.

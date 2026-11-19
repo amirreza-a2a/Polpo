@@ -96,13 +96,13 @@ class ExpectedDiagramKind(Enum):
 class DiagramExpectation:
     page_number: int                     # 1-based page indexing: 1 <= page_number <= page_count
     kind: ExpectedDiagramKind
-    required: bool = False
+    required: bool = False               # Must be False if kind is UNSPECIFIED
 
 @dataclass(frozen=True)
 class PdfVisualAnomaly:
     anomaly_type: str                    # "CORRUPT_STRUCTURE", "BLANK_PAGE", "OVERFLOW_BOUNDS", "MISSING_DIAGRAM"
     severity: AnomalySeverity
-    page_number: int                     # 1-based page index
+    page_number: int                     # 1-based page index: 1 <= page_number <= page_count
     message: str
 
 @dataclass(frozen=True)
@@ -127,7 +127,7 @@ class PdfInspectionRequest:
     baseline_pdf_path: Optional[Path] = None
     expected_page_count_range: Optional[Tuple[int, int]] = None
     generate_raster_previews: bool = False
-    preview_page_indices: Tuple[int, ...] = ()
+    preview_page_indices: Tuple[int, ...] = ()  # Zero-based page indices: 0 <= index < page_count (page_number = index + 1)
 
 @dataclass(frozen=True)
 class PdfInspectionResult:
@@ -141,6 +141,22 @@ class IPdfInspectionEngine(ABC):
     def inspect_pdf(self, request: PdfInspectionRequest) -> PdfInspectionResult:
         """Inspects candidate PDF structure, text preservation, and visual integrity."""
         pass
+```
+
+#### Detailed PDF Inspection Contract Rules:
+1. **`DiagramExpectation` Validation Invariant (`UNSPECIFIED + required=True` Prohibition):**
+   - If `kind == ExpectedDiagramKind.UNSPECIFIED` and `required == True`, request validation fails closed and raises `ValueError("DiagramExpectation with kind=UNSPECIFIED cannot have required=True; UNSPECIFIED provides no concrete presence predicate")`.
+   - `ExpectedDiagramKind.UNSPECIFIED` is valid only with `required = False`, indicating informational context where no presence check is inferred.
+2. **Page Indexing & Conversion Conventions:**
+   - User-facing references, `DiagramExpectation.page_number`, and `PdfVisualAnomaly.page_number` use 1-based page numbering (`1 <= page_number <= page_count`).
+   - PyMuPDF internal rendering hooks and `preview_page_indices` use zero-based indexing (`0 <= index < page_count`).
+   - Conversion rule is deterministic: `page_number = index + 1`. Out-of-bounds indices (`index < 0` or `index >= page_count`) are rejected during request validation.
+3. **Severity Policy & Text-Only Baseline:**
+   - Missing required diagram (`kind in (VECTOR, RASTER)` with `required = True`): flags `AnomalySeverity.HARD_FAILURE`, failing candidate validation (`is_valid = False`).
+   - Missing optional diagram (`kind in (VECTOR, RASTER)` with `required = False`): flags `AnomalySeverity.WARNING`, allowing candidate validation to pass (`is_valid = True`).
+   - Text-only documents default to `expected_diagrams = ()` and pass inspection cleanly with zero vector drawings or raster images.
+4. **Structural vs. Visual/Semantic Invariant:**
+   - Structural validation success (`is_valid = True`) confirms parseability, page bounds, text presence, and expected graphical object existence only. It does NOT guarantee typographical beauty, mathematical correctness, Persian RTL text shaping, or semantic document fidelity.
 ```
 
 ---
