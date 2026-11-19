@@ -47,7 +47,7 @@ class PyMuPdfValidator(IPdfInspectionEngine):
    - Blank Page Detection: Flags pages with $< 10$ characters of text and zero vector/raster objects as `WARNING` (blank page indicator).
    - Typed Diagram Expectations (Finding F):
      - Text-only documents default to `request.expected_diagrams = ()` and pass structural validation cleanly with zero vector drawings or raster images.
-     - When `request.expected_diagrams` contains per-page `DiagramExpectation(page_number, kind, required)` entries:
+     - When `request.expected_diagrams` contains per-page `DiagramExpectation(page_number, kind, required)` entries (using 1-based page indexing, `1 <= page_number <= page_count`):
        - `ExpectedDiagramKind.VECTOR`: Verifies `len(page.get_drawings()) > 0` on that designated page. Confirms vector path presence; does NOT guarantee semantic diagram correctness.
        - `ExpectedDiagramKind.RASTER`: Verifies `len(page.get_images()) > 0` on that designated page. Confirms raster image presence; does NOT guarantee semantic diagram correctness.
        - `ExpectedDiagramKind.UNSPECIFIED`: No specific object-type requirement is inferred.

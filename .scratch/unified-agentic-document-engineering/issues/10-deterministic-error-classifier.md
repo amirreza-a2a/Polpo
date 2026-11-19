@@ -94,7 +94,7 @@ class ExpectedDiagramKind(Enum):
 
 @dataclass(frozen=True)
 class DiagramExpectation:
-    page_number: int
+    page_number: int                     # 1-based page indexing: 1 <= page_number <= page_count
     kind: ExpectedDiagramKind
     required: bool = False
 
@@ -102,7 +102,7 @@ class DiagramExpectation:
 class PdfVisualAnomaly:
     anomaly_type: str                    # "CORRUPT_STRUCTURE", "BLANK_PAGE", "OVERFLOW_BOUNDS", "MISSING_DIAGRAM"
     severity: AnomalySeverity
-    page_number: int
+    page_number: int                     # 1-based page index
     message: str
 
 @dataclass(frozen=True)
@@ -233,7 +233,7 @@ class IPdfInspectionEngine(ABC):
 
 ## 6. Error and Recovery Behavior
 
-- Unmatched or ambiguous errors default strictly to `ErrorCategory.UNKNOWN` with `recommended_scope = None`, `classification_confidence = 0.0`, `requires_human_inspection = True`, and `automatic_patch_allowed = False`. Under no circumstances may an unknown error trigger automatic document modifications.
+- Unmatched or ambiguous errors default strictly to `ErrorCategory.UNKNOWN` with `remediation_scope = None`, `source_mapping_evidence = SourceMappingEvidence.UNKNOWN`, `requires_human_inspection = True`, `proposal_generation_allowed = False`, `automatic_patch_application_allowed = False`, and `suggested_action = SuggestedAction.HUMAN_INSPECTION_REQUIRED`. Under no circumstances may an unknown error trigger automatic document modifications.
 
 ---
 

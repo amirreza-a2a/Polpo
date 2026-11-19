@@ -100,22 +100,23 @@ We evaluated the strikethrough failure mechanism using Polpo's real runtime tool
 
 ### 5.3 Twelve-Case Empirical Regression Matrix (Finding E)
 
-| # | Test Scenario | Input LaTeX / QMD | `soul` v3.1 Result | `ulem` (2019) Result | Controlled Alternative (Lua Filter / Preamble) | Evidence Status | Conclusion |
-|---|---|---|---|---|---|---|---|
-| 1 | English-only strikethrough (standard English document) | `\st{English text}` (ambient English, no Babel bidi) | ✅ Passes (rc=0, clean PDF) | ✅ Passes (rc=0) | `\st{English text}` / `\sout{English text}` | `OUTPUT_VISUALLY_INSPECTED` | PASS (Both soul & ulem pass on pure English) |
-| 2 | Persian-only strikethrough (ambient Persian) | `\st{متن فارسی}` (single language, no switch) | ✅ Passes (rc=0, clean PDF) | ✅ Passes (rc=0) | `\sout{متن فارسی}` | `OUTPUT_VISUALLY_INSPECTED` | PASS (Both soul & ulem pass on pure Persian without boundaries) |
-| 3 | Mixed Persian & English text | `\st{متن فارسی English}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن فارسی English}` | `OUTPUT_VISUALLY_INSPECTED` | PASS with ulem / FAIL with soul (Bidi boundary breaks soul) |
-| 4 | Nested braces | `\st{{متن داخل آکولاد}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{{متن داخل آکولاد}}` | `OUTPUT_VISUALLY_INSPECTED` | PASS with ulem / FAIL with soul |
-| 5 | Nested formatting macros | `\st{متن \textbf{پررنگ}}`, `\st{\emph{تأکید}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن \textbf{پررنگ}}` | `OUTPUT_VISUALLY_INSPECTED` | PASS with ulem / FAIL with soul |
-| 6 | Font switch inside | `\st{\textsf{فونت دیگر}}`, `\st{\texttt{کد}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{\textsf{فونت دیگر}}` | `OUTPUT_VISUALLY_INSPECTED` | PASS with ulem / FAIL with soul |
-| 7 | Babel language switches | `\st{\foreignlanguage{english}{English text}}` | ❌ Fails (`Reconstruction failed`) | ❌ Fails unboxed (`Extra }`); ✅ Passes with `\mbox` | `\sout{\mbox{\foreignlanguage{english}{English text}}}` | `OUTPUT_VISUALLY_INSPECTED` | PASS with boxed ulem / FAIL with soul or unboxed ulem |
-| 8 | Direction changes | `\st{\foreignlanguage{english}{LTR} متن}` | ❌ Fails (`Reconstruction failed`) | ❌ Fails unboxed (`Extra }`); ✅ Passes with `\mbox` | `\sout{\mbox{...}}` handles LTR/RTL box boundary | `OUTPUT_VISUALLY_INSPECTED` | PASS with boxed ulem / FAIL with soul or unboxed ulem |
-| 9 | Headings & moving arguments | `\section{\st{عنوان سرفصل}}` | ❌ Fails in moving argument | ✅ Passes with `\protect\sout` | Protected macro `\protect\sout` or AST translation | `OUTPUT_VISUALLY_INSPECTED` | PASS with `\protect\sout` / FAIL with soul |
-| 10 | List items | `\begin{itemize}\item \st{مورد فهرست}\end{itemize}` | ✅ Passes pure Persian; ❌ Fails if mixed/nested | ✅ Passes (rc=0) | `\sout{مورد فهرست}` | `OUTPUT_VISUALLY_INSPECTED` | PASS with ulem / FAIL with soul on mixed content |
-| 11 | Inline math inside strikeout | `\st{$x^2$}` vs `\st{قبل} $x^2$ \st{بعد}` | ❌ Fails (`\SOUL@addmath has extra }`) | ❌ Fails unboxed (`Missing $`); ✅ Passes boxed | Boxed math: `\sout{\mbox{$x^2$}}` or uncrossed math | `OUTPUT_VISUALLY_INSPECTED` | PASS with boxed math `\sout{\mbox{$x^2$}}` / FAIL with soul |
-| 12 | Quarto-generated PDF output | `~~متن فارسی نمونه~~` / `~~mixed English~~` | ✅ Passes pure Persian; ❌ Fails mixed English (`Reconstruction failed`) | ✅ Passes with `ulem` override | Clean Quarto XeLaTeX PDF | `OUTPUT_VISUALLY_INSPECTED` | PASS with controlled ulem override / FAIL with default soul under mixed Persian |
+| # | Test Scenario | Harness / Pipeline | Input LaTeX / QMD | `soul` v3.1 Result | `ulem` (2019) Result | Controlled Alternative (Lua Filter / Preamble) | Evidence Status | Conclusion |
+|---|---|---|---|---|---|---|---|---|
+| 1 | English-only strikethrough (standard English document) | Isolated XeLaTeX | `\st{English text}` (ambient English, no Babel bidi) | ✅ Passes (rc=0, clean PDF) | ✅ Passes (rc=0) | `\st{English text}` / `\sout{English text}` | `OUTPUT_VISUALLY_INSPECTED` | PASS (Both soul & ulem pass on pure English) |
+| 2 | Persian-only strikethrough (ambient Persian) | Isolated XeLaTeX | `\st{متن فارسی}` (single language, no switch) | ✅ Passes (rc=0, clean PDF) | ✅ Passes (rc=0) | `\sout{متن فارسی}` | `OUTPUT_VISUALLY_INSPECTED` | PASS (Both soul & ulem pass on pure Persian without boundaries) |
+| 3 | Mixed Persian & English text | Isolated XeLaTeX | `\st{متن فارسی English}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن فارسی English}` | `OUTPUT_VISUALLY_INSPECTED` | PASS with ulem / FAIL with soul (Bidi boundary breaks soul) |
+| 4 | Nested braces | Isolated XeLaTeX | `\st{{متن داخل آکولاد}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{{متن داخل آکولاد}}` | `OUTPUT_VISUALLY_INSPECTED` | PASS with ulem / FAIL with soul |
+| 5 | Nested formatting macros | Isolated XeLaTeX | `\st{متن \textbf{پررنگ}}`, `\st{\emph{تأکید}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{متن \textbf{پررنگ}}` | `OUTPUT_VISUALLY_INSPECTED` | PASS with ulem / FAIL with soul |
+| 6 | Font switch inside | Isolated XeLaTeX | `\st{\textsf{فونت دیگر}}`, `\st{\texttt{کد}}` | ❌ Fails (`Reconstruction failed`) | ✅ Passes (rc=0) | `\sout{\textsf{فونت دیگر}}` | `OUTPUT_VISUALLY_INSPECTED` | PASS with ulem / FAIL with soul |
+| 7 | Babel language switches | Isolated XeLaTeX | `\st{\foreignlanguage{english}{English text}}` | ❌ Fails (`Reconstruction failed`) | ❌ Fails unboxed (`Extra }`); ✅ Passes with `\mbox` | `\sout{\mbox{\foreignlanguage{english}{English text}}}` | `OUTPUT_VISUALLY_INSPECTED` | PASS with boxed ulem / FAIL with soul or unboxed ulem |
+| 8 | Direction changes | Isolated XeLaTeX | `\st{\foreignlanguage{english}{LTR} متن}` | ❌ Fails (`Reconstruction failed`) | ❌ Fails unboxed (`Extra }`); ✅ Passes with `\mbox` | `\sout{\mbox{...}}` handles LTR/RTL box boundary | `OUTPUT_VISUALLY_INSPECTED` | PASS with boxed ulem / FAIL with soul or unboxed ulem |
+| 9 | Headings & moving arguments | Isolated XeLaTeX | `\section{\st{عنوان سرفصل}}` | ❌ Fails in moving argument | ✅ Passes with `\protect\sout` | Protected macro `\protect\sout` or AST translation | `OUTPUT_VISUALLY_INSPECTED` | PASS with `\protect\sout` / FAIL with soul |
+| 10 | List items | Isolated XeLaTeX | `\begin{itemize}\item \st{مورد فهرست}\end{itemize}` | ✅ Passes pure Persian; ❌ Fails if mixed/nested | ✅ Passes (rc=0) | `\sout{مورد فهرست}` | `OUTPUT_VISUALLY_INSPECTED` | PASS with ulem / FAIL with soul on mixed content |
+| 11 | Inline math inside strikeout | Isolated XeLaTeX | `\st{$x^2$}` vs `\st{قبل} $x^2$ \st{بعد}` | ❌ Fails (`\SOUL@addmath has extra }`) | ❌ Fails unboxed (`Missing $`); ✅ Passes boxed | Boxed math: `\sout{\mbox{$x^2$}}` or uncrossed math | `OUTPUT_VISUALLY_INSPECTED` | PASS with boxed math `\sout{\mbox{$x^2$}}` / FAIL with soul |
+| 12 | Quarto-generated PDF output | Full Quarto Render | `~~متن فارسی نمونه~~` / `~~mixed English~~` | ✅ Passes pure Persian; ❌ Fails mixed English (`Reconstruction failed`) | ✅ Passes with `ulem` override | Clean Quarto XeLaTeX PDF | `OUTPUT_VISUALLY_INSPECTED` | PASS with controlled ulem override / FAIL with default soul under mixed Persian |
 
 *Toolchain metadata:* Ubuntu 24.04.5 LTS, TeX Live 2023, XeTeX 3.141592653-2.6-0.999995 (kpathsea 6.3.5), Pandoc 3.1.3, Quarto 1.9.38, Babel Persian 3.90, `soul` v3.1 (2023-06-14), `ulem` (2019-11-18).
+*Harness Distinction:* Scenarios 1–11 were executed via isolated XeLaTeX snippet test harnesses (`xelatex` compiler directly invoking TeX Live 2023 with Babel Persian). Scenario 12 was executed via the full end-to-end Quarto 1.9.38 export pipeline (`quarto render document.qmd --to pdf`).
 *Empirical note on English-only and Persian-only behavior:* `soul` v3.1 compiles cleanly for pure English and pure Persian without language or font transitions. The failure (`Package soul Error: Reconstruction failed`) reproduces specifically when language boundaries (mixed Persian-English), direction changes, font switches, nested braces, or inline math cross the strikethrough boundary under Babel bidi.
 *Empirical note on `ulem` behavior:* While `ulem` handles mixed script and nested formatting cleanly, unboxed `\foreignlanguage` grouping triggers `! Extra }, or forgotten \endgroup` and unboxed math triggers `! Missing $ inserted`, requiring explicit `\mbox{...}` protection (automatically provided in Option B via AST traversal).
 *Evidence Status Taxonomy:* All 12 scenarios were evaluated against real compiler execution with six formal verification levels: `SOURCE_PREPARED` $\to$ `LATEX_COMPILED` $\to$ `PDF_OPENED` $\to$ `OUTPUT_VISUALLY_INSPECTED` (or `NOT_VERIFIED` / `INCONCLUSIVE` where evidence is partial). Both isolated XeLaTeX runs and Quarto export pipelines confirm that Option A (static preamble redefinition) and Option B (Lua AST filter) successfully resolve the macro collision and mixed-script crashes. Decision `D-PROP-08` remains `PROPOSED — AWAITING EXPLICIT MAINTAINER APPROVAL`.
@@ -138,12 +139,12 @@ We evaluate two controlled architectural alternatives without arbitrary AI macro
     }
     ```
   - Pros: Clean, purely template-owned, zero external filter files, works across all Quarto invocations.
-  - Cons: Requires `\AtBeginDocument` or `\renewcommand` to prevent macro collision with `soul`.
+  - Cons & Capability Boundary: Requires `\AtBeginDocument` or `\renewcommand` to prevent macro collision with `soul`. Crucially, macro remapping operates solely at the LaTeX macro level and does **not** perform AST inspection; therefore, it does **not** automatically wrap unboxed math (`$x^2$`) or foreign language / direction groups in `\mbox{...}`.
 - **Option B: Controlled Pandoc Lua AST Filter (`filters/strikethrough_ulem.lua`)**
   - A small, deterministic Pandoc Lua filter intercepts `Strikeout` AST elements before Pandoc's LaTeX writer.
-  - Replaces `pandoc.Strikeout(inlines)` with raw LaTeX `\sout{...}`, preventing Pandoc from setting `strikeout=true` and preventing Pandoc from loading `soul` or emitting `\st`.
+  - Replaces `pandoc.Strikeout(inlines)` with raw LaTeX `\sout{...}`, enabling automated traversal to wrap inline math and language transitions in `\mbox{...}`.
   - Pros: Completely eliminates `soul` package inclusion and macro collisions; can automatically box inline math into `\mbox{$...$}` during AST traversal.
-  - Cons: Requires passing `--lua-filter` in Quarto render options and managing the filter file lifecycle.
+  - Cons & Verification Requirement: Requires passing `--lua-filter` in Quarto render options and managing the filter file lifecycle. Furthermore, Pandoc's default template conditionally emits `\usepackage{soul}` when the template variable `strikeout` is true. We must verify whether Pandoc's reader sets `strikeout=true` in template context before or during AST filtering; if the template variable remains `true`, Pandoc may still load `soul` and emit `\newcommand{\st}`, requiring the filter to explicitly clear metadata (`meta.strikeout = false`) or `polpo_preamble.tex` to retain the macro collision guard.
 
 **Invariant:** Under both options, the AI Agent CANNOT generate or inject raw TeX macros. The Agent may only recommend setting the typed token `strikethrough_engine: "ulem"` in a `PublicationStyleProfile` or flag a product defect report. Neither option is implemented until the maintainer explicitly approves D-PROP-08.
 
@@ -196,7 +197,7 @@ class ExpectedDiagramKind(Enum):
 
 @dataclass(frozen=True)
 class DiagramExpectation:
-    page_number: int
+    page_number: int                     # 1-based page indexing: 1 <= page_number <= page_count
     kind: ExpectedDiagramKind
     required: bool = False
 
@@ -204,7 +205,7 @@ class DiagramExpectation:
 class PdfVisualAnomaly:
     anomaly_type: str                    # "CORRUPT_STRUCTURE", "BLANK_PAGE", "OVERFLOW_BOUNDS", "MISSING_DIAGRAM"
     severity: AnomalySeverity
-    page_number: int
+    page_number: int                     # 1-based page index
     message: str
 
 @dataclass(frozen=True)
